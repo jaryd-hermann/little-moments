@@ -18,26 +18,72 @@ A journaling app built with Expo (React Native) inspired by Matthew Dicks' *Home
 | Rich Text | `react-native-pell-rich-editor` |
 | Build | [EAS Build](https://docs.expo.dev/build/introduction/) + [EAS Submit](https://docs.expo.dev/submit/introduction/) |
 
-## Prerequisites
+## Fresh Mac Setup (from scratch)
 
-- **Node.js** >= 18 (tested with v20)
-- **npm** >= 9
-- **Xcode** (for iOS simulator / device builds)
-- **EAS CLI**: `npm install --global eas-cli`
-- **Supabase CLI** (for Edge Functions): `brew install supabase/tap/supabase`
-- An [Expo](https://expo.dev/) account (already linked to project ID `0ff2f724-d7e1-4730-ac3b-251129aed785`)
+If setting up on a brand new Mac with nothing installed, follow these steps in order.
 
-## Getting Started
-
-### 1. Clone & install
+### 1. Install Homebrew
 
 ```bash
-git clone https://github.com/jaryd-hermann/little-moments.git
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+After it finishes, run the two commands it prints under "Next steps" to add Homebrew to your PATH:
+
+```bash
+echo >> ~/.zprofile
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+### 2. Install nvm and Node.js
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+source ~/.zshrc
+nvm install 20
+nvm use 20
+```
+
+Verify: `node -v` should print `v20.x.x` and `npm -v` should work.
+
+### 3. Install Xcode
+
+Install **Xcode** from the Mac App Store, then open it once to accept the license. Also install the command line tools:
+
+```bash
+xcode-select --install
+```
+
+Open Xcode → Settings → Platforms → install the **iOS Simulator** runtime if prompted.
+
+### 4. Install global tools
+
+```bash
+npm install --global eas-cli
+brew install supabase/tap/supabase
+```
+
+### 5. Set up SSH for GitHub
+
+```bash
+ssh-keygen -t ed25519 -C "your-email@example.com"
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
+```
+
+Copy the output and add it at [github.com/settings/keys](https://github.com/settings/keys).
+
+### 6. Clone & install
+
+```bash
+git clone git@github.com:jaryd-hermann/little-moments.git
 cd little-moments
 npm install
 ```
 
-### 2. Environment variables
+### 7. Environment variables
 
 Copy the example env file and fill in your keys:
 
@@ -56,24 +102,25 @@ Required variables:
 | `EXPO_PUBLIC_REVENUECAT_IOS_KEY` | RevenueCat iOS API key |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | *(optional)* Google OAuth Web Client ID |
 
-### 3. EAS login
+You can find these in your [Supabase dashboard](https://supabase.com/dashboard), [Anthropic console](https://console.anthropic.com/), and [RevenueCat dashboard](https://app.revenuecat.com/).
+
+### 8. EAS login
 
 ```bash
 eas login
 ```
 
-### 4. Build the dev client
+### 9. Build the dev client
 
 This app uses native modules (Apple Auth, RevenueCat, Media Library, Audio, etc.) that require a **development build** — Expo Go is not sufficient.
 
 ```bash
-# iOS simulator build
 eas build --platform ios --profile development
-
-# After the build completes, the .app will install on your simulator automatically.
 ```
 
-### 5. Start the dev server
+After the build completes, the `.app` will install on your simulator automatically.
+
+### 10. Start the dev server
 
 ```bash
 npx expo start --dev-client --clear
