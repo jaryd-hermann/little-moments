@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useAudioRecorder, AudioModule } from "expo-audio";
+import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
 import { transcribeAudio } from "@/lib/whisper";
 import { useTheme } from "@/hooks/useTheme";
 import Animated, {
@@ -113,7 +113,7 @@ export function MicRecorder({
   onCancel,
 }: MicRecorderProps) {
   const { colors, theme } = useTheme();
-  const recorder = useAudioRecorder({ isMeteringEnabled: false });
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -128,21 +128,24 @@ export function MicRecorder({
       }
 
       await AudioModule.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
       await recorder.prepareToRecordAsync();
+
       recorder.record();
       setIsRecording(true);
       setDuration(0);
       intervalRef.current = setInterval(() => {
         setDuration((d) => d + 1);
       }, 1000);
-    } catch (e) {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[MicRecorder] startRecording failed:", msg);
       Alert.alert(
         "Recording Error",
-        "Could not start recording. This may be a simulator limitation — try on a real device."
+        `Could not start recording: ${msg}`
       );
     }
   };
@@ -154,7 +157,7 @@ export function MicRecorder({
     await recorder.stop();
 
     await AudioModule.setAudioModeAsync({
-      allowsRecordingIOS: false,
+      allowsRecording: false,
     });
 
     const uri = recorder.uri;
@@ -178,7 +181,7 @@ export function MicRecorder({
       setIsRecording(false);
       try {
         await recorder.stop();
-        await AudioModule.setAudioModeAsync({ allowsRecordingIOS: false });
+        await AudioModule.setAudioModeAsync({ allowsRecording: false });
       } catch {}
     }
     onCancel?.();
@@ -186,7 +189,11 @@ export function MicRecorder({
 
   useEffect(() => {
     if (fullscreen && !isRecording && !isTranscribing) {
-      startRecording();
+      const t = setTimeout(() => startRecording(), 300);
+      return () => {
+        clearTimeout(t);
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      };
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);

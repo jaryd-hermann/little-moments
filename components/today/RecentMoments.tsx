@@ -1,9 +1,10 @@
-import { View, Text, Pressable, Image } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { router } from "expo-router";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 
 function stripHtml(html: string): string {
   return html
@@ -54,10 +55,8 @@ export function RecentMoments({ entries }: RecentMomentsProps) {
               ? plainBody.slice(0, 80) + "..."
               : plainBody;
 
-          const thumb =
-            entry.media && entry.media.length > 0
-              ? entry.media[0].storage_url
-              : null;
+          const firstMedia =
+            entry.media && entry.media.length > 0 ? entry.media[0] : null;
 
           return (
             <Pressable
@@ -73,19 +72,7 @@ export function RecentMoments({ entries }: RecentMomentsProps) {
                 alignItems: "center",
               }}
             >
-              {thumb && (
-                <Image
-                  source={{ uri: thumb }}
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 10,
-                    backgroundColor: colors.surfaceSecondary,
-                    marginRight: 12,
-                  }}
-                />
-              )}
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 {entry.title && (
                   <Text
                     style={{
@@ -111,7 +98,20 @@ export function RecentMoments({ entries }: RecentMomentsProps) {
                   {bodyPreview}
                 </Text>
               </View>
-              <View style={{ alignItems: "flex-end", marginLeft: 12 }}>
+              {firstMedia ? (
+                <EntryMediaImage
+                  media={firstMedia}
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 10,
+                    marginLeft: 10,
+                    marginRight: 10,
+                    backgroundColor: colors.surfaceSecondary,
+                  }}
+                />
+              ) : null}
+              <View style={{ alignItems: "flex-end", flexShrink: 0 }}>
                 <Text
                   style={{
                     fontFamily: "Roboto-Light",

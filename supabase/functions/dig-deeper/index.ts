@@ -17,7 +17,7 @@ Core principles:
 
 Your tone: warm, curious, non-judgmental. Like a good friend who happens to be a master storyteller.
 
-IMPORTANT: Never lecture about storytelling. Just ask, listen, and help. Keep responses conversational and brief. Never return JSON or code — just speak naturally.`;
+IMPORTANT: Never lecture about storytelling. Just ask, listen, and help. Keep responses conversational and brief. During the question phase, speak naturally — no JSON or code. When told to produce the enhanced story, follow the output format exactly as instructed.`;
 
 const CRASH_BURN_ADDENDUM = `
 
@@ -66,14 +66,48 @@ Deno.serve(async (req) => {
     } else if (stage === "follow_up") {
       userMessage = `The user answered your questions: "${user_answers}"\n\nGreat — you're getting closer to the real moment. Based on what they've shared, ask 2-3 MORE follow-up questions that dig even deeper. Focus on:\n- Specific sensory details (what did it look/sound/feel like?)\n- The exact moment of internal shift\n- What they were thinking or feeling right before vs. after\n- Small physical details that make the scene vivid\n\nKeep it warm and conversational. Don't repeat questions they've already answered.`;
     } else if (stage === "enhance") {
-      userMessage = `Based on everything the user has shared across this conversation, write an enhanced version of their moment.\n\nRules:\n- Write in the user's own voice and style (match their vocabulary and tone)\n- Weave in the specific sensory details and feelings they shared\n- Make it feel like THEIR story, not a generic retelling\n- Keep it to 150-250 words\n- Don't over-dramatize — stay true to the small, honest moment\n- Make the reader feel like they're standing right there\n\nRespond with ONLY a JSON object (no markdown, no code fences) with two fields:\n{"message": "a brief one-sentence framing of what you did", "enhanced_body": "the full enhanced story text"}`;
+      userMessage = `IMPORTANT — STOP ASKING QUESTIONS. The conversation phase is over.
+
+Your ONLY task now: write an enhanced version of the user's moment as a polished first-person story.
+
+CRITICAL RULES:
+- Write the story IN FIRST PERSON ("I") as if the user themselves wrote it
+- Do NOT address the user — no "you", "your", or speaking TO them
+- Do NOT include any conversational commentary, coaching, or questions
+- Weave in the specific sensory details, feelings, and moments they shared in the conversation
+- Match the user's own vocabulary and tone
+- Keep it 150–250 words
+- Stay true to the small, honest moment — don't over-dramatize
+- The story should read like a personal journal entry or memoir excerpt
+
+Original entry title: ${title}
+Original entry body: ${body}
+
+Respond with ONLY a JSON object (no markdown, no code fences):
+{"message": "one brief sentence about the enhancement", "enhanced_body": "the full enhanced story in first person"}`;
     } else if (stage === "revise") {
-      userMessage = `The user wants these changes to the enhanced version: "${revision_request}"\n\nRevise accordingly, keeping their voice intact.\n\nRespond with ONLY a JSON object (no markdown, no code fences) with two fields:\n{"message": "brief acknowledgment of the change", "enhanced_body": "the revised story text"}`;
+      userMessage = `IMPORTANT — STOP CONVERSING. Produce a revised story only.
+
+The user wants these changes to the enhanced version: "${revision_request}"
+
+CRITICAL RULES:
+- Write the revised story IN FIRST PERSON ("I") as if the user themselves wrote it
+- Do NOT address the user — no "you", "your", or speaking TO them
+- Do NOT include any conversational commentary, coaching, or questions
+- Apply the requested changes while keeping their voice intact
+
+Respond with ONLY a JSON object (no markdown, no code fences):
+{"message": "brief acknowledgment of the change", "enhanced_body": "the revised story in first person"}`;
     }
+
+    const needsJson = stage === "enhance" || stage === "revise";
 
     const messages = [
       ...(conversation_history || []),
       { role: "user" as const, content: userMessage },
+      ...(needsJson
+        ? [{ role: "assistant" as const, content: "{" }]
+        : []),
     ];
 
     const response = await anthropic.messages.create({
@@ -83,18 +117,45 @@ Deno.serve(async (req) => {
       messages,
     });
 
-    const responseText =
+    const rawText =
       response.content[0].type === "text"
         ? response.content[0].text
         : "";
 
-    if (stage === "enhance" || stage === "revise") {
+    const responseText = needsJson ? `{${rawText}` : rawText;
+
+    if (needsJson) {
       const parsed = tryParseJSON(responseText);
-      if (parsed && parsed.enhanced_body) {
-        return new Response(JSON.stringify(parsed), {
-          headers: { "Content-Type": "application/json" },
-        });
+      if (parsed && typeof parsed.enhanced_body === "string" && parsed.enhanced_body.trim()) {
+        return new Response(
+          JSON.stringify({
+            message: typeof parsed.message === "string" ? parsed.message : "Here's your enhanced story:",
+            enhanced_body: parsed.enhanced_body,
+            ...(typeof parsed.enhanced_title === "string" ? { enhanced_title: parsed.enhanced_title } : {}),
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
       }
+
+      const storyMatch = responseText.match(
+        /"enhanced_body"\s*:\s*"((?:[^"\\]|\\.)*)"/s
+      );
+      if (storyMatch) {
+        let body: string;
+        try {
+          body = JSON.parse(`"${storyMatch[1]}"`);
+        } catch {
+          body = storyMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+        }
+        return new Response(
+          JSON.stringify({
+            message: "Here's your enhanced story:",
+            enhanced_body: body,
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           message: "Here's your enhanced story:",

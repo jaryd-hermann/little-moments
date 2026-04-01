@@ -2,8 +2,29 @@ import {
   differenceInHours,
   differenceInCalendarDays,
   isToday,
+  parseISO,
 } from "date-fns";
 import { supabase } from "./supabase";
+
+type EntryForStats = {
+  entry_type: string;
+  body: string;
+};
+
+export function countMemoryRaces(entries: EntryForStats[]): number {
+  return entries.filter((e) => e.entry_type === "crash_and_burn").length;
+}
+
+/** Average word count of moment entries (excluding memory races). */
+export function averageMomentWordCount(entries: EntryForStats[]): number {
+  const moments = entries.filter((e) => e.entry_type === "moment");
+  if (moments.length === 0) return 0;
+  const total = moments.reduce((sum, e) => {
+    const words = e.body.trim().split(/\s+/).filter(Boolean).length;
+    return sum + words;
+  }, 0);
+  return Math.round(total / moments.length);
+}
 
 export function calculateStreak(entryDates: Date[]): {
   streakCount: number;
@@ -45,6 +66,41 @@ export function calculateStreak(entryDates: Date[]): {
   streak++; // Count the starting day
 
   return { streakCount: streak, isAtRisk, isAlive };
+}
+
+/** Longest run of consecutive calendar days with an entry (any type). */
+export function computeLongestStreakEver(
+  entryDatesYyyyMmDd: string[]
+): number {
+  if (entryDatesYyyyMmDd.length === 0) return 0;
+  const dayKeys = [...new Set(entryDatesYyyyMmDd)].sort();
+  let maxLen = 1;
+  let run = 1;
+  for (let i = 1; i < dayKeys.length; i++) {
+    const a = parseISO(dayKeys[i - 1]);
+    const b = parseISO(dayKeys[i]);
+    if (differenceInCalendarDays(b, a) === 1) {
+      run += 1;
+      maxLen = Math.max(maxLen, run);
+    } else {
+      run = 1;
+    }
+  }
+  return maxLen;
+}
+
+export function countMomentEntries(
+  entries: { entry_type: string }[]
+): number {
+  return entries.filter((e) => e.entry_type === "moment").length;
+}
+
+export function exactEntryDateKeys(
+  entries: { date_precision: string; entry_date: string | null }[]
+): string[] {
+  return entries
+    .filter((e) => e.date_precision === "exact" && e.entry_date)
+    .map((e) => e.entry_date as string);
 }
 
 export async function updateStreakAfterEntry(

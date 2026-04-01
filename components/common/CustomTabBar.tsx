@@ -1,24 +1,28 @@
-import { View, Pressable, Text } from "react-native";
+import { View, Pressable, Text, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "@/hooks/useTheme";
+import { useTabBarStore } from "@/store/tabBarStore";
+import { useRewindComposeStore } from "@/store/rewindComposeStore";
+
+const TAB_COMPOSE_PLUS = require("@/assets/images/tab-compose-plus.png");
 
 const TAB_CONFIG: Record<
   string,
   { label: string; icon: string; iconFocused: string }
 > = {
   today: {
-    label: "Home",
-    icon: "home-outline",
-    iconFocused: "home",
+    label: "Today",
+    icon: "create-outline",
+    iconFocused: "create",
   },
   "crash-burn": {
     label: "Race",
-    icon: "create-outline",
-    iconFocused: "create",
+    icon: "play-forward-outline",
+    iconFocused: "play-forward",
   },
   rewind: {
     label: "Rewind",
@@ -26,7 +30,7 @@ const TAB_CONFIG: Record<
     iconFocused: "play-back",
   },
   memories: {
-    label: "Memories",
+    label: "Capsule",
     icon: "book-outline",
     iconFocused: "book",
   },
@@ -39,7 +43,13 @@ export function CustomTabBar({
 }: BottomTabBarProps) {
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const tabBarHidden = useTabBarStore((s) => s.hidden);
   const centerIndex = 2;
+  const currentRouteName = state.routes[state.index]?.name;
+
+  if (tabBarHidden) {
+    return null;
+  }
 
   return (
     <View
@@ -80,10 +90,27 @@ export function CustomTabBar({
               >
                 <Pressable
                   onPress={() => {
-                    Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Medium
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Soft
                     );
-                    router.push("/composer");
+                    const { photoUri, photoDate } =
+                      useRewindComposeStore.getState();
+                    const onRewind = currentRouteName === "rewind";
+                    if (
+                      onRewind &&
+                      photoUri &&
+                      photoDate
+                    ) {
+                      router.push({
+                        pathname: "/composer",
+                        params: {
+                          photoUri,
+                          date: photoDate,
+                        },
+                      });
+                    } else {
+                      router.push("/composer");
+                    }
                   }}
                   style={{
                     width: 48,
@@ -96,7 +123,11 @@ export function CustomTabBar({
                     justifyContent: "center",
                   }}
                 >
-                  <Ionicons name="add" size={24} color="#000000" />
+                  <Image
+                    source={TAB_COMPOSE_PLUS}
+                    style={{ width: 26, height: 26 }}
+                    resizeMode="contain"
+                  />
                 </Pressable>
               </View>
             );

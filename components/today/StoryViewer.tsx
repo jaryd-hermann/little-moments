@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { usePostHog } from "posthog-react-native";
 import { STORY_SLIDES, type StorySlide } from "@/constants/storySlides";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -16,19 +17,21 @@ const SLIDE_DURATION = 5000;
 interface StoryViewerProps {
   visible: boolean;
   onClose: (highestSlide: number) => void;
-  storyIndex?: number;
   initialSlide?: number;
   slides?: StorySlide[];
+  /** When this changes while opening, slide index resets (e.g. marketing story slug). */
+  viewerKey?: string;
 }
 
 export function StoryViewer({
   visible,
   onClose,
-  storyIndex = 0,
   initialSlide = 0,
   slides,
+  viewerKey = "default",
 }: StoryViewerProps) {
   const { colors, theme } = useTheme();
+  const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(initialSlide);
   const [isPaused, setIsPaused] = useState(false);
@@ -43,6 +46,16 @@ export function StoryViewer({
   const mutedColor = theme === "dark" ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
   const barBg = theme === "dark" ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.2)";
   const barFill = theme === "dark" ? "#FFFFFF" : "#1A1A1A";
+
+  useLayoutEffect(() => {
+    if (visible) {
+      setCurrentIndex(initialSlide);
+      const len = activeSlides.length;
+      highestRef.current = Math.min(initialSlide + 1, len);
+      setProgress(0);
+      posthog.capture("viewed_marketing_story", { story: viewerKey });
+    }
+  }, [visible, viewerKey, initialSlide, activeSlides.length]);
 
   useEffect(() => {
     if (!visible || isPaused) {
@@ -69,7 +82,7 @@ export function StoryViewer({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [visible, currentIndex, isPaused]);
+  }, [visible, currentIndex, isPaused, activeSlides.length]);
 
   useEffect(() => {
     if (currentIndex + 1 > highestRef.current) {
@@ -77,14 +90,11 @@ export function StoryViewer({
     }
   }, [currentIndex]);
 
-  useEffect(() => {
-    if (!visible) {
-      setCurrentIndex(initialSlide);
-      highestRef.current = initialSlide;
-    }
-  }, [visible]);
-
-  const slide = activeSlides[currentIndex];
+  const safeIndex = Math.min(
+    currentIndex,
+    Math.max(0, activeSlides.length - 1)
+  );
+  const slide = activeSlides[safeIndex];
 
   const handleTap = (x: number) => {
     if (x < SCREEN_WIDTH / 3) {
@@ -104,7 +114,12 @@ export function StoryViewer({
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent={false}>
+    <Modal
+      key={viewerKey}
+      visible={visible}
+      animationType="fade"
+      transparent={false}
+    >
       <View style={{ flex: 1, backgroundColor: bg }}>
         {/* Progress bars */}
         <View
@@ -174,7 +189,9 @@ export function StoryViewer({
             paddingHorizontal: 32,
           }}
         >
-          <Text style={{ fontSize: 72 }}>{slide.emoji}</Text>
+          {slide.emoji ? (
+            <Text style={{ fontSize: 72 }}>{slide.emoji}</Text>
+          ) : null}
           <Text
             style={{
               marginTop: 32,
@@ -192,7 +209,7 @@ export function StoryViewer({
               textAlign: "center",
               fontSize: 17,
               lineHeight: 28,
-              fontFamily: "LibreBaskerville-Regular",
+              fontFamily: "Roboto-Regular",
               color: theme === "dark" ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.7)",
             }}
           >

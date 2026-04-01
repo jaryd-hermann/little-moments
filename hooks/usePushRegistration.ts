@@ -1,0 +1,25 @@
+import { useEffect } from "react";
+import { useAuthStore } from "@/store/authStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import { syncPushRegistration } from "@/lib/pushRegistration";
+
+/** Keeps Expo push token + timezone in sync; falls back to local daily reminder when no token. */
+export function usePushRegistration() {
+  const user = useAuthStore((s) => s.user);
+  const notificationEnabled = useSettingsStore((s) => s.notificationEnabled);
+  const notificationTime = useSettingsStore((s) => s.notificationTime);
+
+  useEffect(() => {
+    if (!user) return;
+    void syncPushRegistration({
+      notificationsEnabled: notificationEnabled,
+      reminderHour: notificationTime.hour,
+      reminderMinute: notificationTime.minute,
+    });
+  }, [
+    user?.id,
+    notificationEnabled,
+    notificationTime.hour,
+    notificationTime.minute,
+  ]);
+}

@@ -183,6 +183,7 @@ export function ThreeDTimeline({
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: colors.background,
+          paddingHorizontal: 28,
         }}
       >
         <Text
@@ -194,8 +195,30 @@ export function ThreeDTimeline({
             lineHeight: 24,
           }}
         >
-          Your story is just beginning.{"\n"}Add your first moment.
+          Your story is just beginning.
         </Text>
+        <Pressable
+          onPress={() => router.push("/composer")}
+          style={{
+            marginTop: 24,
+            borderRadius: 9999,
+            backgroundColor: colors.primary,
+            borderWidth: 2,
+            borderColor: "#000000",
+            paddingHorizontal: 24,
+            paddingVertical: 14,
+          }}
+        >
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 15,
+              color: "#000000",
+            }}
+          >
+            Add your first moment
+          </Text>
+        </Pressable>
       </View>
     );
   }

@@ -1,6 +1,7 @@
 import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useTheme } from "@/hooks/useTheme";
+
+const CARD_CREAM = "#FFFFEB";
 
 interface WordCardProps {
   word: string;
@@ -8,11 +9,10 @@ interface WordCardProps {
 }
 
 export function WordCard({ word, onShuffle }: WordCardProps) {
-  const { colors } = useTheme();
   return (
     <View
       style={{
-        backgroundColor: colors.primary,
+        backgroundColor: CARD_CREAM,
         borderRadius: 16,
         borderWidth: 2,
         borderColor: "#1A1A1A",
@@ -41,7 +41,7 @@ export function WordCard({ word, onShuffle }: WordCardProps) {
           width: 40,
           height: 40,
           borderRadius: 20,
-          backgroundColor: colors.surfaceSecondary,
+          backgroundColor: "rgba(0, 0, 0, 0.08)",
           alignItems: "center",
           justifyContent: "center",
         }}
@@ -49,7 +49,7 @@ export function WordCard({ word, onShuffle }: WordCardProps) {
         <Ionicons
           name="shuffle"
           size={20}
-          color={colors.textSecondary}
+          color="#1A1A1A"
         />
       </Pressable>
     </View>

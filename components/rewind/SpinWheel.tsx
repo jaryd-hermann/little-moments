@@ -24,8 +24,10 @@ export function SpinWheel({
   isPlaying,
 }: SpinWheelProps) {
   const rotation = useSharedValue(0);
-  const prevRotation = useSharedValue(0);
+  const prevAngle = useSharedValue(0);
+  const startRotation = useSharedValue(0);
   const lastReportedStep = useSharedValue(0);
+  const lastVelocity = useSharedValue(0);
 
   const DEGREES_PER_DAY = 6;
 
@@ -39,17 +41,28 @@ export function SpinWheel({
   };
 
   const gesture = Gesture.Pan()
-    .onStart(() => {
-      prevRotation.value = rotation.value;
+    .onStart((event) => {
+      startRotation.value = rotation.value;
+      const dx = event.x - RADIUS;
+      const dy = event.y - RADIUS;
+      prevAngle.value = Math.atan2(dy, dx) * (180 / Math.PI);
     })
     .onUpdate((event) => {
-      rotation.value = prevRotation.value + event.translationX * 0.5;
+      const dx = event.x - RADIUS;
+      const dy = event.y - RADIUS;
+      const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+      let delta = currentAngle - prevAngle.value;
+      if (delta > 180) delta -= 360;
+      if (delta < -180) delta += 360;
+      prevAngle.value = currentAngle;
+      lastVelocity.value = delta;
+      rotation.value = rotation.value + delta;
       runOnJS(reportChange)(rotation.value);
     })
-    .onEnd((event) => {
+    .onEnd(() => {
       rotation.value = withDecay(
         {
-          velocity: event.velocityX * 0.3,
+          velocity: lastVelocity.value * 60,
           deceleration: 0.995,
         },
         () => {

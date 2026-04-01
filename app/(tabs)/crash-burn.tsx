@@ -1,7 +1,16 @@
-import { useState, useEffect, useRef } from "react";
-import { View, Text, Pressable, ScrollView, Alert, Modal } from "react-native";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
+import { usePostHog } from "posthog-react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { format } from "date-fns";
@@ -12,29 +21,70 @@ import { CRASH_BURN_WORDS, getDailyWord } from "@/constants/words";
 import { useEntries } from "@/hooks/useEntries";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useTabBarStore } from "@/store/tabBarStore";
 import { StoryViewer } from "@/components/today/StoryViewer";
-import { MEMORY_JOG_SLIDES } from "@/constants/storySlides";
+import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { useTheme } from "@/hooks/useTheme";
+import { useMarketingStories } from "@/hooks/useMarketingStories";
+import {
+  MEMORY_JOG_STORY_SLUG,
+  resolveStoryProgress,
+  resumeSlideIndexFromProgress,
+} from "@/lib/marketingStories";
+import { InfoTipModal } from "@/components/common/InfoTipModal";
+import { takeDigDeeperPendingResult } from "@/lib/digDeeperReturn";
 
 type Phase = "pre-race" | "racing" | "post-race";
 const RACE_DURATION = 120;
 
 export default function CrashBurnScreen() {
   const { colors, theme } = useTheme();
+  const posthog = usePostHog();
+  const { memoryJogStory } = useMarketingStories();
+  const memoryJogSlides = memoryJogStory?.slides;
   const { saveEntry } = useEntries();
   const user = useAuthStore((s) => s.user);
+  const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
 
   const [phase, setPhase] = useState<Phase>("pre-race");
   const [word, setWord] = useState(getDailyWord());
   const [raceText, setRaceText] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const raceFinishedRef = useRef(false);
   const usedWords = useRef<Set<string>>(new Set([word]));
 
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
   const [showStoryViewer, setShowStoryViewer] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+
+  const memoryJogCardItems = useMemo(() => {
+    if (!memoryJogStory) return [];
+    return [
+      {
+        slug: MEMORY_JOG_STORY_SLUG,
+        title: "Amaze yourself with your memory",
+        description: memoryJogStory.card_description,
+        slideCount: memoryJogStory.slides.length,
+      },
+    ];
+  }, [memoryJogStory]);
+
+  const memoryJogResumeSlideIndex = useMemo(() => {
+    if (!memoryJogSlides?.length) return 0;
+    const p = resolveStoryProgress(MEMORY_JOG_STORY_SLUG, storyProgress);
+    return resumeSlideIndexFromProgress(p, memoryJogSlides.length);
+  }, [memoryJogSlides, storyProgress]);
+
+  useFocusEffect(
+    useCallback(() => {
+      posthog.capture("viewed_memory_jog");
+      const pending = takeDigDeeperPendingResult();
+      if (!pending?.enhancedBody?.trim()) return;
+      setRaceText(pending.enhancedBody.trim());
+    }, [])
+  );
 
   const handleShuffle = () => {
     const available = CRASH_BURN_WORDS.filter(
@@ -51,31 +101,69 @@ export default function CrashBurnScreen() {
   };
 
   const startRace = () => {
+    posthog.capture("started_memory_jog");
+    raceFinishedRef.current = false;
     setPhase("racing");
     setRaceText("");
     setElapsedSeconds(0);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
     timerRef.current = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1);
+      setElapsedSeconds((prev) => {
+        const next = prev + 1;
+        if (next >= RACE_DURATION && !raceFinishedRef.current) {
+          raceFinishedRef.current = true;
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          queueMicrotask(() => {
+            setPhase("post-race");
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          });
+        }
+        return next;
+      });
     }, 1000);
   };
 
-  const finishRace = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setPhase("post-race");
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  const quitRace = () => {
+    raceFinishedRef.current = false;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setPhase("pre-race");
+    setRaceText("");
+    setElapsedSeconds(0);
   };
+
+  const finishRaceEarly = () => {
+    raceFinishedRef.current = true;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setPhase("post-race");
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  useEffect(() => {
+    setTabBarHidden(phase === "racing");
+    return () => setTabBarHidden(false);
+  }, [phase, setTabBarHidden]);
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      setTabBarHidden(false);
     };
-  }, []);
+  }, [setTabBarHidden]);
 
   const handlePostAsIs = async () => {
     if (!user || !raceText.trim()) return;
     try {
+      posthog.capture("completed_memory_jog");
       await saveEntry({
         title: null,
         body: raceText.trim(),
@@ -153,99 +241,65 @@ export default function CrashBurnScreen() {
             </View>
             <Pressable
               onPress={() => setShowInfo(true)}
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 18,
-                borderWidth: 1,
-                borderColor: colors.border,
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 4,
-              }}
+              style={{ marginTop: 4 }}
             >
-              <Ionicons
-                name="information-circle-outline"
-                size={20}
-                color={colors.icon}
-              />
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor:
+                    theme === "dark"
+                      ? "rgba(255,255,255,0.15)"
+                      : "rgba(0,0,0,0.08)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons
+                  name="information-outline"
+                  size={20}
+                  color={
+                    theme === "dark"
+                      ? "rgba(255,255,255,0.85)"
+                      : "rgba(0,0,0,0.55)"
+                  }
+                />
+              </View>
             </Pressable>
           </View>
 
-          <View style={{ marginTop: 24 }}>
-            <Text
-              style={{
-                fontFamily: "Roboto-Light",
-                fontSize: 11,
-                color: colors.textMuted,
-                letterSpacing: 1,
-                textTransform: "uppercase",
-                marginBottom: 12,
-              }}
-            >
-              HOW AND WHY
-            </Text>
-            <Pressable
-              onPress={() => setShowStoryViewer(true)}
-              style={{
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-                padding: 20,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 15,
-                  color: colors.text,
-                  flex: 1,
+          {memoryJogCardItems.length > 0 ? (
+            <View style={{ marginTop: 24 }}>
+              <MarketingStoryCard
+                stories={memoryJogCardItems}
+                onPressStory={() => {
+                  setShowStoryViewer(true);
                 }}
-              >
-                The story behind Memory Jog
-              </Text>
-              <Ionicons
-                name="arrow-forward"
-                size={16}
-                color={colors.textSecondary}
-                style={{ marginLeft: 12 }}
+                storyProgress={storyProgress}
+                hideCompleted
+                sectionTitle="HOW AND WHY"
               />
-            </Pressable>
-          </View>
+            </View>
+          ) : null}
 
           <View style={{ marginTop: 24 }}>
             <WordCard word={word} onShuffle={handleShuffle} />
           </View>
 
-          {/* Instructions card */}
-          <View
+          <Text
             style={{
               marginTop: 24,
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: colors.border,
-              backgroundColor: colors.surface,
-              padding: 20,
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: colors.textSecondary,
+              lineHeight: 24,
             }}
           >
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 14,
-                color: colors.textSecondary,
-                lineHeight: 24,
-              }}
-            >
-              Write for 2 minutes without stopping. Don't edit. Don't
-              think. Just let the words flow from your starting word.
-              When time's up, you can save it raw or use AI to help
-              refine it.
-            </Text>
-          </View>
+            Write for 2 minutes without stopping. Don't edit. Don't think.
+            Just let the words flow from your starting word. When time's
+            up, you can save it raw or use AI to help refine it.
+          </Text>
 
           <Pressable
             onPress={startRace}
@@ -253,8 +307,7 @@ export default function CrashBurnScreen() {
               marginTop: 24,
               height: 52,
               borderRadius: 9999,
-              backgroundColor:
-                theme === "dark" ? "#FFFFFF" : "#1A1A1A",
+              backgroundColor: colors.primary,
               alignItems: "center",
               justifyContent: "center",
             }}
@@ -263,7 +316,7 @@ export default function CrashBurnScreen() {
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 15,
-                color: theme === "dark" ? "#000000" : "#FFFFFF",
+                color: "#000000",
                 letterSpacing: 0.8,
                 textTransform: "uppercase",
               }}
@@ -274,176 +327,130 @@ export default function CrashBurnScreen() {
         </ScrollView>
 
         <StoryViewer
-          visible={showStoryViewer}
+          visible={showStoryViewer && Boolean(memoryJogSlides)}
+          viewerKey={MEMORY_JOG_STORY_SLUG}
+          slides={memoryJogSlides}
+          initialSlide={memoryJogResumeSlideIndex}
           onClose={(highest) => {
-            setStoryProgress("memory_jog", highest);
+            setStoryProgress(MEMORY_JOG_STORY_SLUG, highest);
             setShowStoryViewer(false);
           }}
-          slides={MEMORY_JOG_SLIDES}
         />
 
-        {/* Info Modal */}
-        <Modal
+        <InfoTipModal
           visible={showInfo}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={() => setShowInfo(false)}
+          onClose={() => setShowInfo(false)}
+          title="Memory Jog"
+          scrollable
         >
-          <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                paddingHorizontal: 20,
-                paddingVertical: 12,
-                borderBottomWidth: 1,
-                borderBottomColor: colors.border,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 20,
-                  color: colors.text,
-                }}
-              >
-                Memory Jog
-              </Text>
-              <Pressable onPress={() => setShowInfo(false)}>
-                <Ionicons name="close" size={24} color={colors.icon} />
-              </Pressable>
-            </View>
-            <ScrollView
-              contentContainerStyle={{ padding: 24 }}
-              showsVerticalScrollIndicator={false}
-            >
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 16,
-                  color: colors.text,
-                  lineHeight: 26,
-                }}
-              >
-                Memory Jog is a timed free-writing exercise inspired by
-                Matthew Dicks' storytelling techniques.
-              </Text>
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 16,
-                  color: colors.text,
-                  lineHeight: 26,
-                  marginTop: 16,
-                }}
-              >
-                You start with a random word and write for 2 minutes without
-                stopping — no editing, no pausing, just letting your
-                thoughts flow. The randomness unlocks buried memories you
-                didn't know you had.
-              </Text>
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 16,
-                  color: colors.text,
-                  lineHeight: 26,
-                  marginTop: 16,
-                }}
-              >
-                When time's up, you can post your writing as-is or use Dig
-                Deeper to refine it into a polished story. Both are
-                valuable — the goal is to practice noticing and
-                remembering.
-              </Text>
-            </ScrollView>
-          </SafeAreaView>
-        </Modal>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: "#333333",
+              lineHeight: 22,
+            }}
+          >
+            Memory Jog is a timed free-writing exercise inspired by Matthew
+            Dicks&apos; storytelling techniques.
+          </Text>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: "#333333",
+              lineHeight: 22,
+              marginTop: 16,
+            }}
+          >
+            You start with a random word and write for 2 minutes without stopping
+            — no editing, no pausing, just letting your thoughts flow. The
+            randomness unlocks buried memories you didn&apos;t know you had.
+          </Text>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: "#333333",
+              lineHeight: 22,
+              marginTop: 16,
+            }}
+          >
+            When time&apos;s up, you can post your writing as-is or use Dig
+            Deeper to refine it into a polished story. Both are valuable — the
+            goal is to practice noticing and remembering.
+          </Text>
+        </InfoTipModal>
       </SafeAreaView>
     );
   }
 
   if (phase === "racing") {
     return (
-      <SafeAreaView className="flex-1 bg-black px-5">
-        <Text
-          style={{
-            fontFamily: "LibreBaskerville-Regular",
-            fontSize: 18,
-            color: "rgba(255, 255, 255, 0.7)",
-            marginTop: 8,
-          }}
-        >
-          {word}
-        </Text>
-
-        <View className="my-4">
-          <RaceTimer
-            isRunning={true}
-            elapsedSeconds={elapsedSeconds}
-            durationSeconds={RACE_DURATION}
-          />
-        </View>
-
-        <View className="flex-1">
-          <CrashBurnComposer
-            text={raceText}
-            onChangeText={setRaceText}
-          />
-        </View>
-
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 16,
-            gap: 12,
-          }}
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#000000" }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 4 : 0}
         >
           <View
             style={{
-              width: 48,
-              height: 48,
-              borderRadius: 24,
-              borderWidth: 1,
-              borderColor: colors.border,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Ionicons
-              name="mic"
-              size={22}
-              color={colors.icon}
-            />
-          </View>
-          <Pressable
-            onPress={finishRace}
-            style={{
               flex: 1,
-              height: 48,
-              borderRadius: 9999,
-              borderWidth: 1,
-              borderColor: colors.border,
-              alignItems: "center",
-              justifyContent: "center",
+              paddingHorizontal: 20,
             }}
           >
-            <Text
+            <View
               style={{
-                fontFamily: "Roboto-Medium",
-                fontSize: 15,
-                color: colors.text,
-                letterSpacing: 0.8,
-                textTransform: "uppercase",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                marginTop: 8,
+                gap: 12,
               }}
             >
-              FINISH
-            </Text>
-          </Pressable>
-        </View>
+              <Text
+                style={{
+                  flex: 1,
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 16,
+                  lineHeight: 24,
+                  color: "rgba(255, 255, 255, 0.85)",
+                }}
+              >
+                Start rambling about{" "}
+                <Text style={{ fontFamily: "Roboto-Bold", color: "#FFFFFF" }}>
+                  {word}
+                </Text>
+              </Text>
+              <Pressable
+                onPress={quitRace}
+                hitSlop={10}
+                style={{
+                  padding: 4,
+                }}
+                accessibilityLabel="Quit race"
+              >
+                <Ionicons name="close" size={26} color="#FFFFFF" />
+              </Pressable>
+            </View>
+
+            <View style={{ marginVertical: 16 }}>
+              <RaceTimer
+                isRunning={true}
+                elapsedSeconds={elapsedSeconds}
+                durationSeconds={RACE_DURATION}
+              />
+            </View>
+
+            <View style={{ flex: 1, marginBottom: 8, minHeight: 0 }}>
+              <CrashBurnComposer
+                text={raceText}
+                onChangeText={setRaceText}
+                onFinishRace={finishRaceEarly}
+              />
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }

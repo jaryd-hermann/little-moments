@@ -2,8 +2,10 @@ import { useEffect } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import { useAuthStore } from "@/store/authStore";
+import type { Profile } from "@/store/authStore";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/hooks/useTheme";
+import { routeAfterAuth } from "@/lib/onboardingRoute";
 
 export default function IndexRedirect() {
   const { colors } = useTheme();
@@ -25,16 +27,9 @@ export default function IndexRedirect() {
       .eq("id", user.id)
       .single()
       .then(({ data: profile }) => {
-        if (profile) {
-          setProfile(profile);
-          if (!profile.onboarding_completed) {
-            router.replace("/(auth)/onboarding");
-          } else {
-            router.replace("/(tabs)/today");
-          }
-        } else {
-          router.replace("/(auth)/onboarding");
-        }
+        const p = profile as Profile | null;
+        if (p) setProfile(p);
+        routeAfterAuth(p);
       });
   }, [user, isLoading]);
 

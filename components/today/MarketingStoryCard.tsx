@@ -1,19 +1,18 @@
 import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@/hooks/useTheme";
-import { TOTAL_SLIDES } from "@/constants/storySlides";
-
-export const PHILOSOPHY_ITEMS = [
-  "Change the way you look at your life",
-  "Develop the greatest skill: storytelling",
-  "Finding stories in the everyday",
-  "Do it easy. Do it daily",
-];
+import {
+  resolveStoryProgress,
+  isMarketingStoryComplete,
+  type MarketingStoryListItem,
+} from "@/lib/marketingStories";
 
 const SEGMENT_COUNT = 8;
 const RING_SIZE = 32;
 const RING_THICKNESS = 3;
 const GAP_DEG = 6;
+
+export type { MarketingStoryListItem };
 
 function ProgressRing({
   watched,
@@ -28,7 +27,7 @@ function ProgressRing({
 }) {
   const filled = Math.min(
     SEGMENT_COUNT,
-    Math.round((watched / total) * SEGMENT_COUNT)
+    Math.round((watched / Math.max(total, 1)) * SEGMENT_COUNT)
   );
 
   const segmentAngle = 360 / SEGMENT_COUNT;
@@ -72,27 +71,36 @@ function ProgressRing({
 }
 
 interface MarketingStoryCardProps {
-  onPressStory: (storyIndex: number) => void;
-  storyProgress?: Record<number, number>;
+  stories: MarketingStoryListItem[];
+  onPressStory: (slug: string) => void;
+  storyProgress?: Record<string, number>;
   hideCompleted?: boolean;
   sectionTitle?: string;
+  /** If set, only cards whose slug is listed are shown (order follows `stories` order). */
+  visibleSlugs?: string[];
 }
 
 export function MarketingStoryCard({
+  stories,
   onPressStory,
   storyProgress = {},
   hideCompleted = false,
   sectionTitle = "THE PHILOSOPHY",
+  visibleSlugs,
 }: MarketingStoryCardProps) {
   const { colors } = useTheme();
 
-  const visibleItems = PHILOSOPHY_ITEMS.map((title, index) => ({
-    title,
-    index,
-  })).filter(({ index }) => {
+  const slugSet =
+    visibleSlugs && visibleSlugs.length > 0
+      ? new Set(visibleSlugs)
+      : null;
+
+  const visibleItems = stories.filter(({ slug }) => {
+    if (slugSet && !slugSet.has(slug)) return false;
     if (!hideCompleted) return true;
-    const watched = storyProgress[index] ?? 0;
-    return watched < TOTAL_SLIDES;
+    const item = stories.find((s) => s.slug === slug);
+    const total = item?.slideCount ?? 1;
+    return !isMarketingStoryComplete(slug, total, storyProgress);
   });
 
   if (visibleItems.length === 0) return null;
@@ -113,12 +121,12 @@ export function MarketingStoryCard({
       </Text>
 
       <View style={{ gap: 12 }}>
-        {visibleItems.map(({ title, index }) => {
-          const watched = storyProgress[index] ?? 0;
+        {visibleItems.map(({ slug, title, description, slideCount }) => {
+          const watched = resolveStoryProgress(slug, storyProgress);
           return (
             <Pressable
-              key={index}
-              onPress={() => onPressStory(index)}
+              key={slug}
+              onPress={() => onPressStory(slug)}
               style={{
                 borderRadius: 16,
                 borderWidth: 1,
@@ -130,20 +138,34 @@ export function MarketingStoryCard({
                 justifyContent: "space-between",
               }}
             >
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 15,
-                  color: colors.text,
-                  flex: 1,
-                }}
-              >
-                {title}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontFamily: "LibreBaskerville-Regular",
+                    fontSize: 15,
+                    color: colors.text,
+                  }}
+                >
+                  {title}
+                </Text>
+                {description ? (
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Regular",
+                      fontSize: 13,
+                      color: colors.textSecondary,
+                      marginTop: 6,
+                      lineHeight: 19,
+                    }}
+                  >
+                    {description}
+                  </Text>
+                ) : null}
+              </View>
               <View style={{ marginLeft: 12 }}>
                 <ProgressRing
                   watched={watched}
-                  total={TOTAL_SLIDES}
+                  total={slideCount}
                   accentColor={colors.primary}
                   iconColor={colors.textSecondary}
                 />

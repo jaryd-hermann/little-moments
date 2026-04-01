@@ -1,23 +1,16 @@
-export const ONBOARDING_SLIDES = [
-  {
-    id: 1,
-    emoji: "📖",
-    title: "Your Daily Homework",
-    body: "Matthew Dicks calls it Homework for Life. Every day holds a story worth keeping — even the smallest, quietest moments. Little Moments helps you find them.",
-    imageName: "onboarding-1",
-  },
-  {
-    id: 2,
-    emoji: "✨",
-    title: "Capture & Dig Deeper",
-    body: "Write, record, or snap a photo. Then let AI help you uncover what makes the moment truly yours — asking the questions that pull the story out.",
-    imageName: "onboarding-2",
-  },
-  {
-    id: 3,
-    emoji: "🎬",
-    title: "Your Story Archive",
-    body: "Watch your moments build into a cinematic timeline of your life. Crash & Burn sparks forgotten memories. Your stories are already there — we help you find them.",
-    imageName: "onboarding-3",
-  },
+import type { ImageSourcePropType } from "react-native";
+
+export type OnboardingSlideDef = {
+  id: number;
+  image: ImageSourcePropType;
+};
+
+/** Six full-bleed slides after resonance / follow-up, before trial & paywall. */
+export const ONBOARDING_SLIDES: OnboardingSlideDef[] = [
+  { id: 1, image: require("@/assets/images/onboard-1.png") },
+  { id: 2, image: require("@/assets/images/onboard-2.png") },
+  { id: 3, image: require("@/assets/images/onboard-3.png") },
+  { id: 4, image: require("@/assets/images/onboard-4.png") },
+  { id: 5, image: require("@/assets/images/onboard-5.png") },
+  { id: 6, image: require("@/assets/images/onboard-6.png") },
 ];

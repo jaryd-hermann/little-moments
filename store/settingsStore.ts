@@ -24,7 +24,7 @@ export const useSettingsStore = create<SettingsStore>()(
       theme: "dark",
       accentColor: "pink",
       notificationEnabled: true,
-      notificationTime: { hour: 20, minute: 0 },
+      notificationTime: { hour: 18, minute: 0 },
       streakAtRiskEnabled: true,
       storyProgress: {},
       setTheme: (theme) => set({ theme }),

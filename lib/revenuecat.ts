@@ -15,11 +15,15 @@ export function configureRevenueCat(appUserID?: string) {
     return;
   }
 
-  Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
-  Purchases.configure({
-    apiKey,
-    appUserID: appUserID ?? undefined,
-  });
+  try {
+    Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
+    Purchases.configure({
+      apiKey,
+      appUserID: appUserID ?? undefined,
+    });
+  } catch (e) {
+    console.warn("RevenueCat: configuration failed", e);
+  }
 }
 
 export async function identifyUser(userId: string) {

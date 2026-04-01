@@ -18,6 +18,22 @@ export interface Profile {
   last_entry_date: string | null;
   total_moments: number;
   onboarding_completed: boolean;
+  onboarding_phase?:
+    | "resonance"
+    | "follow_up"
+    | "slides"
+    | "donation"
+    | "trial"
+    | "notifications"
+    | "done"
+    | null;
+  resonance_option_ids?: string[] | null;
+  donation_cause_id?: string | null;
+  follow_up_screen_key?: string | null;
+  notification_timezone?: string | null;
+  badge_push_state?: Record<string, boolean> | null;
+  last_daily_push_local_date?: string | null;
+  last_streak_risk_push_local_date?: string | null;
   created_at: string;
   updated_at: string;
 }

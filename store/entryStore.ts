@@ -7,7 +7,7 @@ export interface Entry {
   body: string;
   ai_enhanced_body: string | null;
   original_body: string | null;
-  entry_type: "moment" | "crash_and_burn";
+  entry_type: "moment" | "crash_and_burn" | "chapter";
   entry_date: string | null;
   entry_month: number | null;
   entry_year: number;
@@ -16,6 +16,7 @@ export interface Entry {
   ai_conversation: Record<string, unknown> | null;
   is_ai_enhanced: boolean;
   streak_day_number: number | null;
+  chapter_id: string | null;
   created_at: string;
   updated_at: string;
   media?: EntryMedia[];
@@ -56,7 +57,9 @@ export const useEntryStore = create<EntryStore>((set) => ({
   setTodayEntry: (todayEntry) => set({ todayEntry }),
   setIsLoading: (isLoading) => set({ isLoading }),
   addEntry: (entry) =>
-    set((state) => ({ entries: [entry, ...state.entries] })),
+    set((state) => ({
+      entries: [{ ...entry, media: entry.media ?? [] }, ...state.entries],
+    })),
   updateEntry: (id, updates) =>
     set((state) => ({
       entries: state.entries.map((e) =>

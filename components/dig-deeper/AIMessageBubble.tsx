@@ -13,6 +13,23 @@ export function AIMessageBubble({
   const { colors, theme } = useTheme();
   const isAI = role === "assistant";
 
+  if (isAI) {
+    return (
+      <View style={{ marginBottom: 18, alignSelf: "stretch", paddingRight: 8 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            lineHeight: 24,
+            color: colors.text,
+          }}
+        >
+          {content}
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View
       style={{
@@ -21,34 +38,16 @@ export function AIMessageBubble({
         borderRadius: 16,
         paddingHorizontal: 16,
         paddingVertical: 12,
-        alignSelf: isAI ? "flex-start" : "flex-end",
-        backgroundColor: isAI ? colors.surface : colors.primary,
-        borderWidth: isAI ? 1 : 0,
-        borderColor: isAI ? colors.border : "transparent",
+        alignSelf: "flex-end",
+        backgroundColor: colors.primary,
       }}
     >
-      {isAI && (
-        <Text
-          style={{
-            fontFamily: "Roboto-Medium",
-            fontSize: 11,
-            color: colors.primary,
-            marginBottom: 4,
-          }}
-        >
-          Story Coach
-        </Text>
-      )}
       <Text
         style={{
-          fontFamily: "LibreBaskerville-Regular",
+          fontFamily: "Roboto-Regular",
           fontSize: 15,
           lineHeight: 24,
-          color: isAI
-            ? colors.text
-            : theme === "dark"
-              ? "#000000"
-              : "#1A1A1A",
+          color: theme === "dark" ? "#000000" : "#1A1A1A",
         }}
       >
         {content}

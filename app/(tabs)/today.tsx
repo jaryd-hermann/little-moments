@@ -1,37 +1,92 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
+import { usePostHog } from "posthog-react-native";
 import { format, isSameDay } from "date-fns";
 import { AppHeader } from "@/components/common/AppHeader";
 import { DayStrip } from "@/components/today/DayStrip";
 import { TodayEntryCard } from "@/components/today/TodayEntryCard";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
+import { ChapterCard } from "@/components/today/ChapterCard";
+import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
 import { RecentMoments } from "@/components/today/RecentMoments";
+import { AskAiExplainerCard } from "@/components/today/AskAiExplainerCard";
 import { useEntries } from "@/hooks/useEntries";
 import { useStreak } from "@/hooks/useStreak";
 import { useAuth } from "@/hooks/useAuth";
 import { useEntryStore } from "@/store/entryStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTheme } from "@/hooks/useTheme";
+import { shareInvite } from "@/lib/inviteShare";
+import { useMarketingStories } from "@/hooks/useMarketingStories";
+import {
+  toMarketingStoryListItems,
+  resolveStoryProgress,
+  resumeSlideIndexFromProgress,
+} from "@/lib/marketingStories";
+import { useChapters } from "@/hooks/useChapters";
+import { useChapterDevStore } from "@/store/chapterStore";
+import { useChapterNotifStore } from "@/store/chapterNotifStore";
+import { useDraftStore } from "@/store/draftStore";
+import { DraftCard } from "@/components/today/DraftCard";
 
 export default function TodayScreen() {
   const { colors } = useTheme();
   const { profile } = useAuth();
+  const posthog = usePostHog();
   const { entries, fetchEntries } = useEntries();
-  const { streakCount, isAtRisk, longestStreak, totalMoments } = useStreak();
+  const {
+    streakCount,
+    isAtRisk,
+    longestStreak,
+    totalMoments,
+    memoryRaceCount,
+    avgStoryLengthWords,
+  } = useStreak();
   const selectedDate = useEntryStore((s) => s.selectedDate);
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
-  const [showStoryViewer, setShowStoryViewer] = useState(false);
-  const [activeStoryIndex, setActiveStoryIndex] = useState(0);
+  const { philosophyStories, bySlug } = useMarketingStories();
+  const philosophyListItems = useMemo(
+    () => toMarketingStoryListItems(philosophyStories),
+    [philosophyStories]
+  );
+  const [storyViewerSlug, setStoryViewerSlug] = useState<string | null>(null);
+  const activeStorySlides = storyViewerSlug
+    ? bySlug.get(storyViewerSlug)?.slides
+    : undefined;
+  const storyResumeSlideIndex = useMemo(() => {
+    if (!storyViewerSlug || !activeStorySlides?.length) return 0;
+    const p = resolveStoryProgress(storyViewerSlug, storyProgress);
+    return resumeSlideIndexFromProgress(p, activeStorySlides.length);
+  }, [storyViewerSlug, activeStorySlides, storyProgress]);
+
+  const { latestChapter, fetchChapters } = useChapters();
+  const dummyEnabled = useChapterDevStore((s) => s.dummyChapterEnabled);
+  const dummyChapter = useMemo(
+    () => (dummyEnabled ? useChapterDevStore.getState().getDummyChapter() : null),
+    [dummyEnabled]
+  );
+  const activeChapter = latestChapter ?? dummyChapter;
+  const [chapterViewerOpen, setChapterViewerOpen] = useState(false);
+
+  const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
+  const drafts = useDraftStore((s) => s.drafts);
+  const draft = drafts[selectedDateKey] ?? null;
 
   useFocusEffect(
     useCallback(() => {
       fetchEntries();
-    }, [fetchEntries])
+      fetchChapters();
+
+      const pendingId = useChapterNotifStore.getState().consume();
+      if (pendingId && activeChapter?.id === pendingId) {
+        setChapterViewerOpen(true);
+      }
+    }, [fetchEntries, fetchChapters, activeChapter?.id])
   );
 
   const entryDates = entries
@@ -51,14 +106,19 @@ export default function TodayScreen() {
       !isSameDay(new Date(e.entry_date), new Date())
   );
 
-  const handleOpenStory = (storyIndex: number) => {
-    setActiveStoryIndex(storyIndex);
-    setShowStoryViewer(true);
+  const momentCount = entries.filter(
+    (e) => e.entry_type === "moment"
+  ).length;
+
+  const handleOpenStory = (slug: string) => {
+    setStoryViewerSlug(slug);
   };
 
   const handleCloseStory = (highestSlide: number) => {
-    setStoryProgress(activeStoryIndex, highestSlide);
-    setShowStoryViewer(false);
+    if (storyViewerSlug) {
+      setStoryProgress(storyViewerSlug, highestSlide);
+    }
+    setStoryViewerSlug(null);
   };
 
   return (
@@ -70,6 +130,9 @@ export default function TodayScreen() {
         avatarUrl={profile?.avatar_url}
         longestStreak={longestStreak}
         totalMoments={totalMoments}
+        memoryRaceCount={memoryRaceCount}
+        avgStoryLengthWords={avgStoryLengthWords}
+        memberSince={profile?.created_at}
       />
 
       <ScrollView
@@ -83,27 +146,32 @@ export default function TodayScreen() {
           entryDates={entryDates}
         />
 
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 13,
-            color: colors.textMuted,
-            textAlign: "center",
-            marginVertical: 12,
-          }}
-        >
-          Your story so far: {totalMoments} moment{totalMoments !== 1 ? "s" : ""}
-        </Text>
+        {draft && !selectedEntry && (
+          <View className="mt-8 mb-2">
+            <DraftCard draft={draft} dateKey={selectedDateKey} />
+          </View>
+        )}
 
-        <View className="mb-6">
+        <View className={draft && !selectedEntry ? "mt-2 mb-6" : "mt-8 mb-6"}>
           <TodayEntryCard
             entry={selectedEntry}
             selectedDate={selectedDate}
+            hasDraft={!!draft}
           />
         </View>
 
+        {activeChapter && (
+          <View className="mb-8">
+            <ChapterCard
+              chapter={activeChapter}
+              onPress={() => setChapterViewerOpen(true)}
+            />
+          </View>
+        )}
+
         <View className="mb-8">
           <MarketingStoryCard
+            stories={philosophyListItems}
             onPressStory={handleOpenStory}
             storyProgress={storyProgress}
             hideCompleted
@@ -114,8 +182,11 @@ export default function TodayScreen() {
           <RecentMoments entries={recentEntries} />
         </View>
 
+        {momentCount < 3 ? <AskAiExplainerCard /> : null}
+
         <View style={{ gap: 12, marginBottom: 32 }}>
           <Pressable
+            onPress={() => void shareInvite()}
             style={{
               height: 52,
               borderRadius: 9999,
@@ -138,6 +209,9 @@ export default function TodayScreen() {
             </Text>
           </Pressable>
           <Pressable
+            onPress={() => {
+              posthog.capture("feedback_button_pressed", { source: "today" });
+            }}
             style={{
               height: 52,
               borderRadius: 9999,
@@ -163,9 +237,17 @@ export default function TodayScreen() {
       </ScrollView>
 
       <StoryViewer
-        visible={showStoryViewer}
+        visible={Boolean(activeStorySlides)}
+        viewerKey={storyViewerSlug ?? ""}
+        slides={activeStorySlides}
+        initialSlide={storyResumeSlideIndex}
         onClose={handleCloseStory}
-        storyIndex={activeStoryIndex}
+      />
+
+      <ChapterStoryViewer
+        visible={chapterViewerOpen && !!activeChapter}
+        chapter={activeChapter}
+        onClose={() => setChapterViewerOpen(false)}
       />
     </SafeAreaView>
   );

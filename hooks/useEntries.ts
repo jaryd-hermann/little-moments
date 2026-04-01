@@ -18,15 +18,15 @@ export function useEntries() {
     updateEntry,
     deleteEntry: removeEntry,
   } = useEntryStore();
-  const user = useAuthStore((s) => s.user);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
 
   const fetchEntries = useCallback(async () => {
-    if (!user) return;
+    if (!userId) return;
     setIsLoading(true);
     const { data } = await supabase
       .from("entries")
       .select("*, entry_media(*)")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (data) {
       const mapped = data.map((e) => ({
@@ -40,7 +40,7 @@ export function useEntries() {
       setTodayEntry(todayE);
     }
     setIsLoading(false);
-  }, [user]);
+  }, [userId]);
 
   const saveEntry = useCallback(
     async (
@@ -49,20 +49,23 @@ export function useEntries() {
         "id" | "user_id" | "created_at" | "updated_at" | "media"
       >
     ) => {
-      if (!user) throw new Error("Not authenticated");
+      if (!userId) throw new Error("Not authenticated");
 
       const { data, error } = await supabase
         .from("entries")
-        .insert({ ...entryData, user_id: user.id })
+        .insert({ ...entryData, user_id: userId })
         .select()
         .single();
 
       if (error) throw error;
       addEntry(data as Entry);
-      await updateStreakAfterEntry(user.id);
+      await updateStreakAfterEntry(userId);
+      void supabase.functions.invoke("notify-badges", { body: {} }).catch(
+        () => {}
+      );
       return data as Entry;
     },
-    [user]
+    [userId]
   );
 
   const editEntry = useCallback(

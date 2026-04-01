@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { View, Text } from "react-native";
 import Animated, {
   useSharedValue,
@@ -8,7 +8,14 @@ import Animated, {
 import { format, addDays } from "date-fns";
 import { useTheme } from "@/hooks/useTheme";
 
-const NODES = [
+type TimelineNode = {
+  label: string;
+  sublabel: string;
+  icon: string;
+  dayOffset?: number;
+};
+
+const BASE_NODES: TimelineNode[] = [
   {
     label: "Today",
     sublabel: "Your free trial begins",
@@ -29,9 +36,25 @@ const NODES = [
   },
 ];
 
-export function TrialTimeline() {
+type TrialTimelineProps = {
+  causeName?: string | null;
+};
+
+export function TrialTimeline({ causeName }: TrialTimelineProps) {
   const { colors } = useTheme();
   const lineHeight = useSharedValue(0);
+
+  const nodes = useMemo(() => {
+    const list = [...BASE_NODES];
+    if (causeName) {
+      list.push({
+        label: "Monthly",
+        sublabel: `Part of your membership supports ${causeName}`,
+        icon: "💜",
+      });
+    }
+    return list;
+  }, [causeName]);
 
   useEffect(() => {
     lineHeight.value = withTiming(1, { duration: 1200 });
@@ -43,11 +66,11 @@ export function TrialTimeline() {
 
   return (
     <View style={{ paddingHorizontal: 8 }}>
-      {NODES.map((node, index) => {
-        const date = format(
-          addDays(new Date(), node.dayOffset),
-          "MMM d, yyyy"
-        );
+      {nodes.map((node, index) => {
+        const date =
+          node.dayOffset != null
+            ? format(addDays(new Date(), node.dayOffset), "MMM d, yyyy")
+            : null;
 
         return (
           <View key={index} style={{ flexDirection: "row" }}>
@@ -70,7 +93,7 @@ export function TrialTimeline() {
               >
                 <Text style={{ fontSize: 14 }}>{node.icon}</Text>
               </View>
-              {index < NODES.length - 1 && (
+              {index < nodes.length - 1 && (
                 <View
                   style={{
                     width: 2,
@@ -100,15 +123,17 @@ export function TrialTimeline() {
                   color: colors.text,
                 }}
               >
-                {node.label}{" "}
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    color: colors.textMuted,
-                  }}
-                >
-                  — {date}
-                </Text>
+                {node.label}
+                {date && (
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Light",
+                      color: colors.textMuted,
+                    }}
+                  >
+                    {" "}— {date}
+                  </Text>
+                )}
               </Text>
               <Text
                 style={{

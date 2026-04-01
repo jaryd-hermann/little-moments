@@ -1,16 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  Linking,
-  Share,
-  Modal,
-  ScrollView,
-} from "react-native";
+import { View, Text, Pressable, Linking, ImageBackground } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
+import { usePostHog } from "posthog-react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@/hooks/useTheme";
 import { SpinWheel } from "@/components/rewind/SpinWheel";
@@ -18,10 +11,19 @@ import { DiceButton } from "@/components/rewind/DiceButton";
 import { PhotoSlideshow } from "@/components/rewind/PhotoSlideshow";
 import { useMediaLibrary, MediaAsset } from "@/hooks/useMediaLibrary";
 import { format } from "date-fns";
+import * as Haptics from "expo-haptics";
+import { useRewindComposeStore } from "@/store/rewindComposeStore";
+import { InfoTipModal } from "@/components/common/InfoTipModal";
+
+const REWIND_BG = require("@/assets/images/rewind.png");
 
 export default function RewindScreen() {
   const { colors } = useTheme();
+  const posthog = usePostHog();
   const insets = useSafeAreaInsets();
+  const setRewindComposeContext = useRewindComposeStore(
+    (s) => s.setRewindComposeContext
+  );
   const {
     permissionStatus,
     requestPermission,
@@ -60,7 +62,8 @@ export default function RewindScreen() {
 
   const navigateByDays = useCallback(
     (delta: number) => {
-      if (allPhotos.length === 0) return;
+      if (allPhotos.length === 0 || delta === 0) return;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
       setCurrentIndex((prev) => {
         const next = prev + delta;
         if (next < 0) return allPhotos.length - 1;
@@ -83,10 +86,9 @@ export default function RewindScreen() {
       setIsPlaying(false);
     } else {
       setIsPlaying(true);
+      const len = allPhotos.length;
       playInterval.current = setInterval(() => {
-        setCurrentIndex((prev) =>
-          prev + 1 >= allPhotos.length ? 0 : prev + 1
-        );
+        setCurrentIndex(Math.floor(Math.random() * len));
       }, 400);
     }
   };
@@ -97,15 +99,23 @@ export default function RewindScreen() {
     };
   }, []);
 
-  const handleShare = async () => {
-    if (!currentPhoto) return;
-    try {
-      await Share.share({
-        url: currentPhoto.uri,
-        message: `A moment from ${format(currentDate, "MMMM d, yyyy")}`,
-      });
-    } catch {}
-  };
+  useFocusEffect(
+    useCallback(() => {
+      posthog.capture("viewed_rewind");
+      if (permissionStatus === "granted" && allPhotos.length > 0) {
+        const idx = Math.floor(Math.random() * allPhotos.length);
+        setCurrentIndex(idx);
+        const photo = allPhotos[idx];
+        setRewindComposeContext(
+          photo.uri,
+          format(new Date(photo.creationTime), "yyyy-MM-dd")
+        );
+      } else {
+        setRewindComposeContext(null, null);
+      }
+      return () => setRewindComposeContext(null, null);
+    }, [permissionStatus, allPhotos, setRewindComposeContext])
+  );
 
   const handleMakeMoment = () => {
     if (!currentPhoto) return;
@@ -118,52 +128,84 @@ export default function RewindScreen() {
     });
   };
 
-  const getDateSubtitle = () => {
-    const now = new Date();
-    const diff = Math.abs(
-      Math.floor(
-        (now.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24)
-      )
-    );
-    if (diff < 7) return "This week";
-    if (diff < 30) return "This month";
-    if (diff < 365) return `${Math.floor(diff / 30)} months ago`;
-    const years = Math.floor(diff / 365);
-    return `${years} ${years === 1 ? "year" : "years"} ago`;
-  };
+  /** Reserve space for floating CustomTabBar (~72px) + safe area so CTAs stay visible */
+  const permissionGateBottomPad = insets.bottom + 108;
 
   if (permissionStatus !== "granted") {
     return (
-      <View
-        className="flex-1 items-center justify-center bg-black px-8"
-        style={{ paddingTop: insets.top }}
-      >
-        <Text className="text-6xl">📸</Text>
-        <Text className="mt-6 text-center text-2xl font-bold text-white">
-          Access Your Camera Roll
-        </Text>
-        <Text className="mt-3 text-center text-base text-gray-400">
-          Rewind through your photos to discover moments worth keeping.
-        </Text>
-        {permissionStatus === "denied" ? (
-          <Pressable
-            onPress={() => Linking.openSettings()}
-            className="mt-6 rounded-full bg-white/20 px-8 py-3"
+      <View style={{ flex: 1, backgroundColor: "#000000" }}>
+        <ImageBackground
+          source={REWIND_BG}
+          style={{
+            flex: 1,
+            width: "100%",
+          }}
+          resizeMode="cover"
+        >
+          <View
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              paddingHorizontal: 28,
+              paddingBottom: permissionGateBottomPad,
+              paddingTop: 16,
+              alignItems: "center",
+              zIndex: 2,
+            }}
           >
-            <Text className="text-base font-semibold text-white">
-              Open Settings
-            </Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            onPress={requestPermission}
-            className="mt-6 rounded-full bg-white/20 px-8 py-3"
-          >
-            <Text className="text-base font-semibold text-white">
-              Grant Access
-            </Text>
-          </Pressable>
-        )}
+          {permissionStatus === "denied" ? (
+            <Pressable
+              onPress={() => Linking.openSettings()}
+              style={{
+                marginTop: 16,
+                borderRadius: 9999,
+                backgroundColor: colors.primary,
+                borderWidth: 2,
+                borderColor: "#000000",
+                paddingHorizontal: 28,
+                paddingVertical: 14,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 15,
+                  color: "#000000",
+                  letterSpacing: 0.5,
+                }}
+              >
+                Open Settings
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={requestPermission}
+              style={{
+                marginTop: 16,
+                borderRadius: 9999,
+                backgroundColor: colors.primary,
+                borderWidth: 2,
+                borderColor: "#000000",
+                paddingHorizontal: 28,
+                paddingVertical: 14,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 15,
+                  color: "#000000",
+                  letterSpacing: 0.5,
+                }}
+              >
+                Grant Access
+              </Text>
+            </Pressable>
+          )}
+          </View>
+        </ImageBackground>
       </View>
     );
   }
@@ -173,25 +215,36 @@ export default function RewindScreen() {
       {/* Full-bleed background photo */}
       <PhotoSlideshow uri={currentPhoto?.uri ?? null} />
 
-      {/* Gradient overlays for text readability */}
-      <View
+      <LinearGradient
+        pointerEvents="none"
+        colors={[
+          "rgba(0,0,0,0.78)",
+          "rgba(0,0,0,0.38)",
+          "rgba(0,0,0,0)",
+        ]}
+        locations={[0, 0.45, 1]}
         style={{
           position: "absolute",
           top: 0,
           left: 0,
           right: 0,
-          height: "30%",
-          backgroundColor: "rgba(0,0,0,0.35)",
+          height: "48%",
         }}
       />
-      <View
+      <LinearGradient
+        pointerEvents="none"
+        colors={[
+          "rgba(0,0,0,0)",
+          "rgba(0,0,0,0.28)",
+          "rgba(0,0,0,0.68)",
+        ]}
+        locations={[0, 0.5, 1]}
         style={{
           position: "absolute",
           bottom: 0,
           left: 0,
           right: 0,
-          height: "35%",
-          backgroundColor: "rgba(0,0,0,0.4)",
+          height: "50%",
         }}
       />
 
@@ -212,13 +265,13 @@ export default function RewindScreen() {
         </Text>
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Regular",
-            fontSize: 14,
+            fontFamily: "Roboto-Light",
+            fontSize: 15,
             color: "rgba(255, 255, 255, 0.7)",
-            marginTop: 2,
+            marginTop: 4,
           }}
         >
-          {getDateSubtitle()}
+          What was this day&apos;s moment?
         </Text>
       </View>
 
@@ -247,12 +300,12 @@ export default function RewindScreen() {
               width: 36,
               height: 36,
               borderRadius: 18,
-              backgroundColor: "rgba(255,255,255,0.15)",
+              backgroundColor: colors.primary,
               alignItems: "center",
               justifyContent: "center",
             }}
           >
-            <Ionicons name="add" size={22} color="rgba(255,255,255,0.85)" />
+            <Ionicons name="add" size={24} color="#000000" />
           </View>
         </Pressable>
       </View>
@@ -263,23 +316,19 @@ export default function RewindScreen() {
         style={{ paddingBottom: insets.bottom + 100 }}
       >
         <View className="flex-row items-center justify-center" style={{ gap: 28 }}>
-          {/* Share button — left */}
-          <Pressable onPress={handleShare}>
+          {/* Add moment — same as top-right + */}
+          <Pressable onPress={handleMakeMoment}>
             <View
               style={{
                 width: 52,
                 height: 52,
                 borderRadius: 26,
-                backgroundColor: "rgba(255,255,255,0.15)",
+                backgroundColor: colors.primary,
                 alignItems: "center",
                 justifyContent: "center",
               }}
             >
-              <Ionicons
-                name="share-outline"
-                size={24}
-                color="rgba(255,255,255,0.85)"
-              />
+              <Ionicons name="add" size={28} color="#000000" />
             </View>
           </Pressable>
 
@@ -295,74 +344,45 @@ export default function RewindScreen() {
         </View>
       </View>
 
-      {/* Info Modal */}
-      <Modal
+      <InfoTipModal
         visible={showInfo}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowInfo(false)}
+        onClose={() => setShowInfo(false)}
+        title="How Rewind Works"
+        scrollable
       >
-        <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: 20,
-              paddingVertical: 12,
-              borderBottomWidth: 1,
-              borderBottomColor: colors.border,
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Bold",
-                fontSize: 18,
-                color: colors.text,
-              }}
-            >
-              How Rewind Works
-            </Text>
-            <Pressable onPress={() => setShowInfo(false)}>
-              <Ionicons name="close" size={24} color={colors.icon} />
-            </Pressable>
-          </View>
-          <ScrollView style={{ flex: 1, padding: 20 }}>
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                color: colors.textSecondary,
-                lineHeight: 28,
-              }}
-            >
-              Rewind pulls a random photo from your camera roll. Spin the dial to browse through your photos by date, or tap the dice for a surprise.
-            </Text>
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                color: colors.textSecondary,
-                lineHeight: 28,
-                marginTop: 20,
-              }}
-            >
-              When a photo sparks a memory, tap + to write a Little Moment about it. Don't forget the story — the feelings, the sounds, the details that made it matter.
-            </Text>
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                color: colors.textSecondary,
-                lineHeight: 28,
-                marginTop: 20,
-              }}
-            >
-              Hit play to start an auto-slideshow. Share your favorite rediscoveries with friends.
-            </Text>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: "#333333",
+            lineHeight: 22,
+          }}
+        >
+          Rewind pulls a random photo from your camera roll. Spin the dial to browse through your photos by date, or tap the dice for a surprise.
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: "#333333",
+            lineHeight: 22,
+            marginTop: 16,
+          }}
+        >
+          When a photo sparks a memory, tap + to write a Little Moment about it. Don&apos;t forget the story — the feelings, the sounds, the details that made it matter.
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: "#333333",
+            lineHeight: 22,
+            marginTop: 16,
+          }}
+        >
+          Hit play to start an auto-slideshow. Share your favorite rediscoveries with friends.
+        </Text>
+      </InfoTipModal>
     </View>
   );
 }

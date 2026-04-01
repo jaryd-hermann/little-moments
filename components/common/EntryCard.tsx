@@ -1,7 +1,8 @@
-import { View, Text, Pressable, Image } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { router } from "expo-router";
 import type { Entry } from "@/store/entryStore";
 import { format } from "date-fns";
+import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 
 interface EntryCardProps {
   entry: Entry;
@@ -60,9 +61,9 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
       {entry.media && entry.media.length > 0 && (
         <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
           {entry.media.slice(0, 3).map((m) => (
-            <Image
+            <EntryMediaImage
               key={m.id}
-              source={{ uri: m.storage_url ?? "" }}
+              media={m}
               style={{
                 width: compact ? 32 : 48,
                 height: compact ? 32 : 48,

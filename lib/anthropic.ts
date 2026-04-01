@@ -19,6 +19,7 @@ interface DigDeeperResponse {
   message: string;
   questions?: string[];
   enhanced_body?: string;
+  enhanced_title?: string;
 }
 
 export async function callDigDeeper(

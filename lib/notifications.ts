@@ -1,4 +1,7 @@
+import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
+
+const ANDROID_DEFAULT_CHANNEL_ID = "default";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -8,7 +11,21 @@ Notifications.setNotificationHandler({
   }),
 });
 
+let androidChannelReady = false;
+
+export async function ensureAndroidNotificationChannel(): Promise<void> {
+  if (Platform.OS !== "android" || androidChannelReady) return;
+  await Notifications.setNotificationChannelAsync(ANDROID_DEFAULT_CHANNEL_ID, {
+    name: "Default",
+    importance: Notifications.AndroidImportance.DEFAULT,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: "#f0d7ff",
+  });
+  androidChannelReady = true;
+}
+
 export async function requestNotificationPermissions(): Promise<boolean> {
+  await ensureAndroidNotificationChannel();
   const { status } = await Notifications.requestPermissionsAsync();
   return status === "granted";
 }
@@ -17,38 +34,21 @@ export async function scheduleDailyReminder(
   hour: number,
   minute: number
 ): Promise<void> {
+  await ensureAndroidNotificationChannel();
   await Notifications.cancelAllScheduledNotificationsAsync();
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "Time for your little moment",
-      body: "What was the best part of your day?",
+      title: "Little Moments",
+      body: "Share a little moment from your day.",
       sound: true,
+      ...(Platform.OS === "android"
+        ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
+        : {}),
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DAILY,
       hour,
       minute,
-    },
-  });
-}
-
-export async function scheduleStreakAtRiskNotification(
-  lastEntryDate: Date
-): Promise<void> {
-  const fireAt = new Date(
-    lastEntryDate.getTime() + 30 * 60 * 60 * 1000
-  );
-  if (fireAt < new Date()) return;
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Your streak is at risk",
-      body: "Log a moment before midnight to keep your streak alive!",
-      sound: true,
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date: fireAt,
     },
   });
 }

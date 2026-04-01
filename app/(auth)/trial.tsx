@@ -1,50 +1,108 @@
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { useEffect, useState } from "react";
+import { View, Text, Pressable, ActivityIndicator, Alert } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { usePostHog } from "posthog-react-native";
 import { TrialTimeline } from "@/components/onboarding/TrialTimeline";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useTheme } from "@/hooks/useTheme";
+import type { PurchasesPackage } from "react-native-purchases";
+
+type PlanKey = "annual" | "monthly" | "lifetime";
 
 export default function TrialScreen() {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
+  const posthog = usePostHog();
   const user = useAuthStore((s) => s.user);
-  const setProfile = useAuthStore((s) => s.setProfile);
   const profile = useAuthStore((s) => s.profile);
+  const setProfile = useAuthStore((s) => s.setProfile);
 
+  const [causeName, setCauseName] = useState<string | null>(null);
+  const [orgName, setOrgName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile?.donation_cause_id) return;
+    (async () => {
+      const { data } = await supabase
+        .from("donation_causes")
+        .select("title, org_name")
+        .eq("id", profile.donation_cause_id!)
+        .single();
+      if (data) {
+        setCauseName(data.title);
+        setOrgName(data.org_name);
+      }
+    })();
+  }, [profile?.donation_cause_id]);
   const {
     monthlyPackage,
     annualPackage,
     lifetimePackage,
     isLoadingOfferings,
+    handlePurchase,
   } = useSubscription();
 
-  const handleStartTrial = async () => {
-    if (!user) return;
+  const [selectedPlan, setSelectedPlan] = useState<PlanKey>("annual");
+  const [isPurchasing, setIsPurchasing] = useState(false);
 
-    await supabase
-      .from("profiles")
-      .update({
-        trial_start_date: new Date().toISOString(),
-        subscription_status: "trial",
-        onboarding_completed: true,
-      })
-      .eq("id", user.id);
-
-    if (profile) {
-      setProfile({
-        ...profile,
-        trial_start_date: new Date().toISOString(),
-        subscription_status: "trial",
-        onboarding_completed: true,
-      });
-    }
-
-    router.replace("/(tabs)/today");
+  const packageForPlan: Record<PlanKey, PurchasesPackage | null> = {
+    annual: annualPackage,
+    monthly: monthlyPackage,
+    lifetime: lifetimePackage,
   };
 
-  const formatPrice = (priceStr: string) => priceStr;
+  const annualMonthly = annualPackage
+    ? `Only $${(annualPackage.product.price / 12).toFixed(2)}/mo`
+    : "Only $6.66/mo";
+
+  const annualSavings = (() => {
+    if (!monthlyPackage || !annualPackage) return "19% OFF";
+    const monthlyTotal = monthlyPackage.product.price * 12;
+    const pct = Math.round(
+      ((monthlyTotal - annualPackage.product.price) / monthlyTotal) * 100
+    );
+    return `${pct}% OFF`;
+  })();
+
+  const handleContinue = async () => {
+    const pkg = packageForPlan[selectedPlan];
+    if (!pkg) return;
+
+    setIsPurchasing(true);
+    try {
+      const result = await handlePurchase(pkg);
+      if (result.success) {
+        posthog.capture("subscribed", { plan: selectedPlan });
+        await advanceOnboarding();
+      } else if (result.cancelled) {
+        // User dismissed the payment sheet
+      }
+    } catch {
+      Alert.alert("Something went wrong", "Please try again.");
+    } finally {
+      setIsPurchasing(false);
+    }
+  };
+
+  const advanceOnboarding = async () => {
+    if (!user) {
+      router.replace("/(auth)/notifications-prompt");
+      return;
+    }
+    await supabase
+      .from("profiles")
+      .update({ onboarding_phase: "notifications" })
+      .eq("id", user.id);
+    const { data: fresh } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+    if (fresh) setProfile(fresh);
+    router.replace("/(auth)/notifications-prompt");
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -57,7 +115,7 @@ export default function TrialScreen() {
             textAlign: "center",
           }}
         >
-          Start Your Free Trial
+          Start your 14-day trial
         </Text>
         <Text
           style={{
@@ -66,88 +124,96 @@ export default function TrialScreen() {
             color: colors.textSecondary,
             textAlign: "center",
             marginTop: 8,
+            paddingHorizontal: 8,
           }}
         >
-          14 days free · No credit card required
+          {causeName
+            ? `Build a proven life-changing daily ritual, and support ${causeName.toLowerCase()} every month`
+            : "Build a proven life-changing daily ritual"}
         </Text>
 
         <View style={{ marginTop: 40 }}>
-          <TrialTimeline />
+          <TrialTimeline causeName={causeName} />
         </View>
+      </View>
 
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 11,
-            color: colors.textMuted,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            marginTop: 32,
-            marginBottom: 12,
-          }}
-        >
-          PLANS AFTER TRIAL
-        </Text>
-
+      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
         {isLoadingOfferings ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 16 }} />
+          <ActivityIndicator color={colors.primary} style={{ marginBottom: 24 }} />
         ) : (
-          <View style={{ gap: 10 }}>
-            {/* Row: Monthly + Annual */}
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <PlanCard
-                label="Monthly"
-                price={monthlyPackage?.product.priceString ?? "$9.99/mo"}
-                sublabel={null}
-                style={{ flex: 1 }}
-              />
-              <PlanCard
-                label="Annual"
-                price={annualPackage?.product.priceString ?? "$79.99/yr"}
-                sublabel={annualPackage ? `~${formatMonthly(annualPackage.product.price)}/mo` : "~$6.67/mo"}
-                badge="BEST VALUE"
-                style={{ flex: 1 }}
-              />
-            </View>
-
-            {/* Lifetime */}
+          <View style={{ gap: 10, marginBottom: 20 }}>
+            <PlanOption
+              label="Year"
+              price={annualPackage?.product.priceString ?? "$79.99/yr"}
+              sublabel={annualMonthly}
+              badge={annualSavings}
+              selected={selectedPlan === "annual"}
+              onSelect={() => setSelectedPlan("annual")}
+            />
+            <PlanOption
+              label="Month"
+              price={monthlyPackage?.product.priceString ?? "$9.99/mo"}
+              selected={selectedPlan === "monthly"}
+              onSelect={() => setSelectedPlan("monthly")}
+            />
             {lifetimePackage && (
-              <PlanCard
+              <PlanOption
                 label="Lifetime"
                 price={lifetimePackage.product.priceString}
-                sublabel="One-time purchase · Forever"
+                selected={selectedPlan === "lifetime"}
+                onSelect={() => setSelectedPlan("lifetime")}
               />
             )}
           </View>
         )}
-      </View>
 
-      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
         <Pressable
-          onPress={handleStartTrial}
+          onPress={handleContinue}
+          disabled={isPurchasing || isLoadingOfferings}
           style={{
             height: 52,
             borderRadius: 9999,
-            backgroundColor: theme === "dark" ? "#FFFFFF" : "#1A1A1A",
+            backgroundColor: colors.primary,
             alignItems: "center",
             justifyContent: "center",
+            opacity: isPurchasing ? 0.6 : 1,
           }}
         >
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 15,
-              color: theme === "dark" ? "#000000" : "#FFFFFF",
-              letterSpacing: 0.8,
-              textTransform: "uppercase",
-            }}
-          >
-            START FREE TRIAL
-          </Text>
+          {isPurchasing ? (
+            <ActivityIndicator color="#000000" />
+          ) : (
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 15,
+                color: "#000000",
+                letterSpacing: 0.8,
+              }}
+            >
+              Continue
+            </Text>
+          )}
         </Pressable>
 
+        {orgName && (
+          <Text
+            style={{
+              fontFamily: "Roboto-Bold",
+              fontSize: 12,
+              color: colors.text,
+              textAlign: "center",
+              marginTop: 10,
+            }}
+          >
+            We'll send 5% to {orgName}
+          </Text>
+        )}
+
         <Pressable
-          onPress={() => router.replace("/(tabs)/today")}
+          onPress={async () => {
+            posthog.capture("skipped_trial");
+            await advanceOnboarding();
+          }}
           style={{ marginTop: 16 }}
         >
           <Text
@@ -158,7 +224,7 @@ export default function TrialScreen() {
               textAlign: "center",
             }}
           >
-            I'll decide later
+            {"I'll decide later"}
           </Text>
         </Pressable>
       </View>
@@ -166,63 +232,116 @@ export default function TrialScreen() {
   );
 }
 
-function formatMonthly(annualPrice: number): string {
-  const monthly = annualPrice / 12;
-  return `$${monthly.toFixed(2)}`;
-}
-
-function PlanCard({
+function PlanOption({
   label,
   price,
   sublabel,
   badge,
-  style,
+  selected,
+  onSelect,
 }: {
   label: string;
   price: string;
-  sublabel?: string | null;
+  sublabel?: string;
   badge?: string;
-  style?: object;
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
+
   return (
-    <View
-      style={[
-        {
+    <Pressable onPress={onSelect}>
+      <View
+        style={{
           borderRadius: 16,
-          borderWidth: 1,
-          borderColor: colors.border,
+          borderWidth: selected ? 2 : 1,
+          borderColor: selected ? colors.primary : colors.border,
           backgroundColor: colors.surface,
-          padding: 16,
-        },
-        style,
-      ]}
-    >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text
+          paddingVertical: 16,
+          paddingHorizontal: 16,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        {/* Radio circle */}
+        <View
           style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 13,
-            color: colors.textSecondary,
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            borderWidth: 2,
+            borderColor: selected ? colors.primary : colors.border,
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: 14,
           }}
         >
-          {label}
+          {selected && (
+            <View
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: colors.primary,
+              }}
+            />
+          )}
+        </View>
+
+        {/* Label + sublabel */}
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 16,
+              color: colors.text,
+            }}
+          >
+            {label}
+          </Text>
+          {sublabel && (
+            <Text
+              style={{
+                fontFamily: "Roboto-Light",
+                fontSize: 13,
+                color: colors.textSecondary,
+                marginTop: 2,
+              }}
+            >
+              {sublabel}
+            </Text>
+          )}
+        </View>
+
+        {/* Price */}
+        <Text
+          style={{
+            fontFamily: "Roboto-Medium",
+            fontSize: 16,
+            color: colors.text,
+          }}
+        >
+          {price}
         </Text>
+
+        {/* Badge */}
         {badge && (
           <View
             style={{
+              position: "absolute",
+              top: -11,
+              right: 12,
               borderRadius: 9999,
               backgroundColor: colors.primary,
-              paddingHorizontal: 6,
-              paddingVertical: 2,
+              paddingHorizontal: 10,
+              paddingVertical: 3,
             }}
           >
             <Text
               style={{
                 fontFamily: "Roboto-Medium",
-                fontSize: 9,
-                color: theme === "dark" ? "#000000" : "#1A1A1A",
-                textTransform: "uppercase",
+                fontSize: 11,
+                color: "#000000",
                 letterSpacing: 0.5,
               }}
             >
@@ -231,28 +350,6 @@ function PlanCard({
           </View>
         )}
       </View>
-      <Text
-        style={{
-          fontFamily: "Roboto-Medium",
-          fontSize: 18,
-          color: colors.textSecondary,
-          marginTop: 4,
-        }}
-      >
-        {price}
-      </Text>
-      {sublabel && (
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 12,
-            color: colors.textMuted,
-            marginTop: 2,
-          }}
-        >
-          {sublabel}
-        </Text>
-      )}
-    </View>
+    </Pressable>
   );
 }

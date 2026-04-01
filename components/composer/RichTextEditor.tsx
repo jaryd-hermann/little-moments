@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { StyleSheet } from "react-native";
 import { RichEditor } from "react-native-pell-rich-editor";
+import { useTheme } from "@/hooks/useTheme";
 
 interface RichTextEditorProps {
   initialContent?: string;
@@ -15,6 +16,8 @@ export const RichTextEditor = forwardRef<RichEditor, RichTextEditorProps>(
     { initialContent, placeholder, onChange, onFocus, onBlur },
     ref
   ) {
+    const { colors } = useTheme();
+    const contentCSSText = `font-family: Roboto-Regular, Roboto, sans-serif; font-size: 17px; line-height: 28px; color: ${colors.text}; text-align: left; margin: 0; padding: 0;`;
     return (
       <RichEditor
         ref={ref}
@@ -28,11 +31,11 @@ export const RichTextEditor = forwardRef<RichEditor, RichTextEditorProps>(
         onBlur={onBlur}
         style={styles.editor}
         editorStyle={{
-          backgroundColor: "#000000",
-          color: "#FFFFFF",
-          placeholderColor: "rgba(255, 255, 255, 0.3)",
-          contentCSSText:
-            "font-family: 'LibreBaskerville-Regular', serif; font-size: 16px; line-height: 28px; color: #FFFFFF;",
+          backgroundColor: colors.background,
+          color: colors.text,
+          placeholderColor: colors.textMuted,
+          contentCSSText,
+          paddingHorizontal: 0,
         }}
       />
     );
