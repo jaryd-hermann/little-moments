@@ -6,15 +6,31 @@
  *   Text        #1A1A1A
  *   Buttons     #f0d7ff fill, 1px #1A1A1A stroke, 24px border-radius
  *
- * Replace WORDMARK_URL with your publicly-hosted wordmark image.
+ * Wordmark: public Storage `brand/wordmark-little-moments-black.png`. Override with
+ * Edge Function secret WORDMARK_URL if you ever move the file.
  */
 
-const WORDMARK_URL =
+/** Production wordmark — `brand` bucket, public object `wordmark-little-moments-black.png` */
+const DEFAULT_WORDMARK =
   "https://smwmkeoljqnifaoqzemb.supabase.co/storage/v1/object/public/brand/wordmark-little-moments-black.png";
 
-export const APP_URL = "https://littlemoments.app/open";
+export function wordmarkUrl(): string {
+  const fromProcess =
+    typeof process !== "undefined" && process.env?.WORDMARK_URL?.trim()
+      ? process.env.WORDMARK_URL.trim()
+      : undefined;
+  if (fromProcess) return fromProcess;
+  const Deno_ = (globalThis as { Deno?: { env: { get: (k: string) => string | undefined } } })
+    .Deno;
+  const fromDeno = Deno_?.env?.get("WORDMARK_URL")?.trim();
+  if (fromDeno) return fromDeno;
+  return DEFAULT_WORDMARK;
+}
+
+export const APP_URL = "https://getlittlemoments.com/open";
 
 export function emailLayout(opts: { preheader?: string; body: string }): string {
+  const wm = wordmarkUrl();
   return `<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -40,7 +56,7 @@ export function emailLayout(opts: { preheader?: string; body: string }): string 
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
           <tr>
             <td align="center" style="padding-bottom:32px;">
-              <img src="${WORDMARK_URL}" alt="Little Moments" width="180" style="display:block;width:180px;height:auto;" />
+              <img src="${wm}" alt="Little Moments" width="180" style="display:block;width:180px;height:auto;" />
             </td>
           </tr>
           <tr>
@@ -50,7 +66,7 @@ export function emailLayout(opts: { preheader?: string; body: string }): string 
           </tr>
           <tr>
             <td style="padding-top:40px;border-top:1px solid rgba(0,0,0,0.1);text-align:center;color:rgba(0,0,0,0.4);font-size:13px;line-height:20px;">
-              <p style="margin:0;">Little Moments</p>
+              <p style="margin:0;">Little Moments — made by Jaryd Hermann</p>
               <p style="margin:4px 0 0;">You received this because you have a Little Moments account.</p>
             </td>
           </tr>
@@ -62,11 +78,19 @@ export function emailLayout(opts: { preheader?: string; body: string }): string 
 </html>`;
 }
 
+/**
+ * Rounded pill CTA: border + radius live on the &lt;a&gt; (inline-block), not the outer &lt;td&gt;,
+ * so clients do not draw a square outline around a rounded fill.
+ */
 export function ctaButton(label: string, url: string = APP_URL): string {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0;">
+  const safeLabel = label
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
   <tr>
-    <td align="center" style="background-color:#f0d7ff;border:1px solid #1A1A1A;border-radius:24px;padding:12px 32px;">
-      <a href="${url}" style="color:#1A1A1A;font-size:16px;font-weight:600;text-decoration:none;display:inline-block;">${label}</a>
+    <td align="center" style="padding:0;">
+      <a href="${url}" target="_blank" rel="noopener noreferrer" style="background-color:#f0d7ff;border:1px solid #1A1A1A;border-radius:24px;padding:12px 32px;display:inline-block;color:#1A1A1A;font-size:16px;font-weight:600;text-decoration:none;-webkit-border-radius:24px;mso-line-height-rule:exactly;line-height:1.25;">${safeLabel}</a>
     </td>
   </tr>
 </table>`;

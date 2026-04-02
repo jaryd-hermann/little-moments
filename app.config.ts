@@ -37,6 +37,14 @@ if (!googleIosClientIdEnv) {
   );
 }
 
+/** APNs + OneSignal NSE; must match EAS/Apple setup (development for dev client, production for TestFlight/App Store). */
+const oneSignalApnsMode =
+  process.env.EXPO_PUBLIC_ONESIGNAL_APN_ENV?.trim().toLowerCase() === "development"
+    ? "development"
+    : "production";
+
+const oneSignalAppGroup = `group.${IOS_BUNDLE_ID}.onesignal`;
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
@@ -62,7 +70,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       UIBackgroundModes: ["remote-notification"],
     },
     entitlements: {
-      "aps-environment": "production",
+      "aps-environment": oneSignalApnsMode,
+      "com.apple.security.application-groups": [oneSignalAppGroup],
     },
   },
   android: {
@@ -83,6 +92,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     favicon: "./assets/images/favicon.png",
   },
   plugins: [
+    [
+      "onesignal-expo-plugin",
+      {
+        mode: oneSignalApnsMode,
+        appGroupName: oneSignalAppGroup,
+      },
+    ],
     "expo-router",
     [
       "expo-splash-screen",

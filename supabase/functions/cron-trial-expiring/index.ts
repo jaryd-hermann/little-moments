@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
 
     const { data: trialUsers, error } = await supabase
       .from("profiles")
-      .select("id, email, trial_start_date, subscription_status")
+      .select("id, email, display_name, donation_cause_id, trial_start_date, subscription_status")
       .eq("subscription_status", "trial")
       .not("email", "is", null)
       .not("trial_start_date", "is", null);
@@ -54,6 +54,24 @@ Deno.serve(async (req) => {
 
     const now = Date.now();
 
+    const causeIds = [
+      ...new Set(
+        trialUsers
+          .map((u) => u.donation_cause_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const causeTitleById = new Map<string, string>();
+    if (causeIds.length > 0) {
+      const { data: causes } = await supabase
+        .from("donation_causes")
+        .select("id, title")
+        .in("id", causeIds);
+      for (const c of causes ?? []) {
+        causeTitleById.set(c.id, c.title);
+      }
+    }
+
     for (const user of trialUsers) {
       const trialEnd =
         new Date(user.trial_start_date).getTime() +
@@ -63,10 +81,17 @@ Deno.serve(async (req) => {
       let tpl: { emailKey: string; subject: string; html: string } | null =
         null;
 
+      const trialOpts = {
+        displayName: user.display_name,
+        causeTitle: user.donation_cause_id
+          ? causeTitleById.get(user.donation_cause_id) ?? null
+          : null,
+      };
+
       if (daysLeft <= 0) {
-        tpl = trialExpiredEmail();
+        tpl = trialExpiredEmail(trialOpts);
       } else if (NOTIFY_AT_DAYS_LEFT.includes(daysLeft)) {
-        tpl = trialExpiringEmail(daysLeft);
+        tpl = trialExpiringEmail(daysLeft, trialOpts);
       }
 
       if (!tpl) continue;

@@ -32,8 +32,8 @@ Deno.serve(async (req) => {
     let totalSent = 0;
 
     for (let day = 1; day <= ONBOARDING_DAY_COUNT; day++) {
-      const tpl = onboardingEmail(day);
-      if (!tpl) continue;
+      const meta = onboardingEmail(day);
+      if (!meta) continue;
 
       // Users who signed up exactly `day` days ago (calendar day in UTC)
       const targetDate = new Date();
@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
       const { data: users, error } = await supabase
         .from("profiles")
-        .select("id, email")
+        .select("id, email, display_name")
         .gte("created_at", `${dateStr}T00:00:00Z`)
         .lt("created_at", `${dateStr}T23:59:59.999Z`)
         .not("email", "is", null);
@@ -59,12 +59,14 @@ Deno.serve(async (req) => {
         .from("email_sends")
         .select("user_id")
         .in("user_id", userIds)
-        .eq("email_key", tpl.emailKey);
+        .eq("email_key", meta.emailKey);
 
       const sentSet = new Set((alreadySent ?? []).map((r) => r.user_id));
 
       for (const user of users) {
         if (sentSet.has(user.id)) continue;
+        const tpl = onboardingEmail(day, { displayName: user.display_name });
+        if (!tpl) continue;
         try {
           await sendEmail({
             to: user.email,

@@ -346,7 +346,7 @@ export default function SignInScreen() {
             <Text
               style={{ textDecorationLine: "underline" }}
               onPress={() =>
-                Linking.openURL("https://littlemoments.app/terms")
+                Linking.openURL("https://getlittlemoments.com/terms")
               }
             >
               Terms
@@ -355,7 +355,7 @@ export default function SignInScreen() {
             <Text
               style={{ textDecorationLine: "underline" }}
               onPress={() =>
-                Linking.openURL("https://littlemoments.app/privacy")
+                Linking.openURL("https://getlittlemoments.com/privacy")
               }
             >
               Privacy Policy

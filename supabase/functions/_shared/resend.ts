@@ -1,5 +1,5 @@
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
-const DEFAULT_FROM = "Little Moments <hello@littlemoments.app>";
+const DEFAULT_FROM = "Little Moments <hello@getlittlemoments.com>";
 
 export interface SendEmailOpts {
   to: string;

@@ -45,7 +45,26 @@ Deno.serve(async (req) => {
       });
     }
 
-    const tpl = welcomeEmail(display_name ?? undefined);
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("display_name, donation_cause_id")
+      .eq("id", user_id)
+      .maybeSingle();
+
+    let causeTitle: string | null = null;
+    if (profile?.donation_cause_id) {
+      const { data: cause } = await supabase
+        .from("donation_causes")
+        .select("title")
+        .eq("id", profile.donation_cause_id)
+        .maybeSingle();
+      causeTitle = cause?.title ?? null;
+    }
+
+    const tpl = welcomeEmail({
+      displayName: profile?.display_name ?? display_name ?? undefined,
+      causeTitle,
+    });
     await sendEmail({ to: email, subject: tpl.subject, html: tpl.html });
 
     await supabase

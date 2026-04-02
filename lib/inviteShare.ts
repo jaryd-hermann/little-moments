@@ -1,8 +1,8 @@
 import { Platform, Share } from "react-native";
 
 const INVITE_MESSAGE =
-  "Check out Little Moments — honor the everyday. https://littlemoments.app";
-const INVITE_URL = "https://littlemoments.app";
+  "Check out Little Moments — honor the everyday. https://getlittlemoments.com";
+const INVITE_URL = "https://getlittlemoments.com";
 
 export async function shareInvite(): Promise<void> {
   try {

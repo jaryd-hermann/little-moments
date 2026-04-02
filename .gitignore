@@ -39,6 +39,9 @@ yarn-error.*
 
 app-example
 
+# generated email HTML (npm run email:preview)
+email-previews/
+
 # generated native folders
 /ios
 /android

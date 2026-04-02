@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { configureRevenueCat, identifyUser } from "@/lib/revenuecat";
+import { initOneSignal, syncOneSignalUser } from "@/lib/onesignal";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 
 SplashScreen.preventAutoHideAsync();
@@ -36,6 +37,10 @@ function AppInner() {
     "Roboto-Medium": require("@/assets/fonts/Roboto/static/Roboto-Medium.ttf"),
     "Roboto-Bold": require("@/assets/fonts/Roboto/static/Roboto-Bold.ttf"),
   });
+
+  useEffect(() => {
+    initOneSignal();
+  }, []);
 
   useEffect(() => {
     const task = InteractionManager.runAfterInteractions(() => {
@@ -74,6 +79,9 @@ function AppInner() {
       setIsLoading(false);
       if (session?.user?.id) {
         identifyUser(session.user.id);
+        syncOneSignalUser(session.user.id);
+      } else {
+        syncOneSignalUser(null);
       }
     });
 
@@ -84,6 +92,9 @@ function AppInner() {
       setUser(session?.user ?? null);
       if (session?.user?.id) {
         identifyUser(session.user.id);
+        syncOneSignalUser(session.user.id);
+      } else {
+        syncOneSignalUser(null);
       }
     });
 
