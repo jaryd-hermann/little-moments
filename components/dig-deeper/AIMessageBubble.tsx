@@ -1,5 +1,29 @@
 import { View, Text } from "react-native";
+import type { ReactNode } from "react";
 import { useTheme } from "@/hooks/useTheme";
+
+/**
+ * Converts basic markdown bold (**text**) into rich Text nodes.
+ * Everything else is passed through as plain text.
+ */
+function renderRichText(
+  raw: string,
+  baseStyle: { fontFamily: string; fontSize: number; lineHeight: number; color: string }
+): ReactNode {
+  const parts = raw.split(/(\*\*[^*]+\*\*)/g);
+  if (parts.length === 1) return raw;
+
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <Text key={i} style={{ ...baseStyle, fontFamily: "Roboto-Bold" }}>
+          {part.slice(2, -2)}
+        </Text>
+      );
+    }
+    return <Text key={i}>{part}</Text>;
+  });
+}
 
 interface AIMessageBubbleProps {
   content: string;
@@ -14,17 +38,16 @@ export function AIMessageBubble({
   const isAI = role === "assistant";
 
   if (isAI) {
+    const baseStyle = {
+      fontFamily: "Roboto-Regular",
+      fontSize: 15,
+      lineHeight: 24,
+      color: colors.text,
+    };
     return (
       <View style={{ marginBottom: 18, alignSelf: "stretch", paddingRight: 8 }}>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 15,
-            lineHeight: 24,
-            color: colors.text,
-          }}
-        >
-          {content}
+        <Text style={baseStyle}>
+          {renderRichText(content, baseStyle)}
         </Text>
       </View>
     );

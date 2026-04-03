@@ -3,6 +3,7 @@ import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { ListViewMemories } from "@/components/memories/ListViewMemories";
 import { FlipbookMemories } from "@/components/memories/FlipbookMemories";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
@@ -232,14 +233,45 @@ export default function MemoriesScreen() {
           entries={filteredEntries}
           searchQuery={searchQuery}
           onChangeQuery={setSearchQuery}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
           onOpenChapter={(chapterId) => {
             const ch = chapterByIdMap.get(chapterId);
             if (ch) setChapterViewerChapter(ch);
           }}
         />
       </View>
+
+      <Pressable
+        onPress={() => setViewMode("flipbook")}
+        style={{
+          position: "absolute",
+          bottom: 120,
+          right: 20,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 6,
+          backgroundColor: colors.text,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          borderRadius: 28,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.15,
+          shadowRadius: 8,
+          elevation: 4,
+        }}
+      >
+        <Ionicons name="swap-horizontal" size={16} color={colors.background} />
+        <Text
+          style={{
+            fontFamily: "Roboto-Medium",
+            fontSize: 13,
+            color: colors.background,
+            letterSpacing: 0.3,
+          }}
+        >
+          Flipbook
+        </Text>
+      </Pressable>
 
       <ChapterStoryViewer
         visible={!!chapterViewerChapter}

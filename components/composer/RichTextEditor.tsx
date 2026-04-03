@@ -9,11 +9,12 @@ interface RichTextEditorProps {
   onChange: (html: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
+  onCursorPosition?: (offsetY: number) => void;
 }
 
 export const RichTextEditor = forwardRef<RichEditor, RichTextEditorProps>(
   function RichTextEditor(
-    { initialContent, placeholder, onChange, onFocus, onBlur },
+    { initialContent, placeholder, onChange, onFocus, onBlur, onCursorPosition },
     ref
   ) {
     const { colors } = useTheme();
@@ -29,6 +30,7 @@ export const RichTextEditor = forwardRef<RichEditor, RichTextEditorProps>(
         onChange={onChange}
         onFocus={onFocus}
         onBlur={onBlur}
+        onCursorPosition={onCursorPosition}
         style={styles.editor}
         editorStyle={{
           backgroundColor: colors.background,

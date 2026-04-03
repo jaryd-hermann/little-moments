@@ -10,14 +10,12 @@ import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
 
 type Grouping = "day" | "month" | "year";
-type LibraryViewMode = "list" | "flipbook";
+type SortOrder = "newest" | "oldest";
 
 interface ListViewMemoriesProps {
   entries: Entry[];
   searchQuery: string;
   onChangeQuery: (q: string) => void;
-  viewMode: LibraryViewMode;
-  onViewModeChange: (mode: LibraryViewMode) => void;
   onOpenChapter?: (chapterId: string) => void;
 }
 
@@ -27,28 +25,35 @@ const GROUPING_OPTIONS: { value: Grouping; label: string }[] = [
   { value: "year", label: "By Year" },
 ];
 
-const VIEW_MODE_OPTIONS: { value: LibraryViewMode; label: string }[] = [
-  { value: "list", label: "List" },
-  { value: "flipbook", label: "Flipbook" },
+const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
 ];
 
 export function ListViewMemories({
   entries,
   searchQuery,
   onChangeQuery,
-  viewMode,
-  onViewModeChange,
   onOpenChapter,
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
   const [grouping, setGrouping] = useState<Grouping>("day");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [showDropdown, setShowDropdown] = useState(false);
-  const [showViewDropdown, setShowViewDropdown] = useState(false);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const sections = useMemo(() => {
+    const sorted = [...entries].sort((a, b) => {
+      const da = a.entry_date ?? "";
+      const db = b.entry_date ?? "";
+      return sortOrder === "newest"
+        ? db.localeCompare(da)
+        : da.localeCompare(db);
+    });
+
     const grouped = new Map<string, Entry[]>();
 
-    for (const entry of entries) {
+    for (const entry of sorted) {
       let key: string;
       const date = entry.entry_date
         ? new Date(entry.entry_date)
@@ -73,13 +78,13 @@ export function ListViewMemories({
       count: data.length,
       data,
     }));
-  }, [entries, grouping]);
+  }, [entries, grouping, sortOrder]);
 
   const currentLabel =
     GROUPING_OPTIONS.find((o) => o.value === grouping)?.label ?? "By Day";
 
-  const currentViewLabel =
-    VIEW_MODE_OPTIONS.find((o) => o.value === viewMode)?.label ?? "List";
+  const currentSortLabel =
+    SORT_OPTIONS.find((o) => o.value === sortOrder)?.label ?? "Newest";
 
   const renderMonthCard = (section: { title: string; count: number }) => (
     <Pressable
@@ -140,7 +145,7 @@ export function ListViewMemories({
             <Pressable
               onPress={() => {
                 setShowDropdown(!showDropdown);
-                setShowViewDropdown(false);
+                setShowSortDropdown(false);
               }}
               style={{
                 flexDirection: "row",
@@ -222,7 +227,7 @@ export function ListViewMemories({
           <View style={{ position: "relative" }}>
             <Pressable
               onPress={() => {
-                setShowViewDropdown(!showViewDropdown);
+                setShowSortDropdown(!showSortDropdown);
                 setShowDropdown(false);
               }}
               style={{
@@ -247,13 +252,13 @@ export function ListViewMemories({
                 }}
                 numberOfLines={1}
               >
-                {currentViewLabel}
+                {currentSortLabel}
               </Text>
               <Text style={{ color: colors.textMuted, fontSize: 10 }}>
-                {showViewDropdown ? "▲" : "▼"}
+                {showSortDropdown ? "▲" : "▼"}
               </Text>
             </Pressable>
-            {showViewDropdown && (
+            {showSortDropdown && (
               <View
                 style={{
                   position: "absolute",
@@ -268,18 +273,18 @@ export function ListViewMemories({
                   minWidth: 112,
                 }}
               >
-                {VIEW_MODE_OPTIONS.map((opt) => (
+                {SORT_OPTIONS.map((opt) => (
                   <Pressable
                     key={opt.value}
                     onPress={() => {
-                      onViewModeChange(opt.value);
-                      setShowViewDropdown(false);
+                      setSortOrder(opt.value);
+                      setShowSortDropdown(false);
                     }}
                     style={{
                       paddingHorizontal: 16,
                       paddingVertical: 12,
                       backgroundColor:
-                        viewMode === opt.value
+                        sortOrder === opt.value
                           ? colors.primaryLight + "28"
                           : "transparent",
                     }}
@@ -289,7 +294,7 @@ export function ListViewMemories({
                         fontFamily: "Roboto-Regular",
                         fontSize: 13,
                         color:
-                          viewMode === opt.value
+                          sortOrder === opt.value
                             ? colors.primary
                             : colors.text,
                       }}

@@ -25,11 +25,13 @@ export interface Profile {
     | "donation"
     | "trial"
     | "notifications"
+    | "story_coach"
     | "done"
     | null;
   resonance_option_ids?: string[] | null;
   donation_cause_id?: string | null;
   follow_up_screen_key?: string | null;
+  story_coach_enabled?: boolean;
   notification_timezone?: string | null;
   badge_push_state?: Record<string, boolean> | null;
   last_daily_push_local_date?: string | null;

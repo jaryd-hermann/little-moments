@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
 import { format, isSameDay } from "date-fns";
 import { AppHeader } from "@/components/common/AppHeader";
@@ -31,6 +31,8 @@ import { useChapterDevStore } from "@/store/chapterStore";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 import { useDraftStore } from "@/store/draftStore";
 import { DraftCard } from "@/components/today/DraftCard";
+import { StoryCoachCard } from "@/components/today/StoryCoachCard";
+import { supabase } from "@/lib/supabase";
 
 export default function TodayScreen() {
   const { colors } = useTheme();
@@ -76,6 +78,7 @@ export default function TodayScreen() {
   const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
   const drafts = useDraftStore((s) => s.drafts);
   const draft = drafts[selectedDateKey] ?? null;
+  const [hasCoachingSession, setHasCoachingSession] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -87,6 +90,21 @@ export default function TodayScreen() {
         setChapterViewerOpen(true);
       }
     }, [fetchEntries, fetchChapters, activeChapter?.id])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedEntry?.id) {
+        setHasCoachingSession(false);
+        return;
+      }
+      supabase
+        .from("coaching_sessions")
+        .select("id")
+        .eq("entry_id", selectedEntry.id)
+        .maybeSingle()
+        .then(({ data }) => setHasCoachingSession(!!data));
+    }, [selectedEntry?.id])
   );
 
   const entryDates = entries
@@ -159,6 +177,23 @@ export default function TodayScreen() {
             hasDraft={!!draft}
           />
         </View>
+
+        {profile?.story_coach_enabled &&
+          selectedEntry &&
+          isSameDay(selectedDate, new Date()) && (
+            <View className="mb-6">
+              <StoryCoachCard
+                hasExistingSession={hasCoachingSession}
+                onPress={() => {
+                  posthog.capture("started_story_coach");
+                  router.push({
+                    pathname: "/story-coach",
+                    params: { entryId: selectedEntry.id },
+                  });
+                }}
+              />
+            </View>
+          )}
 
         {activeChapter && (
           <View className="mb-8">

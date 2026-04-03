@@ -10,6 +10,86 @@ export interface MediaAsset {
   height: number;
 }
 
+function mapExpoAsset(a: MediaLibrary.Asset): MediaAsset {
+  return {
+    id: a.id,
+    uri: a.uri,
+    creationTime: a.creationTime,
+    mediaType: "photo",
+    width: a.width,
+    height: a.height,
+  };
+}
+
+const REWIND_PHOTO_QUERY: Pick<
+  MediaLibrary.AssetsOptions,
+  "mediaType" | "sortBy"
+> = {
+  mediaType: [MediaLibrary.MediaType.photo],
+  sortBy: [MediaLibrary.SortBy.creationTime],
+};
+
+/**
+ * Picks a uniformly random photo from the entire library (not just the first page).
+ * Uses creationTime DESC (expo default), same as Rewind’s scroll order.
+ */
+export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
+  const pageSize = 400;
+  const first = await MediaLibrary.getAssetsAsync({
+    ...REWIND_PHOTO_QUERY,
+    first: pageSize,
+  });
+  const total = first.totalCount;
+  if (total === 0 || first.assets.length === 0) return null;
+
+  const r = Math.min(
+    Math.floor(Math.random() * total),
+    Math.max(0, total - 1)
+  );
+
+  if (r < first.assets.length) {
+    return mapExpoAsset(first.assets[r]);
+  }
+
+  let offset = first.assets.length;
+  let cursor: string | undefined = first.endCursor;
+
+  while (r >= offset && cursor) {
+    const page = await MediaLibrary.getAssetsAsync({
+      ...REWIND_PHOTO_QUERY,
+      first: pageSize,
+      after: cursor,
+    });
+    if (page.assets.length === 0) break;
+    if (r < offset + page.assets.length) {
+      return mapExpoAsset(page.assets[r - offset]);
+    }
+    offset += page.assets.length;
+    cursor = page.hasNextPage ? page.endCursor : undefined;
+  }
+
+  return mapExpoAsset(first.assets[first.assets.length - 1]);
+}
+
+/** Insert or locate asset in a list sorted by creationTime descending (newest first). */
+export function mergePhotoIntoSortedDesc(
+  photos: MediaAsset[],
+  asset: MediaAsset
+): { photos: MediaAsset[]; index: number } {
+  const existing = photos.findIndex((p) => p.id === asset.id);
+  if (existing >= 0) {
+    return { photos, index: existing };
+  }
+  let i = 0;
+  while (i < photos.length && photos[i].creationTime >= asset.creationTime) {
+    i++;
+  }
+  return {
+    photos: [...photos.slice(0, i), asset, ...photos.slice(i)],
+    index: i,
+  };
+}
+
 export function useMediaLibrary() {
   const [permissionStatus, setPermissionStatus] =
     useState<MediaLibrary.PermissionStatus | null>(null);
@@ -39,14 +119,7 @@ export function useMediaLibrary() {
       sortBy: [MediaLibrary.SortBy.creationTime],
     });
 
-    const mapped: MediaAsset[] = result.assets.map((a) => ({
-      id: a.id,
-      uri: a.uri,
-      creationTime: a.creationTime,
-      mediaType: "photo",
-      width: a.width,
-      height: a.height,
-    }));
+    const mapped: MediaAsset[] = result.assets.map(mapExpoAsset);
 
     allPhotosCache.current = mapped;
     setAssets(mapped);
@@ -114,15 +187,9 @@ export function useMediaLibrary() {
     []
   );
 
-  const getRandomAsset =
-    useCallback(async (): Promise<MediaAsset | null> => {
-      let pool = allPhotosCache.current;
-      if (pool.length === 0) {
-        pool = await fetchAllPhotos();
-      }
-      if (pool.length === 0) return null;
-      return pool[Math.floor(Math.random() * pool.length)];
-    }, [fetchAllPhotos]);
+  const getRandomAsset = useCallback(async (): Promise<MediaAsset | null> => {
+    return pickRandomPhotoFromLibrary();
+  }, []);
 
   return {
     permissionStatus,

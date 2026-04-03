@@ -10,6 +10,7 @@ export default function AuthLayout() {
       <Stack.Screen name="donation" />
       <Stack.Screen name="trial" />
       <Stack.Screen name="notifications-prompt" />
+      <Stack.Screen name="story-coach" />
     </Stack>
   );
 }

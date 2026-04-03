@@ -9,7 +9,12 @@ import { useTheme } from "@/hooks/useTheme";
 import { SpinWheel } from "@/components/rewind/SpinWheel";
 import { DiceButton } from "@/components/rewind/DiceButton";
 import { PhotoSlideshow } from "@/components/rewind/PhotoSlideshow";
-import { useMediaLibrary, MediaAsset } from "@/hooks/useMediaLibrary";
+import {
+  useMediaLibrary,
+  MediaAsset,
+  pickRandomPhotoFromLibrary,
+  mergePhotoIntoSortedDesc,
+} from "@/hooks/useMediaLibrary";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
 import { useRewindComposeStore } from "@/store/rewindComposeStore";
@@ -35,7 +40,17 @@ export default function RewindScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  const playInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPlayingRef = useRef(false);
+  const allPhotosRef = useRef<MediaAsset[]>([]);
+
+  const applyPickedAsset = useCallback((asset: MediaAsset) => {
+    const prev = allPhotosRef.current;
+    const { photos, index } = mergePhotoIntoSortedDesc(prev, asset);
+    allPhotosRef.current = photos;
+    setAllPhotos(photos);
+    setCurrentIndex(index);
+  }, []);
 
   const currentPhoto = allPhotos[currentIndex] ?? null;
   const currentDate = currentPhoto
@@ -52,10 +67,21 @@ export default function RewindScreen() {
     }
   }, [permissionStatus]);
 
+  useEffect(() => {
+    allPhotosRef.current = allPhotos;
+  }, [allPhotos]);
+
   const loadPhotos = async () => {
     const photos = await fetchAllPhotos();
+    allPhotosRef.current = photos;
     setAllPhotos(photos);
-    if (photos.length > 0) {
+    const asset = await pickRandomPhotoFromLibrary();
+    if (asset) {
+      const { photos: merged, index } = mergePhotoIntoSortedDesc(photos, asset);
+      allPhotosRef.current = merged;
+      setAllPhotos(merged);
+      setCurrentIndex(index);
+    } else if (photos.length > 0) {
       setCurrentIndex(Math.floor(Math.random() * photos.length));
     }
   };
@@ -75,46 +101,73 @@ export default function RewindScreen() {
   );
 
   const handleDice = async () => {
-    if (allPhotos.length === 0) return;
-    setCurrentIndex(Math.floor(Math.random() * allPhotos.length));
+    const asset = await pickRandomPhotoFromLibrary();
+    if (!asset) return;
+    applyPickedAsset(asset);
   };
+
+  const schedulePlayTick = useCallback(() => {
+    if (!isPlayingRef.current) return;
+    void pickRandomPhotoFromLibrary().then((asset) => {
+      if (!isPlayingRef.current) return;
+      if (asset) {
+        applyPickedAsset(asset);
+      }
+      if (isPlayingRef.current) {
+        playTimerRef.current = setTimeout(schedulePlayTick, 400);
+      }
+    });
+  }, [applyPickedAsset]);
 
   const handlePlay = () => {
     if (isPlaying) {
-      if (playInterval.current) clearInterval(playInterval.current);
-      playInterval.current = null;
+      isPlayingRef.current = false;
+      if (playTimerRef.current) clearTimeout(playTimerRef.current);
+      playTimerRef.current = null;
       setIsPlaying(false);
     } else {
+      isPlayingRef.current = true;
       setIsPlaying(true);
-      const len = allPhotos.length;
-      playInterval.current = setInterval(() => {
-        setCurrentIndex(Math.floor(Math.random() * len));
-      }, 400);
+      schedulePlayTick();
     }
   };
 
   useEffect(() => {
     return () => {
-      if (playInterval.current) clearInterval(playInterval.current);
+      isPlayingRef.current = false;
+      if (playTimerRef.current) clearTimeout(playTimerRef.current);
     };
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       posthog.capture("viewed_rewind");
-      if (permissionStatus === "granted" && allPhotos.length > 0) {
-        const idx = Math.floor(Math.random() * allPhotos.length);
-        setCurrentIndex(idx);
-        const photo = allPhotos[idx];
-        setRewindComposeContext(
-          photo.uri,
-          format(new Date(photo.creationTime), "yyyy-MM-dd")
-        );
+      let cancelled = false;
+      if (permissionStatus === "granted") {
+        void pickRandomPhotoFromLibrary().then((asset) => {
+          if (cancelled || !asset) {
+            if (!cancelled) setRewindComposeContext(null, null);
+            return;
+          }
+          const prev = allPhotosRef.current;
+          const { photos, index } = mergePhotoIntoSortedDesc(prev, asset);
+          allPhotosRef.current = photos;
+          setAllPhotos(photos);
+          setCurrentIndex(index);
+          const photo = photos[index];
+          setRewindComposeContext(
+            photo.uri,
+            format(new Date(photo.creationTime), "yyyy-MM-dd")
+          );
+        });
       } else {
         setRewindComposeContext(null, null);
       }
-      return () => setRewindComposeContext(null, null);
-    }, [permissionStatus, allPhotos, setRewindComposeContext])
+      return () => {
+        cancelled = true;
+        setRewindComposeContext(null, null);
+      };
+    }, [permissionStatus, posthog, setRewindComposeContext])
   );
 
   const handleMakeMoment = () => {

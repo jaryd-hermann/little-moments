@@ -1,0 +1,23 @@
+project_id = "smwmkeoljqnifaoqzemb"
+
+# Edge Function JWT: the hosted gateway can return 401 for valid ES256 (ECC) user JWTs
+# before your code runs. Disable gateway verification and validate in-function instead.
+# See: https://github.com/supabase/supabase/issues/42810
+#
+# After changing this file, redeploy affected functions:
+#   supabase functions deploy dig-deeper transcribe register-push-token notify-badges
+
+[functions.dig-deeper]
+verify_jwt = false
+
+[functions.transcribe]
+verify_jwt = false
+
+[functions.register-push-token]
+verify_jwt = false
+
+[functions.notify-badges]
+verify_jwt = false
+
+[functions.story-coach]
+verify_jwt = false

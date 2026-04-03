@@ -127,9 +127,17 @@ function AppInner() {
           name="dig-deeper/index"
           options={{ presentation: "modal" }}
         />
+        <Stack.Screen
+          name="story-coach/index"
+          options={{ presentation: "modal" }}
+        />
         <Stack.Screen name="entry/[id]" />
         <Stack.Screen
           name="settings/index"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="settings/story-coach"
           options={{ presentation: "modal" }}
         />
         <Stack.Screen

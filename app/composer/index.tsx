@@ -110,17 +110,51 @@ export default function ComposerScreen() {
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const subShow = Keyboard.addListener(showEvt, (e) => {
       setKeyboardShift(e.endCoordinates.height);
+      keyboardShiftRef.current = e.endCoordinates.height;
     });
     const subHide = Keyboard.addListener(hideEvt, () => {
       setKeyboardShift(0);
+      keyboardShiftRef.current = 0;
     });
     return () => {
       subShow.remove();
       subHide.remove();
     };
   }, []);
+
+  const handleCursorPosition = useCallback((offsetY: number) => {
+    const absoluteY = editorContainerYRef.current + offsetY;
+    const kbShift = keyboardShiftRef.current;
+    const bottomObstacle =
+      COMPOSER_DOCK_ESTIMATE + (kbShift || insetsBottomRef.current);
+    const visibleBottom =
+      scrollYRef.current + scrollViewHeightRef.current - bottomObstacle;
+
+    if (absoluteY < scrollYRef.current + 20) {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, absoluteY - 60),
+        animated: true,
+      });
+    } else if (absoluteY > visibleBottom - 30) {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(
+          0,
+          absoluteY - scrollViewHeightRef.current + bottomObstacle + 60
+        ),
+        animated: true,
+      });
+    }
+  }, []);
+
   const editorRef = useRef<RichEditor>(null);
   const titleRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const editorContainerYRef = useRef(0);
+  const scrollViewHeightRef = useRef(0);
+  const keyboardShiftRef = useRef(0);
+  const insetsBottomRef = useRef(insets.bottom);
+  insetsBottomRef.current = insets.bottom;
 
   const rawDateParam = params.date;
   const dateParam =
@@ -440,11 +474,12 @@ export default function ComposerScreen() {
         return;
       }
 
+      const wasEnhanced = !!originalText;
       const entry = await saveEntry({
         title: title.trim() || null,
         body: body.trim(),
-        ai_enhanced_body: null,
-        original_body: null,
+        ai_enhanced_body: wasEnhanced ? body.trim() : null,
+        original_body: wasEnhanced ? originalText.body : null,
         entry_type:
           params.isCrashAndBurn === "true"
             ? "crash_and_burn"
@@ -456,7 +491,7 @@ export default function ComposerScreen() {
         date_precision: precision,
         word_of_day: null,
         ai_conversation: null,
-        is_ai_enhanced: false,
+        is_ai_enhanced: wasEnhanced,
         streak_day_number: null,
       });
 
@@ -662,6 +697,7 @@ export default function ComposerScreen() {
 
       <View style={{ flex: 1 }}>
         <ScrollView
+          ref={scrollViewRef}
           className="flex-1"
           style={{ flex: 1 }}
           contentContainerStyle={{
@@ -673,6 +709,13 @@ export default function ComposerScreen() {
             flexGrow: 1,
           }}
           keyboardShouldPersistTaps="handled"
+          onScroll={(e) => {
+            scrollYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          onLayout={(e) => {
+            scrollViewHeightRef.current = e.nativeEvent.layout.height;
+          }}
         >
           <TextInput
             ref={titleRef}
@@ -691,7 +734,13 @@ export default function ComposerScreen() {
             multiline={false}
           />
 
-          <View className="mt-4 flex-1" style={{ minHeight: 250 }}>
+          <View
+            className="mt-4 flex-1"
+            style={{ minHeight: 250 }}
+            onLayout={(e) => {
+              editorContainerYRef.current = e.nativeEvent.layout.y;
+            }}
+          >
             {entryIdParam && !editLoaded ? (
               <View
                 style={{
@@ -710,6 +759,7 @@ export default function ComposerScreen() {
                 initialContent={body}
                 placeholder="What happened? What did you notice?"
                 onChange={setBody}
+                onCursorPosition={handleCursorPosition}
               />
             )}
 

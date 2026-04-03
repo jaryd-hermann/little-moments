@@ -14,6 +14,7 @@ import {
 } from "@/lib/marketingStories";
 import { requestNotificationPermissions } from "@/lib/notifications";
 import { syncPushRegistration } from "@/lib/pushRegistration";
+import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
 import { supabase } from "@/lib/supabase";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useChapterDevStore } from "@/store/chapterStore";
@@ -21,7 +22,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     Alert,
     Linking,
@@ -57,7 +58,12 @@ const PROMO_GOOD_TIMES_ASPECT = 1242 / 580;
 
 export default function SettingsScreen() {
   const { profile, signOut, deleteAccount, user } = useAuth();
-  const { subscriptionStatus } = useSubscription();
+  const {
+    subscriptionStatus,
+    canManageSubscriptionInStore,
+    refreshStoreEntitlement,
+    syncAfterSubscriptionManagement,
+  } = useSubscription();
   const posthog = usePostHog();
   const [showCustomerCenter, setShowCustomerCenter] = useState(false);
   const { colors, theme, setTheme, accentColor, setAccentColor } = useTheme();
@@ -177,11 +183,27 @@ export default function SettingsScreen() {
     setStoryViewerSlug(null);
   };
 
+  const handleManageSubscription = useCallback(async () => {
+    if (!canManageSubscriptionInStore) {
+      router.push("/paywall");
+      return;
+    }
+    if (RevenueCatUI) {
+      setShowCustomerCenter(true);
+      return;
+    }
+    await openStoreSubscriptionManagement();
+  }, [canManageSubscriptionInStore]);
+
+  const handleCustomerCenterDismiss = useCallback(async () => {
+    setShowCustomerCenter(false);
+    await syncAfterSubscriptionManagement();
+    await refreshStoreEntitlement();
+  }, [refreshStoreEntitlement, syncAfterSubscriptionManagement]);
+
   if (showCustomerCenter && RevenueCatUI) {
     return (
-      <RevenueCatUI.CustomerCenter
-        onDismiss={() => setShowCustomerCenter(false)}
-      />
+      <RevenueCatUI.CustomerCenter onDismiss={handleCustomerCenterDismiss} />
     );
   }
 
@@ -255,6 +277,8 @@ export default function SettingsScreen() {
           colors={colors}
           subscriptionStatus={subscriptionStatus}
           trialStartDate={profile?.trial_start_date ?? null}
+          canManageSubscription={canManageSubscriptionInStore}
+          onPress={handleManageSubscription}
         />
 
         {donationCauseName && (
@@ -519,6 +543,36 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Story Coach */}
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 11,
+            color: colors.textMuted,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+            marginTop: 24,
+            marginBottom: 8,
+          }}
+        >
+          STORY COACH
+        </Text>
+        <View
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <SettingRow
+            colors={colors}
+            label="Manage Story Coach"
+            sublabel={profile?.story_coach_enabled ? "On" : "Off"}
+            onPress={() => router.push("/settings/story-coach")}
+          />
+        </View>
+
         {/* THE PHILOSOPHY — always rewatchable */}
         <View style={{ marginTop: 24 }}>
           <MarketingStoryCard
@@ -616,17 +670,13 @@ export default function SettingsScreen() {
             sublabel={
               subscriptionStatus === "active"
                 ? "Active"
-                : subscriptionStatus === "trial"
-                  ? "Free Trial"
-                  : "Expired"
+                : subscriptionStatus === "cancelled"
+                  ? "Cancelled"
+                  : subscriptionStatus === "trial"
+                    ? "Free Trial"
+                    : "Expired"
             }
-            onPress={() => {
-              if (subscriptionStatus === "active") {
-                setShowCustomerCenter(true);
-              } else {
-                router.push("/paywall");
-              }
-            }}
+            onPress={() => void handleManageSubscription()}
           />
           <SettingDivider colors={colors} />
           <SettingRow
@@ -835,10 +885,14 @@ function TrialCard({
   colors,
   subscriptionStatus,
   trialStartDate,
+  canManageSubscription,
+  onPress,
 }: {
   colors: ThemePalette;
   subscriptionStatus: string;
   trialStartDate: string | null;
+  canManageSubscription: boolean;
+  onPress: () => void | Promise<void>;
 }) {
   const daysLeft = (() => {
     if (subscriptionStatus !== "trial" || !trialStartDate) return 0;
@@ -848,7 +902,7 @@ function TrialCard({
   })();
 
   const label =
-    subscriptionStatus === "active"
+    subscriptionStatus === "active" || subscriptionStatus === "cancelled"
       ? "Premium"
       : subscriptionStatus === "trial"
         ? "Free Trial"
@@ -857,9 +911,11 @@ function TrialCard({
   const sublabel =
     subscriptionStatus === "active"
       ? "You have full access"
-      : subscriptionStatus === "trial"
-        ? `${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining`
-        : "Your trial has ended";
+      : subscriptionStatus === "cancelled"
+        ? "Won’t renew — you keep access until the period ends"
+        : subscriptionStatus === "trial"
+          ? `${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining`
+          : "Your trial has ended";
 
   const barProgress =
     subscriptionStatus === "trial" && trialStartDate
@@ -868,7 +924,7 @@ function TrialCard({
 
   return (
     <Pressable
-      onPress={() => router.push("/paywall")}
+      onPress={() => void onPress()}
       style={({ pressed }) => ({
         marginTop: 16,
         backgroundColor: colors.surface,
@@ -904,13 +960,13 @@ function TrialCard({
               color: colors.textMuted,
             }}
           >
-            {subscriptionStatus === "active" ? "Manage" : "Upgrade"}
+            {canManageSubscription ? "Manage" : "Upgrade"}
           </Text>
           <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
         </View>
       </View>
 
-      {subscriptionStatus !== "active" ? (
+      {subscriptionStatus === "trial" ? (
         <>
           <View
             style={{
@@ -944,7 +1000,8 @@ function TrialCard({
             {sublabel}
           </Text>
         </>
-      ) : (
+      ) : subscriptionStatus === "active" ||
+        subscriptionStatus === "cancelled" ? (
         <Text
           style={{
             fontFamily: "Roboto-Light",
@@ -955,6 +1012,38 @@ function TrialCard({
         >
           {sublabel}
         </Text>
+      ) : (
+        <>
+          <View
+            style={{
+              marginTop: 12,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: colors.borderLight,
+              overflow: "hidden",
+            }}
+          >
+            <View
+              style={{
+                width: `${barProgress * 100}%`,
+                height: "100%",
+                borderRadius: 3,
+                backgroundColor:
+                  daysLeft <= 3 ? "#EF4444" : "#FFA946",
+              }}
+            />
+          </View>
+          <Text
+            style={{
+              fontFamily: "Roboto-Light",
+              fontSize: 12,
+              color: colors.textMuted,
+              marginTop: 6,
+            }}
+          >
+            {sublabel}
+          </Text>
+        </>
       )}
     </Pressable>
   );

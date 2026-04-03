@@ -35,6 +35,9 @@ export function routeAfterAuth(profile: Profile | null) {
     case "notifications":
       router.replace("/(auth)/notifications-prompt");
       break;
+    case "story_coach":
+      router.replace("/(auth)/story-coach");
+      break;
     case "resonance":
     default:
       router.replace("/(auth)/resonance");

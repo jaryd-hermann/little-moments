@@ -1,4 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
+import { requireAuthUser } from "../_shared/requireAuthUser.ts";
 
 const anthropic = new Anthropic({
   apiKey: Deno.env.get("ANTHROPIC_API_KEY"),
@@ -44,6 +45,9 @@ function tryParseJSON(text: string): Record<string, unknown> | null {
 }
 
 Deno.serve(async (req) => {
+  const auth = await requireAuthUser(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const {
       stage,

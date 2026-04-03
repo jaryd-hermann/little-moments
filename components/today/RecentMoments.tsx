@@ -42,7 +42,14 @@ export function RecentMoments({ entries }: RecentMomentsProps) {
       </Text>
 
       <View style={{ gap: 10 }}>
-        {entries.slice(0, 5).map((entry) => {
+        {[...entries]
+          .sort((a, b) => {
+            const da = a.entry_date ?? "";
+            const db = b.entry_date ?? "";
+            return db.localeCompare(da);
+          })
+          .slice(0, 5)
+          .map((entry) => {
           const dateStr = entry.entry_date
             ? format(new Date(entry.entry_date), "MMM d")
             : entry.entry_month

@@ -1,5 +1,4 @@
 import { supabase } from "./supabase";
-import Constants from "expo-constants";
 
 export async function transcribeAudio(
   audioUri: string
@@ -19,22 +18,17 @@ export async function transcribeAudio(
     type: "audio/m4a",
   } as unknown as Blob);
 
-  const supabaseUrl = Constants.expoConfig?.extra?.supabaseUrl as string;
-  const response = await fetch(
-    `${supabaseUrl}/functions/v1/transcribe`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: formData,
-    }
+  const { data, error } = await supabase.functions.invoke<{ text: string }>(
+    "transcribe",
+    { body: formData }
   );
 
-  if (!response.ok) {
-    throw new Error(`Transcription failed: ${response.status}`);
+  if (error) {
+    throw error;
+  }
+  if (!data?.text) {
+    throw new Error("Transcription returned no text");
   }
 
-  const { text } = await response.json();
-  return text;
+  return data.text;
 }

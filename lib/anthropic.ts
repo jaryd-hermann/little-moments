@@ -1,5 +1,4 @@
 import { supabase } from "./supabase";
-import Constants from "expo-constants";
 
 interface DigDeeperRequest {
   stage: "initial" | "follow_up" | "enhance" | "revise";
@@ -33,22 +32,17 @@ export async function callDigDeeper(
     throw new Error("Not authenticated");
   }
 
-  const supabaseUrl = Constants.expoConfig?.extra?.supabaseUrl as string;
-  const response = await fetch(
-    `${supabaseUrl}/functions/v1/dig-deeper`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-    }
+  const { data, error } = await supabase.functions.invoke<DigDeeperResponse>(
+    "dig-deeper",
+    { body: request }
   );
 
-  if (!response.ok) {
-    throw new Error(`Dig Deeper request failed: ${response.status}`);
+  if (error) {
+    throw error;
+  }
+  if (!data) {
+    throw new Error("Dig Deeper returned no data");
   }
 
-  return response.json();
+  return data;
 }

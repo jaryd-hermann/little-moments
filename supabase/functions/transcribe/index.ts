@@ -1,8 +1,12 @@
 import OpenAI from "npm:openai";
+import { requireAuthUser } from "../_shared/requireAuthUser.ts";
 
 const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
 
 Deno.serve(async (req) => {
+  const auth = await requireAuthUser(req);
+  if (!auth.ok) return auth.response;
+
   try {
     const formData = await req.formData();
     const audioFile = formData.get("audio") as File;

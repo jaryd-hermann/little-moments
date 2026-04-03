@@ -4,8 +4,11 @@ import { supabase } from "@/lib/supabase";
 import {
   checkEntitlementStatus,
   getCurrentOffering,
+  getCustomerInfo,
+  hasActiveEntitlement,
   purchasePackage,
   restorePurchases,
+  syncPurchasesForCustomerInfo,
 } from "@/lib/revenuecat";
 import type { PurchasesOffering, PurchasesPackage } from "react-native-purchases";
 
@@ -16,6 +19,10 @@ export function useSubscription() {
 
   const [offering, setOffering] = useState<PurchasesOffering | null>(null);
   const [isLoadingOfferings, setIsLoadingOfferings] = useState(false);
+  /** null = not loaded yet; used to open Customer Center for cancelled users who still have access */
+  const [storeEntitlementActive, setStoreEntitlementActive] = useState<
+    boolean | null
+  >(null);
 
   const isTrialExpired = useCallback(() => {
     if (!profile) return false;
@@ -49,6 +56,59 @@ export function useSubscription() {
   useEffect(() => {
     loadOfferings();
   }, [loadOfferings]);
+
+  const refreshStoreEntitlement = useCallback(async () => {
+    if (!profile) {
+      setStoreEntitlementActive(null);
+      return;
+    }
+    const info = await getCustomerInfo();
+    if (!info) {
+      setStoreEntitlementActive(false);
+      return;
+    }
+    setStoreEntitlementActive(hasActiveEntitlement(info));
+  }, [profile]);
+
+  useEffect(() => {
+    void refreshStoreEntitlement();
+  }, [refreshStoreEntitlement, profile?.id, profile?.subscription_status]);
+
+  const profileSuggestsPaidSubscription =
+    profile?.subscription_status === "active" ||
+    profile?.subscription_status === "cancelled";
+
+  const canManageSubscriptionInStore =
+    storeEntitlementActive === true ||
+    (storeEntitlementActive === null && profileSuggestsPaidSubscription);
+
+  const syncAfterSubscriptionManagement = useCallback(async () => {
+    if (!profile || !user) return;
+    const customerInfo = await syncPurchasesForCustomerInfo();
+    if (!customerInfo) return;
+    const entitled = hasActiveEntitlement(customerInfo);
+    if (entitled) {
+      if (
+        profile.subscription_status === "expired" ||
+        profile.subscription_status === "trial"
+      ) {
+        await supabase
+          .from("profiles")
+          .update({ subscription_status: "active" })
+          .eq("id", user.id);
+        setProfile({ ...profile, subscription_status: "active" });
+      }
+    } else if (
+      profile.subscription_status === "active" ||
+      profile.subscription_status === "cancelled"
+    ) {
+      await supabase
+        .from("profiles")
+        .update({ subscription_status: "expired" })
+        .eq("id", user.id);
+      setProfile({ ...profile, subscription_status: "expired" });
+    }
+  }, [profile, user, setProfile]);
 
   const syncSubscription = useCallback(async () => {
     if (!profile || !user) return;
@@ -113,5 +173,8 @@ export function useSubscription() {
     handlePurchase,
     handleRestore,
     loadOfferings,
+    canManageSubscriptionInStore,
+    refreshStoreEntitlement,
+    syncAfterSubscriptionManagement,
   };
 }

@@ -5,8 +5,19 @@ import Purchases, {
   CustomerInfo,
 } from "react-native-purchases";
 import Constants from "expo-constants";
+import { Linking, Platform } from "react-native";
 
+/**
+ * Store setup (App Store Connect + RevenueCat dashboard):
+ * - Put monthly and annual SKUs in the same subscription group so users can change plans in Apple’s UI.
+ * - Map both products to this entitlement in RevenueCat.
+ * - Configure Customer Center in the RevenueCat dashboard (help links, optional upgrade paths).
+ */
 const ENTITLEMENT_ID = "Little Moments";
+
+const APPLE_SUBSCRIPTIONS_URL = "https://apps.apple.com/account/subscriptions";
+const PLAY_SUBSCRIPTIONS_URL =
+  "https://play.google.com/store/account/subscriptions";
 
 export function configureRevenueCat(appUserID?: string) {
   const apiKey = Constants.expoConfig?.extra?.revenuecatIosKey;
@@ -97,4 +108,31 @@ export async function restorePurchases(): Promise<{
   } catch {
     return { success: false };
   }
+}
+
+/** Latest subscriber state from the store (e.g. after Customer Center or a purchase elsewhere). */
+export async function syncPurchasesForCustomerInfo(): Promise<CustomerInfo | null> {
+  try {
+    const { customerInfo } = await Purchases.syncPurchasesForResult();
+    return customerInfo;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Opens the platform subscription management UI when possible; otherwise the store URL.
+ * iOS: StoreKit manage sheet (iOS 13+), else Apple subscriptions web URL.
+ */
+export async function openStoreSubscriptionManagement(): Promise<void> {
+  if (Platform.OS === "ios") {
+    try {
+      await Purchases.showManageSubscriptions();
+      return;
+    } catch {
+      await Linking.openURL(APPLE_SUBSCRIPTIONS_URL);
+      return;
+    }
+  }
+  await Linking.openURL(PLAY_SUBSCRIPTIONS_URL);
 }

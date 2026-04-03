@@ -36,7 +36,9 @@ export function SpinWheel({
     if (step !== lastReportedStep.value) {
       const delta = step - lastReportedStep.value;
       lastReportedStep.value = step;
-      onRotationChange(delta);
+      // Photos are sorted creationTime DESC (newest first). Negate so clockwise /
+      // dragging forward moves toward newer photos; anticlockwise toward older.
+      onRotationChange(-delta);
     }
   };
 
