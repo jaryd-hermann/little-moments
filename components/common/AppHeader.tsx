@@ -1,31 +1,31 @@
-import { useState, useMemo } from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  Modal,
-  ScrollView,
-  Image,
-  useWindowDimensions,
-} from "react-native";
-import { Image as ExpoImage } from "expo-image";
-import { router } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { differenceInDays, format } from "date-fns";
-import { StreakBadge } from "./StreakBadge";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
-import { useTheme } from "@/hooks/useTheme";
-import { useSettingsStore } from "@/store/settingsStore";
 import { useMarketingStories } from "@/hooks/useMarketingStories";
+import { useTheme } from "@/hooks/useTheme";
 import {
-  STREAK_PHILOSOPHY_SLUG,
-  toMarketingStoryListItems,
-  hasCompletedAllPhilosophyStories,
-  resolveStoryProgress,
-  resumeSlideIndexFromProgress,
+    hasCompletedAllPhilosophyStories,
+    resolveStoryProgress,
+    resumeSlideIndexFromProgress,
+    STREAK_PHILOSOPHY_SLUG,
+    toMarketingStoryListItems,
 } from "@/lib/marketingStories";
+import { useSettingsStore } from "@/store/settingsStore";
+import { Ionicons } from "@expo/vector-icons";
+import { differenceInDays, format } from "date-fns";
+import { Image as ExpoImage } from "expo-image";
+import { router } from "expo-router";
+import { useMemo, useState } from "react";
+import {
+    Image,
+    Modal,
+    Pressable,
+    ScrollView,
+    Text,
+    useWindowDimensions,
+    View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StreakBadge } from "./StreakBadge";
 
 const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
 const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");

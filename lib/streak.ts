@@ -1,7 +1,5 @@
 import {
-  differenceInHours,
   differenceInCalendarDays,
-  isToday,
   parseISO,
 } from "date-fns";
 import { supabase } from "./supabase";
@@ -38,19 +36,17 @@ export function calculateStreak(entryDates: Date[]): {
     (a, b) => b.getTime() - a.getTime()
   );
   const lastEntry = sortedDates[0];
-  const hoursSinceLastEntry = differenceInHours(new Date(), lastEntry);
+  const today = new Date();
+  const daysSinceLastEntry = differenceInCalendarDays(today, lastEntry);
 
-  const hasEntryToday = sortedDates.some((d) => isToday(d));
-  const isAlive = hasEntryToday || hoursSinceLastEntry <= 36;
-  const isAtRisk =
-    !hasEntryToday &&
-    hoursSinceLastEntry > 24 &&
-    hoursSinceLastEntry <= 36;
+  const hasEntryToday = daysSinceLastEntry === 0;
+  const isAlive = daysSinceLastEntry <= 1;
+  const isAtRisk = !hasEntryToday && daysSinceLastEntry === 1;
 
   if (!isAlive) return { streakCount: 0, isAtRisk: false, isAlive: false };
 
   let streak = 0;
-  let checkDate = hasEntryToday ? new Date() : lastEntry;
+  let checkDate = hasEntryToday ? today : lastEntry;
 
   for (const date of sortedDates) {
     const dayDiff = differenceInCalendarDays(checkDate, date);
@@ -116,7 +112,10 @@ export async function updateStreakAfterEntry(
     .limit(60);
 
   const dates =
-    entries?.map((e) => new Date(e.entry_date as string)) ?? [];
+    entries?.map((e) => {
+      const [y, m, d] = (e.entry_date as string).split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }) ?? [];
   const { streakCount } = calculateStreak(dates);
 
   const { data: profile } = await supabase

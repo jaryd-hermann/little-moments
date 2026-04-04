@@ -17,7 +17,10 @@ export function useStreak() {
   const streakData = useMemo(() => {
     const exactDates = entries
       .filter((e) => e.date_precision === "exact" && e.entry_date)
-      .map((e) => new Date(e.entry_date!));
+      .map((e) => {
+        const [y, m, d] = e.entry_date!.split("-").map(Number);
+        return new Date(y, m - 1, d);
+      });
     return calculateStreak(exactDates);
   }, [entries]);
 

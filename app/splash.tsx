@@ -22,7 +22,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
 
-const AUTO_ADVANCE_MS = 5000;
+const AUTO_ADVANCE_MS = 7000;
 
 export default function SplashScreen() {
   const setProfile = useAuthStore((s) => s.setProfile);

@@ -1,14 +1,12 @@
-import { View, Text, Pressable } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { View, Text } from "react-native";
 
 const CARD_CREAM = "#FFFFEB";
 
 interface WordCardProps {
   word: string;
-  onShuffle: () => void;
 }
 
-export function WordCard({ word, onShuffle }: WordCardProps) {
+export function WordCard({ word }: WordCardProps) {
   return (
     <View
       style={{
@@ -20,7 +18,6 @@ export function WordCard({ word, onShuffle }: WordCardProps) {
         alignItems: "center",
         justifyContent: "center",
         paddingVertical: 24,
-        position: "relative",
       }}
     >
       <Text
@@ -32,26 +29,6 @@ export function WordCard({ word, onShuffle }: WordCardProps) {
       >
         {word}
       </Text>
-      <Pressable
-        onPress={onShuffle}
-        style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: "rgba(0, 0, 0, 0.08)",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Ionicons
-          name="shuffle"
-          size={20}
-          color="#1A1A1A"
-        />
-      </Pressable>
     </View>
   );
 }

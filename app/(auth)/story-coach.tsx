@@ -54,7 +54,7 @@ export default function StoryCoachOnboardingScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
       <StoryCoachToggle
-        defaultEnabled={wantsStorytelling}
+        defaultEnabled={true}
         personalizedNote={personalizedNote}
         onSelect={handleSelect}
         ctaLabel="Next"

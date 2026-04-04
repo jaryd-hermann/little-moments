@@ -98,11 +98,25 @@ Deno.serve(async (req) => {
 
     const { data: profFull } = await supabase
       .from("profiles")
-      .select("total_moments")
+      .select("total_moments, streak_count")
       .eq("id", user.id)
       .single();
 
     const totalMoments = profFull?.total_moments ?? 0;
+    const streakCount = profFull?.streak_count ?? 0;
+
+    const { count: photoCount, error: photoErr } = await supabase
+      .from("entry_media")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("media_type", "image");
+
+    if (photoErr) {
+      return new Response(JSON.stringify({ error: photoErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const pushToAllDevices = (
       title: string,
@@ -120,20 +134,48 @@ Deno.serve(async (req) => {
       }
     };
 
+    // --- Badges ---
+
     if (totalMoments >= 1 && !state.story_starter) {
       pushToAllDevices(
-        "New badge",
-        "You earned Story Starter — your first moment is in the books."
+        "New badge: Story Starter",
+        "Your first moment is in the books — the journey begins."
       );
       nextState.story_starter = true;
     }
 
     if ((crashCount ?? 0) >= 1 && !state.story_finder) {
       pushToAllDevices(
-        "New badge",
-        "You earned Story finder — first memory race complete."
+        "New badge: Story Finder",
+        "First memory race complete — you found a story worth keeping."
       );
       nextState.story_finder = true;
+    }
+
+    if (totalMoments >= 10 && !state.story_builder) {
+      pushToAllDevices(
+        "New badge: Story Builder",
+        "10 moments captured — your story is really taking shape."
+      );
+      nextState.story_builder = true;
+    }
+
+    if ((photoCount ?? 0) >= 1 && !state.the_photographer) {
+      pushToAllDevices(
+        "New badge: The Photographer",
+        "You added your first photo to a moment — a picture worth a thousand words."
+      );
+      nextState.the_photographer = true;
+    }
+
+    // --- Milestone notifications ---
+
+    if (streakCount >= 7 && !state.streak_seven) {
+      pushToAllDevices(
+        "7-day streak!",
+        "You've shown up 7 days in a row — that's a real habit forming. Keep it going!"
+      );
+      nextState.streak_seven = true;
     }
 
     if (tickets.length > 0) {

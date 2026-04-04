@@ -11,6 +11,7 @@ import {
   Image,
   Keyboard,
   ActivityIndicator,
+  LayoutAnimation,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -185,6 +186,7 @@ export default function ComposerScreen() {
   const [originalText, setOriginalText] = useState<{ title: string; body: string } | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
 
   const dateKey = useMemo(() => format(date, "yyyy-MM-dd"), [date]);
 
@@ -333,6 +335,40 @@ export default function ComposerScreen() {
           type: (a.type === "video" ? "video" : "image") as "image" | "video",
         })),
       ]);
+    }
+  };
+
+  const openCamera = async () => {
+    if (media.length >= MAX_ATTACHMENTS) {
+      Alert.alert("Limit reached", `You can attach up to ${MAX_ATTACHMENTS} items.`);
+      return;
+    }
+
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert(
+        "Camera access needed",
+        "Please enable camera access in your phone's Settings to take photos."
+      );
+      return;
+    }
+
+    posthog.capture("added_photo_to_moment", { source: "camera" });
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 1,
+      });
+
+      if (result && !result.canceled && result.assets.length > 0) {
+        setMedia((prev) => [
+          ...prev,
+          { uri: result.assets[0].uri, type: "image" as const },
+        ]);
+      }
+    } catch {
+      Alert.alert("Camera error", "Something went wrong. Please try again.");
     }
   };
 
@@ -834,6 +870,24 @@ export default function ComposerScreen() {
           </View>
         </ScrollView>
 
+        {mediaPickerOpen && (
+          <Pressable
+            onPress={() => {
+              LayoutAnimation.configureNext(
+                LayoutAnimation.create(200, "easeInEaseOut", "opacity")
+              );
+              setMediaPickerOpen(false);
+            }}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+            }}
+          />
+        )}
+
         <View
           style={{
             position: "absolute",
@@ -849,25 +903,116 @@ export default function ComposerScreen() {
             <MediaAttachmentBar
               compact
               leading={
-                <Pressable
-                  onPress={openGallery}
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    backgroundColor: colors.surface,
-                    borderWidth: 2,
-                    borderColor: theme === "dark" ? "#FFFFFF" : colors.border,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons
-                    name="images-outline"
-                    size={18}
-                    color={colors.text}
-                  />
-                </Pressable>
+                mediaPickerOpen ? (
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      height: 44,
+                      borderRadius: 22,
+                      borderWidth: 2,
+                      borderColor: theme === "dark" ? "#FFFFFF" : colors.border,
+                      backgroundColor: colors.surface,
+                      paddingLeft: 4,
+                      paddingRight: 4,
+                      gap: 6,
+                    }}
+                  >
+                    <Pressable
+                      onPress={() => {
+                        setMediaPickerOpen(false);
+                      }}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        backgroundColor: colors.surface,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Ionicons
+                        name="images-outline"
+                        size={18}
+                        color={colors.text}
+                      />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setMediaPickerOpen(false);
+                        openGallery();
+                      }}
+                      style={{
+                        height: 34,
+                        borderRadius: 17,
+                        backgroundColor: "#3A3A3A",
+                        paddingHorizontal: 14,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: "Roboto-Medium",
+                          fontSize: 14,
+                          color: "#FFFFFF",
+                        }}
+                      >
+                        Gallery
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setMediaPickerOpen(false);
+                        openCamera();
+                      }}
+                      style={{
+                        height: 34,
+                        borderRadius: 17,
+                        backgroundColor: "#3A3A3A",
+                        paddingHorizontal: 14,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: "Roboto-Medium",
+                          fontSize: 14,
+                          color: "#FFFFFF",
+                        }}
+                      >
+                        Camera
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      LayoutAnimation.configureNext(
+                        LayoutAnimation.create(200, "easeInEaseOut", "opacity")
+                      );
+                      setMediaPickerOpen(true);
+                    }}
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 22,
+                      backgroundColor: colors.surface,
+                      borderWidth: 2,
+                      borderColor: theme === "dark" ? "#FFFFFF" : colors.border,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons
+                      name="images-outline"
+                      size={18}
+                      color={colors.text}
+                    />
+                  </Pressable>
+                )
               }
               media={media}
               onRemoveMedia={(index) =>

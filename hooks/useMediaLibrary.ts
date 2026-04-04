@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { Dimensions, PixelRatio } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 
 export interface MediaAsset {
@@ -21,6 +22,77 @@ function mapExpoAsset(a: MediaLibrary.Asset): MediaAsset {
   };
 }
 
+/* ── Camera-only filtering ─────────────────────────────────────────────── */
+
+const SCREEN = Dimensions.get("screen");
+const PX_SCALE = PixelRatio.get();
+const SCREEN_PX_W = Math.round(SCREEN.width * PX_SCALE);
+const SCREEN_PX_H = Math.round(SCREEN.height * PX_SCALE);
+
+function isScreenshotDimensions(w: number, h: number): boolean {
+  return (
+    (w === SCREEN_PX_W && h === SCREEN_PX_H) ||
+    (w === SCREEN_PX_H && h === SCREEN_PX_W)
+  );
+}
+
+let _excludedIds: Set<string> | null = null;
+let _excludedIdsPromise: Promise<Set<string>> | null = null;
+
+const EXCLUDED_ALBUM_RE =
+  /^(screenshots|whatsapp|telegram|messenger|signal|viber|line|wechat|snapchat)$/i;
+
+async function loadExcludedAssetIds(): Promise<Set<string>> {
+  if (_excludedIds) return _excludedIds;
+  if (_excludedIdsPromise) return _excludedIdsPromise;
+
+  _excludedIdsPromise = (async () => {
+    const ids = new Set<string>();
+    try {
+      const albums = await MediaLibrary.getAlbumsAsync({
+        includeSmartAlbums: true,
+      });
+      const toExclude = albums.filter((a) =>
+        EXCLUDED_ALBUM_RE.test(a.title.trim())
+      );
+
+      for (const album of toExclude) {
+        let after: string | undefined;
+        let hasNext = true;
+        while (hasNext) {
+          const page = await MediaLibrary.getAssetsAsync({
+            album,
+            mediaType: [MediaLibrary.MediaType.photo],
+            first: 500,
+            ...(after ? { after } : {}),
+          });
+          for (const a of page.assets) ids.add(a.id);
+          hasNext = page.hasNextPage;
+          after = page.hasNextPage ? page.endCursor : undefined;
+        }
+      }
+    } catch {
+      // fail open — show all photos rather than crash
+    }
+    _excludedIds = ids;
+    _excludedIdsPromise = null;
+    return ids;
+  })();
+
+  return _excludedIdsPromise;
+}
+
+function isCameraPhoto(
+  asset: { id: string; width: number; height: number },
+  excludedIds: Set<string>
+): boolean {
+  if (excludedIds.has(asset.id)) return false;
+  if (isScreenshotDimensions(asset.width, asset.height)) return false;
+  return true;
+}
+
+/* ── Photo queries ─────────────────────────────────────────────────────── */
+
 const REWIND_PHOTO_QUERY: Pick<
   MediaLibrary.AssetsOptions,
   "mediaType" | "sortBy"
@@ -29,11 +101,7 @@ const REWIND_PHOTO_QUERY: Pick<
   sortBy: [MediaLibrary.SortBy.creationTime],
 };
 
-/**
- * Picks a uniformly random photo from the entire library (not just the first page).
- * Uses creationTime DESC (expo default), same as Rewind’s scroll order.
- */
-export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
+async function pickRandomAssetRaw(): Promise<MediaLibrary.Asset | null> {
   const pageSize = 400;
   const first = await MediaLibrary.getAssetsAsync({
     ...REWIND_PHOTO_QUERY,
@@ -48,7 +116,7 @@ export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
   );
 
   if (r < first.assets.length) {
-    return mapExpoAsset(first.assets[r]);
+    return first.assets[r];
   }
 
   let offset = first.assets.length;
@@ -62,13 +130,29 @@ export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
     });
     if (page.assets.length === 0) break;
     if (r < offset + page.assets.length) {
-      return mapExpoAsset(page.assets[r - offset]);
+      return page.assets[r - offset];
     }
     offset += page.assets.length;
     cursor = page.hasNextPage ? page.endCursor : undefined;
   }
 
-  return mapExpoAsset(first.assets[first.assets.length - 1]);
+  return first.assets[first.assets.length - 1];
+}
+
+/**
+ * Picks a uniformly random camera photo from the library,
+ * skipping screenshots and images from messaging apps.
+ */
+export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
+  const excludedIds = await loadExcludedAssetIds();
+  const maxAttempts = 12;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const raw = await pickRandomAssetRaw();
+    if (!raw) return null;
+    if (isCameraPhoto(raw, excludedIds)) return mapExpoAsset(raw);
+  }
+  return null;
 }
 
 /** Insert or locate asset in a list sorted by creationTime descending (newest first). */
@@ -113,13 +197,19 @@ export function useMediaLibrary() {
     if (allPhotosCache.current.length > 0) return allPhotosCache.current;
 
     setIsLoading(true);
-    const result = await MediaLibrary.getAssetsAsync({
-      mediaType: [MediaLibrary.MediaType.photo],
-      first: 1000,
-      sortBy: [MediaLibrary.SortBy.creationTime],
-    });
 
-    const mapped: MediaAsset[] = result.assets.map(mapExpoAsset);
+    const [result, excludedIds] = await Promise.all([
+      MediaLibrary.getAssetsAsync({
+        mediaType: [MediaLibrary.MediaType.photo],
+        first: 1000,
+        sortBy: [MediaLibrary.SortBy.creationTime],
+      }),
+      loadExcludedAssetIds(),
+    ]);
+
+    const mapped: MediaAsset[] = result.assets
+      .filter((a) => isCameraPhoto(a, excludedIds))
+      .map(mapExpoAsset);
 
     allPhotosCache.current = mapped;
     setAssets(mapped);
@@ -135,22 +225,20 @@ export function useMediaLibrary() {
       const endOfDay = new Date(date);
       endOfDay.setHours(23, 59, 59, 999);
 
-      const result = await MediaLibrary.getAssetsAsync({
-        mediaType: [MediaLibrary.MediaType.photo],
-        createdAfter: startOfDay.getTime(),
-        createdBefore: endOfDay.getTime(),
-        first: 100,
-        sortBy: [MediaLibrary.SortBy.creationTime],
-      });
+      const [result, excludedIds] = await Promise.all([
+        MediaLibrary.getAssetsAsync({
+          mediaType: [MediaLibrary.MediaType.photo],
+          createdAfter: startOfDay.getTime(),
+          createdBefore: endOfDay.getTime(),
+          first: 100,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        }),
+        loadExcludedAssetIds(),
+      ]);
 
-      const mapped: MediaAsset[] = result.assets.map((a) => ({
-        id: a.id,
-        uri: a.uri,
-        creationTime: a.creationTime,
-        mediaType: "photo",
-        width: a.width,
-        height: a.height,
-      }));
+      const mapped: MediaAsset[] = result.assets
+        .filter((a) => isCameraPhoto(a, excludedIds))
+        .map(mapExpoAsset);
       setAssets(mapped);
       setIsLoading(false);
       return mapped;
@@ -164,22 +252,20 @@ export function useMediaLibrary() {
       const startDate = new Date(year, 0, 1).getTime();
       const endDate = new Date(year + 1, 0, 1).getTime();
 
-      const result = await MediaLibrary.getAssetsAsync({
-        mediaType: [MediaLibrary.MediaType.photo],
-        createdAfter: startDate,
-        createdBefore: endDate,
-        first: 100,
-        sortBy: [MediaLibrary.SortBy.creationTime],
-      });
+      const [result, excludedIds] = await Promise.all([
+        MediaLibrary.getAssetsAsync({
+          mediaType: [MediaLibrary.MediaType.photo],
+          createdAfter: startDate,
+          createdBefore: endDate,
+          first: 100,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        }),
+        loadExcludedAssetIds(),
+      ]);
 
-      const mapped: MediaAsset[] = result.assets.map((a) => ({
-        id: a.id,
-        uri: a.uri,
-        creationTime: a.creationTime,
-        mediaType: "photo",
-        width: a.width,
-        height: a.height,
-      }));
+      const mapped: MediaAsset[] = result.assets
+        .filter((a) => isCameraPhoto(a, excludedIds))
+        .map(mapExpoAsset);
       setAssets(mapped);
       setIsLoading(false);
       return mapped;

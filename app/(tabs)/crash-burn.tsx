@@ -17,7 +17,7 @@ import { format } from "date-fns";
 import { WordCard } from "@/components/crash-burn/WordCard";
 import { RaceTimer } from "@/components/crash-burn/RaceTimer";
 import { CrashBurnComposer } from "@/components/crash-burn/CrashBurnComposer";
-import { CRASH_BURN_WORDS, getDailyWord } from "@/constants/words";
+import { getDailyWord } from "@/constants/words";
 import { useEntries } from "@/hooks/useEntries";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -47,12 +47,11 @@ export default function CrashBurnScreen() {
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
 
   const [phase, setPhase] = useState<Phase>("pre-race");
-  const [word, setWord] = useState(getDailyWord());
+  const [word] = useState(getDailyWord());
   const [raceText, setRaceText] = useState("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const raceFinishedRef = useRef(false);
-  const usedWords = useRef<Set<string>>(new Set([word]));
 
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
@@ -85,20 +84,6 @@ export default function CrashBurnScreen() {
       setRaceText(pending.enhancedBody.trim());
     }, [])
   );
-
-  const handleShuffle = () => {
-    const available = CRASH_BURN_WORDS.filter(
-      (w) => !usedWords.current.has(w)
-    );
-    if (available.length === 0) {
-      usedWords.current.clear();
-    }
-    const pool =
-      available.length > 0 ? available : CRASH_BURN_WORDS;
-    const next = pool[Math.floor(Math.random() * pool.length)];
-    usedWords.current.add(next);
-    setWord(next);
-  };
 
   const startRace = () => {
     posthog.capture("started_memory_jog");
@@ -284,7 +269,7 @@ export default function CrashBurnScreen() {
           ) : null}
 
           <View style={{ marginTop: 24 }}>
-            <WordCard word={word} onShuffle={handleShuffle} />
+            <WordCard word={word} />
           </View>
 
           <Text

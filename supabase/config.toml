@@ -4,8 +4,8 @@ project_id = "smwmkeoljqnifaoqzemb"
 # before your code runs. Disable gateway verification and validate in-function instead.
 # See: https://github.com/supabase/supabase/issues/42810
 #
-# After changing this file, redeploy affected functions:
-#   supabase functions deploy dig-deeper transcribe register-push-token notify-badges
+# After changing this file, redeploy all functions:
+#   supabase functions deploy --project-ref smwmkeoljqnifaoqzemb
 
 [functions.dig-deeper]
 verify_jwt = false
@@ -20,4 +20,22 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.story-coach]
+verify_jwt = false
+
+[functions.cron-evening-pushes]
+verify_jwt = false
+
+[functions.cron-chapters]
+verify_jwt = false
+
+[functions.cron-onboarding-emails]
+verify_jwt = false
+
+[functions.cron-trial-expiring]
+verify_jwt = false
+
+[functions.send-welcome-email]
+verify_jwt = false
+
+[functions.revenuecat-webhook]
 verify_jwt = false
