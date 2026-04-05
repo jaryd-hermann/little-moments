@@ -141,7 +141,6 @@ export default function RewindScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      posthog.capture("viewed_rewind");
       let cancelled = false;
       if (permissionStatus === "granted") {
         void pickRandomPhotoFromLibrary().then((asset) => {

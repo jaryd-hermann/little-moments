@@ -15,21 +15,25 @@ import {
 import { requestNotificationPermissions } from "@/lib/notifications";
 import { syncPushRegistration } from "@/lib/pushRegistration";
 import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
+import { uploadAvatar } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useChapterDevStore } from "@/store/chapterStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     Linking,
     Pressable,
     ScrollView,
     Switch,
     Text,
+    TextInput,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -57,7 +61,7 @@ const PROMO_GOOD_TIMES = require("@/assets/images/promo-good-times.png");
 const PROMO_GOOD_TIMES_ASPECT = 1242 / 580;
 
 export default function SettingsScreen() {
-  const { profile, signOut, deleteAccount, user } = useAuth();
+  const { profile, signOut, deleteAccount, user, fetchProfile } = useAuth();
   const {
     subscriptionStatus,
     canManageSubscriptionInStore,
@@ -66,7 +70,63 @@ export default function SettingsScreen() {
   } = useSubscription();
   const posthog = usePostHog();
   const [showCustomerCenter, setShowCustomerCenter] = useState(false);
+
+  useEffect(() => {
+    posthog.capture("viewed_settings");
+  }, []);
   const { colors, theme, setTheme, accentColor, setAccentColor } = useTheme();
+
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const nameIsEmail =
+    profile?.display_name?.trim() === profile?.email;
+  const [displayName, setDisplayName] = useState(
+    nameIsEmail ? "" : (profile?.display_name ?? "")
+  );
+  const nameInputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (profile?.display_name != null) {
+      const isEmail = profile.display_name.trim() === profile.email;
+      setDisplayName(isEmail ? "" : profile.display_name);
+    }
+  }, [profile?.display_name, profile?.email]);
+
+  const handlePickAvatar = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 1,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri || !user) return;
+
+    setAvatarUploading(true);
+    try {
+      const publicUrl = await uploadAvatar(user.id, result.assets[0].uri);
+      await supabase
+        .from("profiles")
+        .update({ avatar_url: publicUrl })
+        .eq("id", user.id);
+      await fetchProfile();
+    } catch (e: any) {
+      Alert.alert("Upload failed", e.message ?? "Please try again.");
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleSaveDisplayName = async () => {
+    const trimmed = displayName.trim();
+    const currentName = profile?.display_name?.trim() ?? "";
+    const isEmail = currentName === profile?.email;
+    const effectiveCurrent = isEmail ? "" : currentName;
+    if (!user || trimmed === effectiveCurrent) return;
+    await supabase
+      .from("profiles")
+      .update({ display_name: trimmed || null })
+      .eq("id", user.id);
+    await fetchProfile();
+  };
   const notificationEnabled = useSettingsStore(
     (s) => s.notificationEnabled
   );
@@ -246,26 +306,83 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView className="flex-1 px-5" showsVerticalScrollIndicator={false}>
-        {/* Profile header — avoid repeating the same email as name + subtitle */}
+        {/* Profile header */}
         <View style={{ marginTop: 24, marginBottom: 16, alignItems: "center" }}>
-          <Text
+          <Pressable
+            onPress={handlePickAvatar}
             style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 18,
-              color: colors.text,
+              width: 88,
+              height: 88,
+              borderRadius: 44,
+              backgroundColor: colors.surfaceSecondary,
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: 14,
+              overflow: "hidden",
             }}
           >
-            {profile?.display_name?.trim() || profile?.email || "User"}
-          </Text>
-          {profile?.email &&
-          profile?.display_name?.trim() &&
-          profile.display_name.trim() !== profile.email ? (
+            {avatarUploading ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : profile?.avatar_url ? (
+              <Image
+                source={{ uri: profile.avatar_url }}
+                style={{ width: 88, height: 88, borderRadius: 44 }}
+                contentFit="cover"
+              />
+            ) : (
+              <Ionicons name="person" size={36} color={colors.textMuted} />
+            )}
+            <View
+              style={{
+                position: "absolute",
+                bottom: 0,
+                right: 0,
+                width: 28,
+                height: 28,
+                borderRadius: 14,
+                backgroundColor: colors.primary,
+                alignItems: "center",
+                justifyContent: "center",
+                borderWidth: 2,
+                borderColor: colors.background,
+              }}
+            >
+              <Ionicons name="camera" size={14} color="#FFFFFF" />
+            </View>
+          </Pressable>
+
+          <TextInput
+            ref={nameInputRef}
+            value={displayName}
+            onChangeText={setDisplayName}
+            onSubmitEditing={handleSaveDisplayName}
+            onBlur={handleSaveDisplayName}
+            placeholder="Tell Ellie your name"
+            placeholderTextColor={colors.textMuted}
+            returnKeyType="done"
+            maxLength={50}
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 16,
+              color: colors.text,
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              width: "100%",
+              textAlign: "center",
+              backgroundColor: colors.surface,
+            }}
+          />
+
+          {profile?.email ? (
             <Text
               style={{
                 fontFamily: "Roboto-Light",
                 fontSize: 14,
                 color: colors.textMuted,
-                marginTop: 2,
+                marginTop: 6,
               }}
             >
               {profile.email}
@@ -273,45 +390,17 @@ export default function SettingsScreen() {
           ) : null}
         </View>
 
-        <TrialCard
+        <MembershipCard
           colors={colors}
           subscriptionStatus={subscriptionStatus}
-          trialStartDate={profile?.trial_start_date ?? null}
+          createdAt={profile?.created_at ?? null}
           canManageSubscription={canManageSubscriptionInStore}
-          onPress={handleManageSubscription}
+          onManage={handleManageSubscription}
+          onExplore={() => {
+            posthog.capture("premium_card_tapped", { source: "settings" });
+            router.push("/ellie-premium");
+          }}
         />
-
-        {donationCauseName && (
-          <View
-            style={{
-              marginTop: 10,
-              backgroundColor: colors.surface,
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: colors.border,
-              paddingHorizontal: 18,
-              paddingVertical: 14,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <Text style={{ fontSize: 16 }}>💜</Text>
-            <Text
-              style={{
-                flex: 1,
-                fontFamily: "Roboto-Light",
-                fontSize: 13,
-                color: colors.textSecondary,
-                lineHeight: 18,
-              }}
-            >
-              {subscriptionStatus === "active"
-                ? `Your membership supports ${donationCauseName}`
-                : `Your membership will start supporting ${donationCauseName}`}
-            </Text>
-          </View>
-        )}
 
         {SHOW_APPEARANCE_SETTINGS ? (
           <>
@@ -543,36 +632,6 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Story Coach */}
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 11,
-            color: colors.textMuted,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            marginTop: 24,
-            marginBottom: 8,
-          }}
-        >
-          STORY COACH
-        </Text>
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: colors.border,
-          }}
-        >
-          <SettingRow
-            colors={colors}
-            label="Manage Story Coach"
-            sublabel={profile?.story_coach_enabled ? "On" : "Off"}
-            onPress={() => router.push("/settings/story-coach")}
-          />
-        </View>
-
         {/* THE PHILOSOPHY — always rewatchable */}
         <View style={{ marginTop: 24 }}>
           <MarketingStoryCard
@@ -672,19 +731,27 @@ export default function SettingsScreen() {
                 ? "Active"
                 : subscriptionStatus === "cancelled"
                   ? "Cancelled"
-                  : subscriptionStatus === "trial"
-                    ? "Free Trial"
-                    : "Expired"
+                  : "Free"
             }
-            onPress={() => void handleManageSubscription()}
+            onPress={() => {
+              if (subscriptionStatus === "free" || subscriptionStatus === "trial") {
+                router.push("/paywall/upgrade");
+              } else {
+                void handleManageSubscription();
+              }
+            }}
           />
-          <SettingDivider colors={colors} />
-          <SettingRow
-            colors={colors}
-            label="Manage your donation"
-            sublabel={donationCauseName ?? undefined}
-            onPress={() => router.push("/settings/manage-donation")}
-          />
+          {subscriptionStatus === "active" && (
+            <>
+              <SettingDivider colors={colors} />
+              <SettingRow
+                colors={colors}
+                label="Manage your donation"
+                sublabel={donationCauseName ?? undefined}
+                onPress={() => router.push("/settings/manage-donation")}
+              />
+            </>
+          )}
           <SettingDivider colors={colors} />
           <SettingRow
             colors={colors}
@@ -736,7 +803,7 @@ export default function SettingsScreen() {
           />
         </View>
 
-        <Pressable onPress={signOut} style={{ marginTop: 24, marginBottom: 48 }}>
+        <Pressable onPress={() => { posthog.capture("logged_out"); signOut(); }} style={{ marginTop: 24, marginBottom: 48 }}>
           <Text
             style={{
               fontFamily: "Roboto-Medium",
@@ -879,172 +946,138 @@ function DummyChapterToggle({ colors }: { colors: ThemePalette }) {
   );
 }
 
-const TRIAL_DAYS = 14;
+const WORDMARK_PREMIUM = require("@/assets/images/wordmark-premium.png");
 
-function TrialCard({
+function MembershipCard({
   colors,
   subscriptionStatus,
-  trialStartDate,
-  canManageSubscription,
-  onPress,
+  createdAt,
+  onManage,
+  onExplore,
 }: {
   colors: ThemePalette;
   subscriptionStatus: string;
-  trialStartDate: string | null;
+  createdAt: string | null;
   canManageSubscription: boolean;
-  onPress: () => void | Promise<void>;
+  onManage: () => void | Promise<void>;
+  onExplore: () => void;
 }) {
-  const daysLeft = (() => {
-    if (subscriptionStatus !== "trial" || !trialStartDate) return 0;
-    const end =
-      new Date(trialStartDate).getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000;
-    return Math.max(0, Math.ceil((end - Date.now()) / (24 * 60 * 60 * 1000)));
-  })();
+  const sinceDate = createdAt
+    ? new Date(createdAt).toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      })
+    : null;
 
-  const label =
-    subscriptionStatus === "active" || subscriptionStatus === "cancelled"
-      ? "Premium"
-      : subscriptionStatus === "trial"
-        ? "Free Trial"
-        : "Expired";
+  const isPremium =
+    subscriptionStatus === "active" || subscriptionStatus === "cancelled";
+  const isFree =
+    subscriptionStatus === "free" || subscriptionStatus === "trial";
 
-  const sublabel =
-    subscriptionStatus === "active"
-      ? "You have full access"
-      : subscriptionStatus === "cancelled"
-        ? "Won’t renew — you keep access until the period ends"
-        : subscriptionStatus === "trial"
-          ? `${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining`
-          : "Your trial has ended";
+  const handlePress = () => {
+    if (isFree) {
+      onExplore();
+    } else {
+      void onManage();
+    }
+  };
 
-  const barProgress =
-    subscriptionStatus === "trial" && trialStartDate
-      ? Math.min(1, Math.max(1 / TRIAL_DAYS, 1 - daysLeft / TRIAL_DAYS))
-      : 1;
-
-  return (
-    <Pressable
-      onPress={() => void onPress()}
-      style={({ pressed }) => ({
-        marginTop: 16,
-        backgroundColor: colors.surface,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: colors.border,
-        paddingHorizontal: 18,
-        paddingVertical: 16,
-        opacity: pressed ? 0.7 : 1,
-      })}
-    >
+  if (isPremium) {
+    const premiumSublabel =
+      subscriptionStatus === "active"
+        ? "You have full access"
+        : "Access until the end of your billing period";
+    return (
       <View
         style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
+          marginTop: 16,
+          backgroundColor: "#202020",
+          borderRadius: 14,
+          borderWidth: 2,
+          borderColor: "#FECFB4",
+          paddingHorizontal: 24,
+          paddingVertical: 24,
         }}
       >
-        <Text
-          style={{
-            fontFamily: "Roboto-Medium",
-            fontSize: 15,
-            color: colors.text,
-          }}
-        >
-          {label}
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Text
-            style={{
-              fontFamily: "Roboto-Regular",
-              fontSize: 13,
-              color: colors.textMuted,
-            }}
-          >
-            {canManageSubscription ? "Manage" : "Upgrade"}
-          </Text>
-          <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
-        </View>
-      </View>
-
-      {subscriptionStatus === "trial" ? (
-        <>
-          <View
-            style={{
-              marginTop: 12,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: colors.borderLight,
-              overflow: "hidden",
-            }}
-          >
-            <View
-              style={{
-                width: `${barProgress * 100}%`,
-                height: "100%",
-                borderRadius: 3,
-                backgroundColor:
-                  daysLeft <= 3 ? "#EF4444" : "#FFA946",
-              }}
-            />
-          </View>
+        <Pressable onPress={handlePress}>
+          <Image
+            source={WORDMARK_PREMIUM}
+            style={{ height: 36, width: "100%", alignSelf: "center" }}
+            contentFit="contain"
+          />
           <Text
             style={{
               fontFamily: "Roboto-Light",
-              fontSize: 12,
-              color: daysLeft <= 3 && subscriptionStatus === "trial"
-                ? "#EF4444"
-                : colors.textMuted,
-              marginTop: 6,
+              fontSize: 14,
+              color: "#FFFFFF",
+              textAlign: "center",
+              marginTop: 18,
             }}
           >
-            {sublabel}
+            {premiumSublabel}
           </Text>
-        </>
-      ) : subscriptionStatus === "active" ||
-        subscriptionStatus === "cancelled" ? (
+          {sinceDate && (
+            <Text
+              style={{
+                fontFamily: "Roboto-Light",
+                fontSize: 13,
+                color: "rgba(255,255,255,0.45)",
+                textAlign: "center",
+                marginTop: 14,
+              }}
+            >
+              Premium member since {sinceDate}
+            </Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={{
+        marginTop: 16,
+        backgroundColor: "#202020",
+        borderRadius: 14,
+        borderWidth: 2,
+        borderColor: "#FECFB4",
+        paddingHorizontal: 24,
+        paddingVertical: 24,
+      }}
+    >
+      <Pressable onPress={handlePress}>
+        <Image
+          source={WORDMARK_PREMIUM}
+          style={{ height: 36, width: "100%", alignSelf: "center" }}
+          contentFit="contain"
+        />
         <Text
           style={{
             fontFamily: "Roboto-Light",
-            fontSize: 12,
-            color: colors.textMuted,
-            marginTop: 6,
+            fontSize: 14,
+            color: "#FFFFFF",
+            textAlign: "center",
+            marginTop: 18,
           }}
         >
-          {sublabel}
+          See if becoming a Premium member is right for you
         </Text>
-      ) : (
-        <>
-          <View
-            style={{
-              marginTop: 12,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: colors.borderLight,
-              overflow: "hidden",
-            }}
-          >
-            <View
-              style={{
-                width: `${barProgress * 100}%`,
-                height: "100%",
-                borderRadius: 3,
-                backgroundColor:
-                  daysLeft <= 3 ? "#EF4444" : "#FFA946",
-              }}
-            />
-          </View>
+        {sinceDate && (
           <Text
             style={{
               fontFamily: "Roboto-Light",
-              fontSize: 12,
-              color: colors.textMuted,
-              marginTop: 6,
+              fontSize: 13,
+              color: "rgba(255,255,255,0.45)",
+              textAlign: "center",
+              marginTop: 14,
             }}
           >
-            {sublabel}
+            Free member since {sinceDate}
           </Text>
-        </>
-      )}
-    </Pressable>
+        )}
+      </Pressable>
+    </View>
   );
 }
+

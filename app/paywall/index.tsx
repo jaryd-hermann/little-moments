@@ -9,6 +9,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { usePostHog } from "posthog-react-native";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
@@ -33,10 +34,10 @@ type ThemePalette = (typeof Colors)["light"];
 
 const FEATURES = [
   "Unlimited moments, forever",
-  "AI Dig Deeper on every entry",
-  "Cinematic 3D timeline",
-  "Memory Jog races",
-  "Full camera roll Rewind",
+  "Monthly Chapters — your life, narrated by AI",
+  "Memory connections across entries",
+  "Advanced search in your Capsule",
+  "Unlimited history and exports",
 ];
 
 export default function PaywallScreen() {
@@ -54,14 +55,16 @@ export default function PaywallScreen() {
   const profile = useAuthStore((s) => s.profile);
   const setProfile = useAuthStore((s) => s.setProfile);
   const { colors, theme } = useTheme();
+  const posthog = usePostHog();
 
   const [selectedPlan, setSelectedPlan] = useState<PlanType>("annual");
   const [isLoading, setIsLoading] = useState(false);
   const [useNativePaywall, setUseNativePaywall] = useState(!!RevenueCatUI);
 
-  const canDismiss = !isTrialExpired;
+  const canDismiss = true;
 
   useEffect(() => {
+    posthog.capture("paywall_subscribe_viewed");
     loadOfferings();
   }, []);
 
@@ -71,8 +74,12 @@ export default function PaywallScreen() {
       if (!Paywall) throw new Error("Paywall not available");
       return (
         <Paywall
-          onDismiss={() => router.back()}
+          onDismiss={() => {
+            posthog.capture("paywall_dismissed", { step: "revenuecat" });
+            router.dismiss(3);
+          }}
           onPurchaseCompleted={async () => {
+            posthog.capture("paywall_subscribed", { source: "native" });
             if (user && profile) {
               await supabase
                 .from("profiles")
@@ -83,6 +90,7 @@ export default function PaywallScreen() {
             router.back();
           }}
           onRestoreCompleted={async () => {
+            posthog.capture("paywall_restored", { source: "native" });
             if (user && profile) {
               await supabase
                 .from("profiles")
@@ -93,6 +101,7 @@ export default function PaywallScreen() {
             router.back();
           }}
           onPurchaseError={() => {
+            posthog.capture("paywall_purchase_error", { source: "native" });
             setUseNativePaywall(false);
           }}
         />
@@ -116,15 +125,22 @@ export default function PaywallScreen() {
       return;
     }
 
+    posthog.capture("paywall_subscribe_tapped", { plan: selectedPlan });
     setIsLoading(true);
     try {
       const result = await handlePurchase(selectedPackage);
       if (result.success) {
+        posthog.capture("paywall_subscribed", {
+          source: "fallback",
+          plan: selectedPlan,
+        });
         router.back();
       } else if (!result.cancelled) {
+        posthog.capture("paywall_purchase_error", { source: "fallback" });
         Alert.alert("Error", "Purchase failed. Please try again.");
       }
     } catch {
+      posthog.capture("paywall_purchase_error", { source: "fallback" });
       Alert.alert("Error", "Purchase failed. Please try again.");
     } finally {
       setIsLoading(false);
@@ -132,10 +148,12 @@ export default function PaywallScreen() {
   };
 
   const handleRestorePress = async () => {
+    posthog.capture("paywall_restore_tapped");
     setIsLoading(true);
     const restored = await handleRestore();
     setIsLoading(false);
     if (restored) {
+      posthog.capture("paywall_restored", { source: "fallback" });
       Alert.alert("Restored!", "Your subscription has been restored.");
       router.back();
     } else {
@@ -150,7 +168,10 @@ export default function PaywallScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {canDismiss && (
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => {
+            posthog.capture("paywall_dismissed", { step: "subscribe" });
+            router.dismiss(3);
+          }}
           style={{
             position: "absolute",
             right: 16,

@@ -61,6 +61,10 @@ export default function SignInScreen() {
   const posthog = usePostHog();
   const signUpMethodRef = useRef<"apple" | "google" | "email">("email");
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    posthog.capture("viewed_sign_in");
+  }, []);
   const scrollRef = useRef<ScrollView>(null);
   const [activeSlide, setActiveSlide] = useState(0);
   const carouselRef = useRef<FlatList>(null);
@@ -159,7 +163,21 @@ export default function SignInScreen() {
             resizeMode="contain"
             accessibilityLabel="Little Moments"
           />
+          <Text
+            style={{
+              fontFamily: "LibreBaskerville-Regular",
+              fontSize: 16,
+              color: colors.textSecondary,
+              textAlign: "center",
+              lineHeight: 24,
+              marginTop: 12,
+              paddingHorizontal: 16,
+            }}
+          >
+            Capture a lifetime of memories, starting with a single word.
+          </Text>
         </View>
+        {/* Benefit carousel commented out
         <Pressable
           onPress={() => {
             const next = (activeSlide + 1) % BENEFIT_SLIDES.length;
@@ -255,6 +273,7 @@ export default function SignInScreen() {
             ))}
           </View>
         </Pressable>
+        */}
 
         {error ? (
           <Text className="mt-4 text-sm text-red-500">
@@ -267,7 +286,6 @@ export default function SignInScreen() {
             flex: 1,
             justifyContent: "center",
             paddingVertical: 32,
-            minHeight: 260,
           }}
         >
           <View

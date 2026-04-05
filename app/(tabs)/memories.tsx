@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
@@ -10,6 +10,7 @@ import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
 import { useEntries } from "@/hooks/useEntries";
+import { useStreak } from "@/hooks/useStreak";
 import { useTheme } from "@/hooks/useTheme";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTabBarStore } from "@/store/tabBarStore";
@@ -19,6 +20,7 @@ import {
   resolveStoryProgress,
   resumeSlideIndexFromProgress,
 } from "@/lib/marketingStories";
+import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { useChapters } from "@/hooks/useChapters";
 import { useChapterDevStore } from "@/store/chapterStore";
 import type { ChapterRecord } from "@/lib/chapters";
@@ -31,9 +33,18 @@ export default function MemoriesScreen() {
   const { colors } = useTheme();
   const posthog = usePostHog();
   const { entries, fetchEntries } = useEntries();
+  const { totalMoments } = useStreak();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchQuery, setSearchQuery] = useState("");
+  const searchTrackedRef = useRef(false);
+  const handleSearchQuery = useCallback((q: string) => {
+    setSearchQuery(q);
+    if (q.trim() && !searchTrackedRef.current) {
+      searchTrackedRef.current = true;
+      posthog.capture("capsule_search_used");
+    }
+  }, [posthog]);
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
   const { philosophyStories, bySlug } = useMarketingStories();
@@ -73,7 +84,8 @@ export default function MemoriesScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      posthog.capture("viewed_memories");
+      posthog.capture("viewed_capsule", { entry_count: entries.length });
+      searchTrackedRef.current = false;
       fetchEntries();
       fetchChapters();
     }, [fetchEntries, fetchChapters])
@@ -152,27 +164,15 @@ export default function MemoriesScreen() {
   if (isEmptyLibrary) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        <ScrollView
-          className="flex-1 px-5"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 120, paddingTop: 8 }}
-        >
-          <Text
-            style={{
-              fontFamily: "LibreBaskerville-Regular",
-              fontSize: 16,
-              color: colors.textSecondary,
-              lineHeight: 24,
-              textAlign: "center",
-              marginTop: 12,
-            }}
-          >
-            Your story is just beginning.
-          </Text>
+        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 24 }}>
+          <EllieMessage
+            content={"This is where your captured moments will go!\n\nI'll build you a searchable archive of all your memories, and there's even a fun Flipbook view as your moments grow to scroll through your timeline.\n\nI'll also share the Threads across your stories I find with you here."}
+            showAvatar
+          />
           <Pressable
-            onPress={() => router.push("/composer")}
+            onPress={() => router.replace("/(tabs)/today")}
             style={{
-              marginTop: 24,
+              marginTop: 20,
               height: 52,
               borderRadius: 9999,
               backgroundColor: colors.primary,
@@ -190,32 +190,20 @@ export default function MemoriesScreen() {
                 letterSpacing: 0.5,
               }}
             >
-              Add your first moment
+              Add first moment
             </Text>
           </Pressable>
-          <View style={{ marginTop: 36 }}>
-            <MarketingStoryCard
-              stories={philosophyListItems}
-              onPressStory={handleOpenStory}
-              storyProgress={storyProgress}
-              hideCompleted
-            />
-          </View>
-        </ScrollView>
-        <StoryViewer
-          visible={Boolean(activeStorySlides)}
-          viewerKey={storyViewerSlug ?? ""}
-          slides={activeStorySlides}
-          initialSlide={storyResumeSlideIndex}
-          onClose={handleCloseStory}
-        />
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      <View className="px-5 pt-2 pb-2">
+      <View
+        className="px-5 pt-2 pb-2"
+        style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}
+      >
         <Text
           style={{
             fontFamily: "LibreBaskerville-Bold",
@@ -226,13 +214,22 @@ export default function MemoriesScreen() {
         >
           Capsule
         </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 14,
+            color: colors.textMuted,
+          }}
+        >
+          {totalMoments} moment{totalMoments !== 1 ? "s" : ""}
+        </Text>
       </View>
 
       <View className="flex-1 px-5">
         <ListViewMemories
           entries={filteredEntries}
           searchQuery={searchQuery}
-          onChangeQuery={setSearchQuery}
+          onChangeQuery={handleSearchQuery}
           onOpenChapter={(chapterId) => {
             const ch = chapterByIdMap.get(chapterId);
             if (ch) setChapterViewerChapter(ch);
@@ -241,7 +238,10 @@ export default function MemoriesScreen() {
       </View>
 
       <Pressable
-        onPress={() => setViewMode("flipbook")}
+        onPress={() => {
+          posthog.capture("capsule_flipbook_opened", { entry_count: entries.length });
+          setViewMode("flipbook");
+        }}
         style={{
           position: "absolute",
           bottom: 120,

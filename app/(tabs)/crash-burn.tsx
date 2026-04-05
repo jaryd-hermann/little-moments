@@ -78,7 +78,7 @@ export default function CrashBurnScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      posthog.capture("viewed_memory_jog");
+      
       const pending = takeDigDeeperPendingResult();
       if (!pending?.enhancedBody?.trim()) return;
       setRaceText(pending.enhancedBody.trim());
@@ -86,7 +86,6 @@ export default function CrashBurnScreen() {
   );
 
   const startRace = () => {
-    posthog.capture("started_memory_jog");
     raceFinishedRef.current = false;
     setPhase("racing");
     setRaceText("");
@@ -148,7 +147,6 @@ export default function CrashBurnScreen() {
   const handlePostAsIs = async () => {
     if (!user || !raceText.trim()) return;
     try {
-      posthog.capture("completed_memory_jog");
       await saveEntry({
         title: null,
         body: raceText.trim(),

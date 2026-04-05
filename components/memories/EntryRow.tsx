@@ -36,7 +36,7 @@ export function EntryRow({ entry, onOpenChapter }: EntryRowProps) {
       posthog.capture("opened_chapter_from_capsule", { chapter_id: entry.chapter_id });
       onOpenChapter(entry.chapter_id);
     } else {
-      posthog.capture("opened_memory", { entry_type: entry.entry_type });
+      posthog.capture("capsule_entry_opened", { entry_id: entry.id, entry_type: entry.entry_type });
       router.push(`/entry/${entry.id}`);
     }
   };

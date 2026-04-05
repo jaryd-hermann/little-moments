@@ -2,6 +2,17 @@ import * as FileSystem from "expo-file-system/legacy";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { supabase } from "./supabase";
 
+const UPLOAD_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
+
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
   const clean = b64.replace(/\s/g, "");
   if (typeof atob !== "function") {
@@ -74,16 +85,13 @@ export async function uploadEntryMedia(
   let sourceUri = fileUri;
   if (mediaType === "image") {
     try {
-      const normalized = await manipulateAsync(fileUri, [], {
-        compress: 0.88,
-        format: SaveFormat.JPEG,
-      });
+      const normalized = await withTimeout(
+        manipulateAsync(fileUri, [], { compress: 0.88, format: SaveFormat.JPEG }),
+        15_000,
+        "Image compression"
+      );
       const info = await FileSystem.getInfoAsync(normalized.uri);
-      if (
-        info.exists &&
-        typeof info.size === "number" &&
-        info.size > 0
-      ) {
+      if (info.exists && typeof info.size === "number" && info.size > 0) {
         sourceUri = normalized.uri;
       }
     } catch {
@@ -91,17 +99,20 @@ export async function uploadEntryMedia(
     }
   }
 
-  const body = await uriToUploadArrayBuffer(sourceUri, contentType);
+  const body = await withTimeout(
+    uriToUploadArrayBuffer(sourceUri, contentType),
+    15_000,
+    "Reading media file"
+  );
   if (body.byteLength === 0) {
     throw new Error("Photo upload is empty — try choosing the image again.");
   }
 
-  const { error } = await supabase.storage
-    .from("entry-media")
-    .upload(storagePath, body, {
-      contentType,
-      upsert: false,
-    });
+  const { error } = await withTimeout(
+    supabase.storage.from("entry-media").upload(storagePath, body, { contentType, upsert: false }),
+    UPLOAD_TIMEOUT_MS,
+    "Storage upload"
+  );
 
   if (error) throw error;
 
@@ -118,4 +129,51 @@ export async function deleteEntryMedia(
     .from("entry-media")
     .remove([storagePath]);
   if (error) throw error;
+}
+
+export async function uploadAvatar(
+  userId: string,
+  fileUri: string
+): Promise<string> {
+  const storagePath = `${userId}/avatar.jpg`;
+  const contentType = "image/jpeg";
+
+  let sourceUri = fileUri;
+  try {
+    const normalized = await withTimeout(
+      manipulateAsync(fileUri, [{ resize: { width: 512 } }], {
+        compress: 0.85,
+        format: SaveFormat.JPEG,
+      }),
+      15_000,
+      "Avatar compression"
+    );
+    const info = await FileSystem.getInfoAsync(normalized.uri);
+    if (info.exists && typeof info.size === "number" && info.size > 0) {
+      sourceUri = normalized.uri;
+    }
+  } catch {
+    /* use original */
+  }
+
+  const body = await withTimeout(
+    uriToUploadArrayBuffer(sourceUri, contentType),
+    15_000,
+    "Reading avatar file"
+  );
+  if (body.byteLength === 0) {
+    throw new Error("Avatar upload is empty — try choosing the image again.");
+  }
+
+  const { error } = await withTimeout(
+    supabase.storage
+      .from("avatars")
+      .upload(storagePath, body, { contentType, upsert: true }),
+    UPLOAD_TIMEOUT_MS,
+    "Avatar upload"
+  );
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  return `${data.publicUrl}?t=${Date.now()}`;
 }

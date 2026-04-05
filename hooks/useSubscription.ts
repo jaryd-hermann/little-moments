@@ -27,6 +27,7 @@ export function useSubscription() {
   const isTrialExpired = useCallback(() => {
     if (!profile) return false;
     if (profile.subscription_status === "active") return false;
+    if (profile.subscription_status === "free") return false;
     if (profile.subscription_status === "expired") return true;
     if (
       profile.subscription_status === "trial" &&
@@ -90,7 +91,8 @@ export function useSubscription() {
     if (entitled) {
       if (
         profile.subscription_status === "expired" ||
-        profile.subscription_status === "trial"
+        profile.subscription_status === "trial" ||
+        profile.subscription_status === "free"
       ) {
         await supabase
           .from("profiles")
@@ -162,7 +164,7 @@ export function useSubscription() {
   ) ?? null;
 
   return {
-    subscriptionStatus: profile?.subscription_status ?? "trial",
+    subscriptionStatus: profile?.subscription_status ?? "free",
     isTrialExpired: isTrialExpired(),
     offering,
     monthlyPackage,

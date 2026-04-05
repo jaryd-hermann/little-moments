@@ -32,7 +32,9 @@ export default function NotificationsPromptScreen() {
       .from("profiles")
       .update({
         notification_enabled: enabled,
-        onboarding_phase: "story_coach",
+        onboarding_phase: "done",
+        onboarding_completed: true,
+        story_coach_enabled: true,
       })
       .eq("id", user.id);
 
@@ -43,7 +45,7 @@ export default function NotificationsPromptScreen() {
       .single();
     if (fresh) setProfile(fresh as Profile);
 
-    router.replace("/(auth)/story-coach");
+    router.replace("/(tabs)/today");
   };
 
   const onAllow = async () => {

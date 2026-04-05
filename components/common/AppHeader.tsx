@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { differenceInDays, format } from "date-fns";
 import { Image as ExpoImage } from "expo-image";
 import { router } from "expo-router";
+import { usePostHog } from "posthog-react-native";
 import { useMemo, useState } from "react";
 import {
     Image,
@@ -56,6 +57,7 @@ export function AppHeader({
   memberSince,
 }: AppHeaderProps) {
   const { colors, theme } = useTheme();
+  const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [showStreak, setShowStreak] = useState(false);
@@ -116,7 +118,10 @@ export function AppHeader({
             count={streakCount}
             totalMoments={totalMoments}
             isAtRisk={isAtRisk}
-            onPress={() => setShowStreak(true)}
+            onPress={() => {
+              posthog.capture("viewed_streaks", { streak_count: streakCount, total_moments: totalMoments });
+              setShowStreak(true);
+            }}
           />
           <Pressable
             onPress={() => router.push("/settings")}
@@ -164,7 +169,7 @@ export function AppHeader({
                 color: colors.text,
               }}
             >
-              Your Moments
+              Your Stats
             </Text>
             <Pressable onPress={() => setShowStreak(false)}>
               <Ionicons name="close" size={24} color={colors.icon} />
@@ -276,88 +281,6 @@ export function AppHeader({
               </View>
             </View>
 
-            <View
-              style={{ flexDirection: "row", gap: 16, marginTop: 16, width: "100%" }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: colors.surface,
-                  padding: 20,
-                  alignItems: "center",
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: colors.text,
-                  }}
-                >
-                  {memoryRaceCount}
-                </Text>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 13,
-                    color: colors.textMuted,
-                    marginTop: 4,
-                    textAlign: "center",
-                  }}
-                >
-                  Total Memory Races
-                </Text>
-              </View>
-              <View
-                style={{
-                  flex: 1,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: colors.surface,
-                  padding: 20,
-                  alignItems: "center",
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: colors.text,
-                  }}
-                >
-                  {avgStoryLengthWords > 0 ? avgStoryLengthWords : "—"}
-                </Text>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 13,
-                    color: colors.textMuted,
-                    marginTop: 4,
-                    textAlign: "center",
-                  }}
-                >
-                  Avg. story length
-                </Text>
-                {avgStoryLengthWords > 0 && (
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Light",
-                      fontSize: 11,
-                      color: colors.textMuted,
-                      marginTop: 2,
-                      textAlign: "center",
-                    }}
-                  >
-                    words per moment
-                  </Text>
-                )}
-              </View>
-            </View>
-
             {memberSince ? (
               <View
                 style={{
@@ -388,7 +311,7 @@ export function AppHeader({
                     marginTop: 4,
                   }}
                 >
-                  Storyteller since {format(new Date(memberSince), "MMM d, yyyy")}
+                  Remembering since {format(new Date(memberSince), "MMM d, yyyy")}
                 </Text>
               </View>
             ) : null}

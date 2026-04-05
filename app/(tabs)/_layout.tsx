@@ -22,11 +22,7 @@ export default function TabLayout() {
           options={{ title: "Today" }}
         />
         <Tabs.Screen
-          name="crash-burn"
-          options={{ title: "Race" }}
-        />
-        <Tabs.Screen
-          name="compose-placeholder"
+          name="add"
           options={{ title: "" }}
           listeners={{
             tabPress: (e) => {
@@ -35,12 +31,21 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="rewind"
-          options={{ title: "Rewind" }}
-        />
-        <Tabs.Screen
           name="memories"
           options={{ title: "Capsule" }}
+        />
+        {/* Hidden tabs — kept for backward compat but not shown */}
+        <Tabs.Screen
+          name="crash-burn"
+          options={{ href: null }}
+        />
+        <Tabs.Screen
+          name="rewind"
+          options={{ href: null }}
+        />
+        <Tabs.Screen
+          name="compose-placeholder"
+          options={{ href: null }}
         />
       </Tabs>
     </>

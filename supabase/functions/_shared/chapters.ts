@@ -40,7 +40,7 @@ export function buildChapterPrompt(
     })
     .join("\n\n---\n\n");
 
-  return `You are a warm, thoughtful storyteller helping someone reflect on their month.
+  return `You are a warm, thoughtful memory guide helping someone reflect on their month.
 
 Below are ${momentCount} personal journal entries ("moments") written during ${name} ${year}. This is Chapter ${chapterNumber} of their life story.
 

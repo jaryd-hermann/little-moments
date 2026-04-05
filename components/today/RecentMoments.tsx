@@ -104,6 +104,31 @@ export function RecentMoments({ entries }: RecentMomentsProps) {
                 >
                   {bodyPreview}
                 </Text>
+                {entry.word_of_day ? (
+                  <View
+                    style={{
+                      marginTop: 6,
+                      alignSelf: "flex-start",
+                      borderRadius: 8,
+                      backgroundColor: colors.surfaceSecondary,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Regular",
+                        fontSize: 11,
+                        color: colors.textMuted,
+                      }}
+                    >
+                      starting word:{" "}
+                      <Text style={{ fontFamily: "Roboto-Medium" }}>
+                        {entry.word_of_day.toLowerCase()}
+                      </Text>
+                    </Text>
+                  </View>
+                ) : null}
               </View>
               {firstMedia ? (
                 <EntryMediaImage

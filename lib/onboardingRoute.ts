@@ -20,24 +20,27 @@ export function routeAfterAuth(profile: Profile | null) {
   }
 
   switch (phase) {
-    case "follow_up":
-      router.replace("/(auth)/follow-up");
+    case "personalized":
+      router.replace("/(auth)/personalized");
       break;
-    case "slides":
-      router.replace("/(auth)/onboarding");
-      break;
-    case "donation":
-      router.replace("/(auth)/donation");
-      break;
-    case "trial":
-      router.replace("/(auth)/trial");
+    case "activation":
+      router.replace("/(auth)/activation");
       break;
     case "notifications":
       router.replace("/(auth)/notifications-prompt");
       break;
-    case "story_coach":
-      router.replace("/(auth)/story-coach");
+
+    // Legacy phases — map to nearest v2 equivalent
+    case "follow_up":
+    case "slides":
+      router.replace("/(auth)/personalized");
       break;
+    case "donation":
+    case "trial":
+    case "story_coach":
+      router.replace("/(auth)/activation");
+      break;
+
     case "resonance":
     default:
       router.replace("/(auth)/resonance");

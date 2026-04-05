@@ -38,8 +38,8 @@ export async function scheduleDailyReminder(
   await Notifications.cancelAllScheduledNotificationsAsync();
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "Little Moments",
-      body: "Share a little moment from your day.",
+      title: "Your daily prompt is ready",
+      body: "Capture your moment — it takes less than 2 minutes.",
       sound: true,
       ...(Platform.OS === "android"
         ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }

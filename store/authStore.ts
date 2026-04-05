@@ -11,7 +11,7 @@ export interface Profile {
   notification_time: string;
   streak_at_risk_enabled: boolean;
   trial_start_date: string | null;
-  subscription_status: "trial" | "active" | "expired" | "cancelled";
+  subscription_status: "free" | "trial" | "active" | "expired" | "cancelled";
   revenuecat_customer_id: string | null;
   streak_count: number;
   longest_streak: number;
@@ -26,12 +26,16 @@ export interface Profile {
     | "trial"
     | "notifications"
     | "story_coach"
+    | "personalized"
+    | "activation"
     | "done"
     | null;
   resonance_option_ids?: string[] | null;
   donation_cause_id?: string | null;
   follow_up_screen_key?: string | null;
   story_coach_enabled?: boolean;
+  activation_word_completed?: boolean;
+  activation_photo_completed?: boolean;
   notification_timezone?: string | null;
   badge_push_state?: Record<string, boolean> | null;
   last_daily_push_local_date?: string | null;

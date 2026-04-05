@@ -37,10 +37,7 @@ import { useMomentCelebrationStore } from "@/store/momentCelebrationStore";
 import { uploadEntryMedia, deleteEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { getEntryMediaDisplayUri } from "@/lib/entryMediaUrl";
-import {
-  plainTextToComposerHtml,
-  takeDigDeeperPendingResult,
-} from "@/lib/digDeeperReturn";
+import { plainTextToComposerHtml } from "@/lib/digDeeperReturn";
 import { useDraftStore } from "@/store/draftStore";
 
 const MAX_ATTACHMENTS = 5;
@@ -265,41 +262,12 @@ export default function ComposerScreen() {
     setEditLoaded(true);
   }, [entryIdParam, editingEntry, isLoading]);
 
-  useEffect(() => {
-    if (!entryIdParam) {
-      posthog.capture("started_adding_moment");
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      const pending = takeDigDeeperPendingResult();
-      if (!pending?.enhancedBody?.trim()) return;
-      const html = plainTextToComposerHtml(pending.enhancedBody.trim());
-      setBody(html);
-      if (pending.enhancedTitle) {
-        setTitle(pending.enhancedTitle);
-      }
-      if (pending.originalBody || pending.originalTitle) {
-        setOriginalText({
-          title: pending.originalTitle,
-          body: pending.originalBody,
-        });
-        setShowOriginal(false);
-      }
-      requestAnimationFrame(() => {
-        editorRef.current?.setContentHTML(html);
-      });
-    }, [])
-  );
-
   const openGallery = async () => {
     if (media.length >= MAX_ATTACHMENTS) {
       Alert.alert("Limit reached", `You can attach up to ${MAX_ATTACHMENTS} items.`);
       return;
     }
 
-    posthog.capture("added_photo_to_moment");
     const remaining = MAX_ATTACHMENTS - media.length;
 
     let result: ImagePicker.ImagePickerResult | null = null;
@@ -352,8 +320,6 @@ export default function ComposerScreen() {
       );
       return;
     }
-
-    posthog.capture("added_photo_to_moment", { source: "camera" });
 
     try {
       const result = await ImagePicker.launchCameraAsync({
@@ -458,12 +424,14 @@ export default function ComposerScreen() {
               }
               rebuilt.push({ ...row, display_order: i });
             } else {
+              console.log("[Composer] Uploading new media...", item.uri.substring(0, 60));
               const { publicUrl, storagePath } = await uploadEntryMedia(
                 user.id,
                 entryIdParam,
                 item.uri,
                 item.type
               );
+              console.log("[Composer] Upload complete, inserting entry_media row");
               const { data: row, error: mediaErr } = await supabase
                 .from("entry_media")
                 .insert({
@@ -478,12 +446,14 @@ export default function ComposerScreen() {
                 .single();
               if (mediaErr) throw mediaErr;
               if (row) rebuilt.push(row as EntryMedia);
+              console.log("[Composer] Media attached successfully");
             }
           }
           useEntryStore.getState().updateEntry(entryIdParam, {
             media: rebuilt,
           });
-        } catch {
+        } catch (mediaErr) {
+          console.error("[Composer] Media processing failed:", mediaErr);
           await fetchEntries();
           Alert.alert(
             "Updated without photo",
@@ -584,10 +554,6 @@ export default function ComposerScreen() {
       }
 
       useDraftStore.getState().clearDraft(dateKey);
-      posthog.capture("shared_daily_moment", {
-        has_photo: media.length > 0,
-        entry_type: params.isCrashAndBurn === "true" ? "crash_and_burn" : "moment",
-      });
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
       router.dismissTo("/(tabs)/today");
       if (celebrationNth != null) {
@@ -609,18 +575,6 @@ export default function ComposerScreen() {
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleDigDeeper = () => {
-    if (!body.trim()) return;
-    router.push({
-      pathname: "/dig-deeper",
-      params: {
-        title,
-        body,
-        isCrashAndBurn: params.isCrashAndBurn ?? "false",
-      },
-    });
   };
 
   if (micFullscreen) {
@@ -1084,7 +1038,6 @@ export default function ComposerScreen() {
 
                 <Pressable
                   onPress={() => {
-                    posthog.capture("uses_voice_transcribe", { source: "composer" });
                     setMicFullscreen(true);
                   }}
                   style={{
@@ -1146,38 +1099,6 @@ export default function ComposerScreen() {
                     {entryIdParam ? "+ SAVE" : "+ ADD"}
                   </Text>
                 </Pressable>
-                <Pressable
-                  onPress={handleDigDeeper}
-                  disabled={!body.trim()}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                    borderRadius: 9999,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    paddingHorizontal: 16,
-                    paddingVertical: 10,
-                    opacity: !body.trim() ? 0.5 : 1,
-                  }}
-                >
-                  <Image
-                    source={APP_ICON}
-                    style={{ width: 20, height: 20, borderRadius: 5 }}
-                    resizeMode="contain"
-                  />
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Medium",
-                      fontSize: 13,
-                      color: colors.text,
-                      letterSpacing: 0.5,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Dig Deeper
-                  </Text>
-                </Pressable>
               </View>
             </View>
           </View>
@@ -1198,6 +1119,44 @@ export default function ComposerScreen() {
         onChangePrecision={setPrecision}
         onChangeDate={setDate}
       />
+
+      {isSaving && (
+        <View
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0,0,0,0.55)",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 999,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: 16,
+              paddingHorizontal: 32,
+              paddingVertical: 24,
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 15,
+                color: colors.text,
+              }}
+            >
+              Saving{media.length > 0 ? " & uploading..." : "..."}
+            </Text>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

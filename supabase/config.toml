@@ -22,6 +22,9 @@ verify_jwt = false
 [functions.story-coach]
 verify_jwt = false
 
+[functions.moment-assist]
+verify_jwt = false
+
 [functions.cron-evening-pushes]
 verify_jwt = false
 
@@ -38,4 +41,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.revenuecat-webhook]
+verify_jwt = false
+
+[functions.shared-moment]
 verify_jwt = false

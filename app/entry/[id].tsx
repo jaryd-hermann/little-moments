@@ -17,6 +17,7 @@ import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
 import type { Entry } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
+import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 
 function stripHtml(html: string): string {
   return html
@@ -42,6 +43,7 @@ export default function EntryDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { entries, deleteEntry } = useEntries();
   const [entry, setEntry] = useState<Entry | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
   const peekDragY = useSharedValue(0);
 
   const timeline = useMemo(() => {
@@ -201,6 +203,13 @@ export default function EntryDetailScreen() {
         </Pressable>
         {entry.entry_type !== "chapter" && (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
+            <Pressable onPress={() => setShareModalVisible(true)}>
+              <Ionicons
+                name="share-outline"
+                size={20}
+                color="rgba(255, 255, 255, 0.4)"
+              />
+            </Pressable>
             <Pressable onPress={handleDelete}>
               <Ionicons
                 name="trash-outline"
@@ -265,26 +274,27 @@ export default function EntryDetailScreen() {
           >
             {dateStr}
           </Text>
-          {entry.is_ai_enhanced && (
+          {entry.word_of_day ? (
             <View
               style={{
                 borderRadius: 9999,
-                backgroundColor: colors.primaryLight + "28",
-                paddingHorizontal: 8,
-                paddingVertical: 2,
+                backgroundColor: colors.surfaceSecondary,
+                paddingHorizontal: 10,
+                paddingVertical: 3,
               }}
             >
               <Text
                 style={{
-                  fontFamily: "Roboto-Regular",
+                  fontFamily: "Roboto-Medium",
                   fontSize: 11,
-                  color: colors.primary,
+                  color: colors.textMuted,
+                  textTransform: "lowercase",
                 }}
               >
-                AI Enhanced
+                {entry.word_of_day}
               </Text>
             </View>
-          )}
+          ) : null}
         </View>
 
         {entry.entry_type === "crash_and_burn" &&
@@ -434,6 +444,12 @@ export default function EntryDetailScreen() {
           </Animated.View>
         </GestureDetector>
       ) : null}
+
+      <ShareMomentModal
+        visible={shareModalVisible}
+        entry={entry}
+        onDismiss={() => setShareModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }

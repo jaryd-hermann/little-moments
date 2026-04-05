@@ -223,7 +223,6 @@ export default function DigDeeperScreen() {
   };
 
   const handleAccept = () => {
-    posthog.capture("accepted_ai_enhancement");
     setDigDeeperPendingResult({
       enhancedBody,
       enhancedTitle,
@@ -235,7 +234,6 @@ export default function DigDeeperScreen() {
   };
 
   const handleAskChanges = () => {
-    posthog.capture("revised_ai_enhancement");
     setPrevEnhancedBody(enhancedBody);
     setEnhancedBody("");
     setRevisionStartIdx(messages.length);

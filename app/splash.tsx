@@ -4,6 +4,7 @@ import {
   Text,
   Pressable,
   FlatList,
+  Animated,
   StyleSheet,
   useWindowDimensions,
   type NativeSyntheticEvent,
@@ -21,18 +22,27 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { usePostHog } from "posthog-react-native";
 
-const AUTO_ADVANCE_MS = 7000;
+const FIRST_ADVANCE_MS = 9000;
+const TRANSITION_DURATION_MS = 1800;
 
 export default function SplashScreen() {
   const setProfile = useAuthStore((s) => s.setProfile);
   const { colors } = useTheme();
+  const posthog = usePostHog();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [slideIndex, setSlideIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const indexRef = useRef(0);
   const widthRef = useRef(width);
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    posthog.capture("viewed_splash");
+  }, []);
 
   useEffect(() => {
     widthRef.current = width;
@@ -60,16 +70,24 @@ export default function SplashScreen() {
   }, []);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      const next = (indexRef.current + 1) % SPLASH_SLIDE_IMAGES.length;
-      indexRef.current = next;
-      setSlideIndex(next);
-      flatListRef.current?.scrollToOffset({
-        offset: next * widthRef.current,
-        animated: true,
-      });
-    }, AUTO_ADVANCE_MS);
-    return () => clearInterval(id);
+    const listenerId = scrollX.addListener(({ value }) => {
+      flatListRef.current?.scrollToOffset({ offset: value, animated: false });
+    });
+    return () => scrollX.removeListener(listenerId);
+  }, []);
+
+  useEffect(() => {
+    timerRef.current = setTimeout(() => {
+      if (indexRef.current !== 0) return;
+      indexRef.current = 1;
+      setSlideIndex(1);
+      Animated.timing(scrollX, {
+        toValue: widthRef.current,
+        duration: TRANSITION_DURATION_MS,
+        useNativeDriver: false,
+      }).start();
+    }, FIRST_ADVANCE_MS);
+    return () => clearTimeout(timerRef.current);
   }, []);
 
   const onMomentumScrollEnd = useCallback(
@@ -80,6 +98,7 @@ export default function SplashScreen() {
       if (i >= 0 && i < SPLASH_SLIDE_IMAGES.length) {
         indexRef.current = i;
         setSlideIndex(i);
+        if (i === 1) clearTimeout(timerRef.current);
       }
     },
     []
@@ -162,6 +181,7 @@ export default function SplashScreen() {
           <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              posthog.capture("splash_get_started", { slide_index: indexRef.current });
               router.replace("/(auth)/sign-in");
             }}
             style={{
@@ -170,10 +190,15 @@ export default function SplashScreen() {
               height: 52,
               borderRadius: 9999,
               backgroundColor: colors.primary,
-              borderWidth: 2,
-              borderColor: "#FFFFFF",
+              borderWidth: 2.5,
+              borderColor: "#000000",
               alignItems: "center",
               justifyContent: "center",
+              shadowColor: "#000000",
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 1,
+              shadowRadius: 0,
+              elevation: 6,
             }}
           >
             <Text
@@ -182,10 +207,9 @@ export default function SplashScreen() {
                 fontSize: 15,
                 color: "#1A1A1A",
                 letterSpacing: 0.8,
-                textTransform: "uppercase",
               }}
             >
-              GET STARTED
+              Get started for free
             </Text>
           </Pressable>
         </View>
@@ -216,18 +240,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+    marginBottom: 16,
   },
   dot: {
-    height: 6,
-    borderRadius: 3,
+    height: 8,
+    borderRadius: 4,
   },
   dotActive: {
-    width: 22,
-    backgroundColor: "#FFFFFF",
+    width: 24,
+    backgroundColor: "#1A1A1A",
   },
   dotInactive: {
-    width: 6,
-    backgroundColor: "rgba(255,255,255,0.35)",
+    width: 8,
+    backgroundColor: "rgba(0,0,0,0.25)",
   },
 });

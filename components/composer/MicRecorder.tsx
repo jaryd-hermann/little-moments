@@ -332,78 +332,122 @@ export function MicRecorder({
     );
   }
 
-  // Inline fallback (not used in current flow but kept for safety)
-  if (isTranscribing) {
-    return (
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          borderRadius: 8,
-          backgroundColor: colors.surfaceSecondary,
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-        }}
-      >
-        <ActivityIndicator size="small" color={colors.primary} />
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 13,
-            color: colors.textSecondary,
-            marginLeft: 8,
-          }}
-        >
-          Transcribing...
-        </Text>
-      </View>
-    );
-  }
+  // Half-sheet mode: auto-start recording, show waveform bars, controls
+  useEffect(() => {
+    if (!fullscreen && !isRecording && !isTranscribing) {
+      const t = setTimeout(() => startRecording(), 300);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   return (
-    <Pressable
-      onPress={isRecording ? stopRecording : startRecording}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 8,
-        padding: 8,
-        minWidth: 36,
-        minHeight: 36,
-        backgroundColor: isRecording
-          ? "rgba(239, 68, 68, 0.15)"
-          : colors.surfaceSecondary,
-      }}
-    >
-      {isRecording ? (
-        <>
-          <View
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 4,
-              backgroundColor: "#EF4444",
-              marginRight: 6,
-            }}
-          />
+    <View style={{ paddingVertical: 16, paddingHorizontal: 20 }}>
+      {isTranscribing ? (
+        <View style={{ alignItems: "center", paddingVertical: 24 }}>
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text
             style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 12,
-              color: "#EF4444",
+              fontFamily: "Roboto-Light",
+              fontSize: 15,
+              color: colors.textSecondary,
+              marginTop: 16,
             }}
           >
-            {formatDuration(duration)}
+            Transcribing...
+          </Text>
+        </View>
+      ) : (
+        <>
+          <WaveformBars isActive={isRecording} barColor={colors.text} />
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: 16,
+            }}
+          >
+            <Pressable
+              onPress={handleCancel}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: colors.surfaceSecondary,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="close" size={22} color={colors.icon} />
+            </Pressable>
+
+            {isRecording && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <View
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: "#EF4444",
+                  }}
+                />
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 15,
+                    color: colors.text,
+                  }}
+                >
+                  {formatDuration(duration)}
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              onPress={stopRecording}
+              disabled={!isRecording}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: isRecording
+                  ? theme === "dark"
+                    ? "#FFFFFF"
+                    : "#1A1A1A"
+                  : colors.surfaceSecondary,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: isRecording ? 1 : 0.4,
+              }}
+            >
+              <Ionicons
+                name="checkmark"
+                size={24}
+                color={
+                  isRecording
+                    ? theme === "dark"
+                      ? "#000000"
+                      : "#FFFFFF"
+                    : colors.textMuted
+                }
+              />
+            </Pressable>
+          </View>
+
+          <Text
+            style={{
+              fontFamily: "Roboto-Light",
+              fontSize: 13,
+              color: colors.textMuted,
+              textAlign: "center",
+              marginTop: 12,
+            }}
+          >
+            {isRecording ? "Tap ✓ when done" : "Starting microphone..."}
           </Text>
         </>
-      ) : (
-        <Ionicons
-          name="mic-outline"
-          size={20}
-          color={colors.icon}
-        />
       )}
-    </Pressable>
+    </View>
   );
 }

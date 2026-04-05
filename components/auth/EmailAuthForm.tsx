@@ -23,6 +23,7 @@ export function EmailAuthForm({ onSuccess }: Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   const validate = () => {
     if (!email.includes("@")) {
@@ -135,6 +136,11 @@ export function EmailAuthForm({ onSuccess }: Props) {
     color: "#FFFFFF",
   } as const;
 
+  const focusedBorder = {
+    borderWidth: 2,
+    borderColor: "#F0D7FF",
+  } as const;
+
   return (
     <View style={{ marginTop: 16 }}>
       <TextInput
@@ -143,7 +149,9 @@ export function EmailAuthForm({ onSuccess }: Props) {
         onChangeText={setEmail}
         keyboardType="email-address"
         autoCapitalize="none"
-        style={{ ...inputStyle, marginBottom: 12 }}
+        onFocus={() => setFocusedField("email")}
+        onBlur={() => setFocusedField(null)}
+        style={{ ...inputStyle, marginBottom: 12, ...(focusedField === "email" && focusedBorder) }}
         placeholderTextColor="rgba(255, 255, 255, 0.3)"
       />
 
@@ -153,7 +161,9 @@ export function EmailAuthForm({ onSuccess }: Props) {
           value={password}
           onChangeText={setPassword}
           secureTextEntry={!showPassword}
-          style={{ ...inputStyle, paddingRight: 48 }}
+          onFocus={() => setFocusedField("password")}
+          onBlur={() => setFocusedField(null)}
+          style={{ ...inputStyle, paddingRight: 48, ...(focusedField === "password" && focusedBorder) }}
           placeholderTextColor="rgba(255, 255, 255, 0.3)"
         />
         <Pressable
@@ -182,7 +192,9 @@ export function EmailAuthForm({ onSuccess }: Props) {
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             secureTextEntry={!showConfirm}
-            style={{ ...inputStyle, paddingRight: 48 }}
+            onFocus={() => setFocusedField("confirm")}
+            onBlur={() => setFocusedField(null)}
+            style={{ ...inputStyle, paddingRight: 48, ...(focusedField === "confirm" && focusedBorder) }}
             placeholderTextColor="rgba(255, 255, 255, 0.3)"
           />
           <Pressable

@@ -123,14 +123,6 @@ function AppInner() {
           name="composer/index"
           options={{ presentation: "modal" }}
         />
-        <Stack.Screen
-          name="dig-deeper/index"
-          options={{ presentation: "modal" }}
-        />
-        <Stack.Screen
-          name="story-coach/index"
-          options={{ presentation: "modal" }}
-        />
         <Stack.Screen name="entry/[id]" />
         <Stack.Screen
           name="settings/index"
@@ -138,6 +130,22 @@ function AppInner() {
         />
         <Stack.Screen
           name="settings/story-coach"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="settings/manage-donation"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="ellie-premium/index"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="paywall/upgrade"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="paywall/cause"
           options={{ presentation: "modal" }}
         />
         <Stack.Screen

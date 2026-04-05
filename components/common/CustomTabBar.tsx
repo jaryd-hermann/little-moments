@@ -1,12 +1,10 @@
 import { View, Pressable, Text, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "@/hooks/useTheme";
 import { useTabBarStore } from "@/store/tabBarStore";
-import { useRewindComposeStore } from "@/store/rewindComposeStore";
 
 const TAB_COMPOSE_PLUS = require("@/assets/images/tab-compose-plus.png");
 
@@ -19,22 +17,14 @@ const TAB_CONFIG: Record<
     icon: "create-outline",
     iconFocused: "create",
   },
-  "crash-burn": {
-    label: "Race",
-    icon: "play-forward-outline",
-    iconFocused: "play-forward",
-  },
-  rewind: {
-    label: "Rewind",
-    icon: "play-back-outline",
-    iconFocused: "play-back",
-  },
   memories: {
     label: "Capsule",
     icon: "book-outline",
     iconFocused: "book",
   },
 };
+
+const VISIBLE_TABS = ["today", "add", "memories"];
 
 export function CustomTabBar({
   state,
@@ -44,12 +34,12 @@ export function CustomTabBar({
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const tabBarHidden = useTabBarStore((s) => s.hidden);
-  const centerIndex = 2;
-  const currentRouteName = state.routes[state.index]?.name;
+  const triggerAddReset = useTabBarStore((s) => s.triggerAddReset);
 
-  if (tabBarHidden) {
-    return null;
-  }
+  if (tabBarHidden) return null;
+
+  const visibleRoutes = state.routes.filter((r) => VISIBLE_TABS.includes(r.name));
+  const centerName = "add";
 
   return (
     <View
@@ -74,42 +64,24 @@ export function CustomTabBar({
           paddingVertical: 8,
         }}
       >
-        {state.routes.map((route, index) => {
-          const isFocused = state.index === index;
-          const isCenter = index === centerIndex;
+        {visibleRoutes.map((route) => {
+          const globalIndex = state.routes.findIndex((r) => r.key === route.key);
+          const isFocused = state.index === globalIndex;
+          const isCenter = route.name === centerName;
 
           if (isCenter) {
             return (
               <View
                 key={route.key}
-                style={{
-                  flex: 1,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+                style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
               >
                 <Pressable
                   onPress={() => {
-                    void Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Soft
-                    );
-                    const { photoUri, photoDate } =
-                      useRewindComposeStore.getState();
-                    const onRewind = currentRouteName === "rewind";
-                    if (
-                      onRewind &&
-                      photoUri &&
-                      photoDate
-                    ) {
-                      router.push({
-                        pathname: "/composer",
-                        params: {
-                          photoUri,
-                          date: photoDate,
-                        },
-                      });
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+                    if (isFocused) {
+                      triggerAddReset();
                     } else {
-                      router.push("/composer");
+                      navigation.navigate(route.name);
                     }
                   }}
                   style={{
@@ -144,9 +116,7 @@ export function CustomTabBar({
             <Pressable
               key={route.key}
               onPress={() => {
-                if (!isFocused) {
-                  navigation.navigate(route.name);
-                }
+                if (!isFocused) navigation.navigate(route.name);
               }}
               style={{
                 flex: 1,
@@ -165,20 +135,14 @@ export function CustomTabBar({
               <Ionicons
                 name={iconName}
                 size={22}
-                color={
-                  isFocused
-                    ? colors.tabIconSelected
-                    : colors.tabIconDefault
-                }
+                color={isFocused ? colors.tabIconSelected : colors.tabIconDefault}
               />
               <Text
                 style={{
                   marginTop: 2,
                   fontSize: 11,
                   fontFamily: "Roboto-Regular",
-                  color: isFocused
-                    ? colors.tabIconSelected
-                    : colors.tabIconDefault,
+                  color: isFocused ? colors.tabIconSelected : colors.tabIconDefault,
                 }}
               >
                 {config.label}

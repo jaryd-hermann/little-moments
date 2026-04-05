@@ -20,10 +20,19 @@ export function useChapters() {
       .eq("user_id", userId)
       .order("chapter_number", { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      console.log("[useChapters] fetch error:", error.message);
+    }
+    if (data) {
+      console.log("[useChapters] raw rows:", data.length);
       const parsed = data
-        .map((r) => parseChapterRow(r))
+        .map((r) => {
+          const result = parseChapterRow(r);
+          if (!result) console.log("[useChapters] parseChapterRow returned null for:", r.id, "slides type:", typeof r.slides, "slides:", JSON.stringify(r.slides)?.substring(0, 100));
+          return result;
+        })
         .filter((r): r is ChapterRecord => r != null);
+      console.log("[useChapters] parsed chapters:", parsed.length);
       setChapters(parsed);
     }
     setIsLoading(false);

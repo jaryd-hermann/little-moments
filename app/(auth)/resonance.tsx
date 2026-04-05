@@ -20,6 +20,7 @@ import {
 } from "@/lib/onboardingFollowUp";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
+import { usePostHog } from "posthog-react-native";
 
 const BG = "#000000";
 const OUTLINE = "#FFFFFF";
@@ -47,6 +48,7 @@ type PurposeRow = {
 
 export default function ResonanceScreen() {
   const insets = useSafeAreaInsets();
+  const posthog = usePostHog();
   const user = useAuthStore((s) => s.user);
   const setProfile = useAuthStore((s) => s.setProfile);
   const [options, setOptions] = useState<PurposeRow[]>([]);
@@ -54,6 +56,10 @@ export default function ResonanceScreen() {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    posthog.capture("viewed_resonance");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +133,8 @@ export default function ResonanceScreen() {
       setProfile(fresh as Profile);
     }
 
-    router.replace("/(auth)/follow-up");
+    posthog.capture("completed_resonance", { option_count: ids.length });
+    router.replace("/(auth)/personalized");
     setSaving(false);
   };
 

@@ -74,7 +74,6 @@ export default function TrialScreen() {
     try {
       const result = await handlePurchase(pkg);
       if (result.success) {
-        posthog.capture("subscribed", { plan: selectedPlan });
         await advanceOnboarding();
       } else if (result.cancelled) {
         // User dismissed the payment sheet
@@ -211,7 +210,6 @@ export default function TrialScreen() {
 
         <Pressable
           onPress={async () => {
-            posthog.capture("skipped_trial");
             await advanceOnboarding();
           }}
           style={{ marginTop: 16 }}
