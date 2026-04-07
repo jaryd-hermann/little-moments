@@ -3,6 +3,13 @@ import { Dimensions, PixelRatio } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
+/** iOS 14+ returns `limited`; TS enum in expo-modules-core omits it. */
+export function hasPhotoLibraryAccess(
+  status: MediaLibrary.PermissionStatus | null | undefined
+): boolean {
+  return status === "granted" || (status as string) === "limited";
+}
+
 export interface MediaAsset {
   id: string;
   uri: string;
@@ -333,15 +340,15 @@ export function useMediaLibrary() {
   const requestPermission = useCallback(async () => {
     const { status } = await MediaLibrary.requestPermissionsAsync();
     setPermissionStatus(status);
-    if (status === "granted" || status === "limited") warmUpPhotoCache();
-    return status === "granted" || status === "limited";
+    if (hasPhotoLibraryAccess(status)) warmUpPhotoCache();
+    return hasPhotoLibraryAccess(status);
   }, []);
 
   const checkPermission = useCallback(async () => {
     const { status } = await MediaLibrary.getPermissionsAsync();
     setPermissionStatus(status);
-    if (status === "granted" || status === "limited") warmUpPhotoCache();
-    return status === "granted" || status === "limited";
+    if (hasPhotoLibraryAccess(status)) warmUpPhotoCache();
+    return hasPhotoLibraryAccess(status);
   }, []);
 
   const fetchAllPhotos = useCallback(async () => {

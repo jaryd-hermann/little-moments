@@ -1,5 +1,6 @@
 import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import type { ChapterRecord } from "@/lib/chapters";
 import { chapterCardTitle, chapterMonthName } from "@/lib/chapters";
 
@@ -16,7 +17,10 @@ interface ChapterCardProps {
 export function ChapterCard({ chapter, onPress }: ChapterCardProps) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onPress();
+      }}
       style={{
         borderRadius: 16,
         borderWidth: 3,

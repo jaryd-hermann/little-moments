@@ -1,9 +1,49 @@
-import { createClient } from "npm:@supabase/supabase-js";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { sendEmail } from "../_shared/resend.ts";
+import {
+  PREMIUM_WELCOME_EMAIL_KEY,
+  premiumWelcomeEmail,
+} from "../_shared/email-templates/premium-welcome.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
+
+async function sendPremiumWelcomeEmailIfNeeded(userId: string): Promise<void> {
+  try {
+    const { data: existing } = await supabase
+      .from("email_sends")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("email_key", PREMIUM_WELCOME_EMAIL_KEY)
+      .maybeSingle();
+
+    if (existing) return;
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("email, display_name")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!profile?.email?.trim()) return;
+
+    const tpl = premiumWelcomeEmail({ displayName: profile.display_name });
+    await sendEmail({
+      to: profile.email.trim(),
+      subject: tpl.subject,
+      html: tpl.html,
+    });
+
+    await supabase.from("email_sends").insert({
+      user_id: userId,
+      email_key: tpl.emailKey,
+    });
+  } catch (e) {
+    console.error("revenuecat-webhook premium welcome email:", e);
+  }
+}
 
 Deno.serve(async (req) => {
   try {
@@ -20,7 +60,7 @@ Deno.serve(async (req) => {
     if (!appUserId) {
       return new Response(
         JSON.stringify({ error: "Missing app_user_id" }),
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -42,7 +82,7 @@ Deno.serve(async (req) => {
       default:
         return new Response(
           JSON.stringify({ message: "Unhandled event type", eventType }),
-          { status: 200 }
+          { status: 200 },
         );
     }
 
@@ -55,10 +95,13 @@ Deno.serve(async (req) => {
       .eq("id", appUserId);
 
     if (error) {
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500 }
-      );
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+      });
+    }
+
+    if (eventType === "INITIAL_PURCHASE" && subscriptionStatus === "active") {
+      await sendPremiumWelcomeEmailIfNeeded(appUserId);
     }
 
     return new Response(
@@ -66,12 +109,11 @@ Deno.serve(async (req) => {
         success: true,
         subscriptionStatus,
       }),
-      { headers: { "Content-Type": "application/json" } }
+      { headers: { "Content-Type": "application/json" } },
     );
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: String(error) }),
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ error: String(error) }), {
+      status: 500,
+    });
   }
 });

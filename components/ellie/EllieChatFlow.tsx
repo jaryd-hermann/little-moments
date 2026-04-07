@@ -23,10 +23,13 @@ import {
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getStreakDisplayFromStores, type AfterSaveStats } from "@/hooks/useStreak";
 import { EllieMessage } from "./EllieMessage";
 import { MomentPreview } from "./MomentPreview";
 import { PromptCard } from "./PromptCard";
 import { UserMessage } from "./UserMessage";
+
+export type { AfterSaveStats };
 
 type FlowPhase =
   | "prompt"
@@ -49,19 +52,42 @@ interface EllieChatFlowProps {
   photoUri?: string;
   photoDate?: number;
   isShufflingPhoto?: boolean;
-  onComplete: (entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }) => void;
+  onComplete: (
+    entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }
+  ) => void | Promise<void>;
   onPhotoShuffle?: () => void;
   welcomeMessages?: string[];
   promptInstruction?: string;
   extraGuidance?: string;
   firstReplyOverride?: string;
-  afterSaveNode?: React.ReactNode;
+  /** Called after save completes and entries are updated — use for stats that must match the header. */
+  afterSaveNode?: (stats: AfterSaveStats) => React.ReactNode;
   onFlowStarted?: (inputMethod: InputMethod) => void;
   headerNode?: React.ReactNode;
   onSkip?: () => void;
   hideTimerHint?: boolean;
   timerHintOverride?: string;
+  /** Replaces the default preview-phase instruction above the moment card. */
+  previewInstructionOverride?: string;
   hideHelperText?: boolean;
+  /** When set, shows a close control during timed capture (recording / mic) to reset the flow and invoke this callback (e.g. restore tab bar on Today). */
+  onAbortFlow?: () => void;
+  /** Italic line below the photo prompt question (e.g. activation shuffle hint). */
+  photoFooterNote?: string;
+  photoPermissionBlocked?: boolean;
+  onRequestPhotoAccess?: () => void;
+  photoAccessButtonLabel?: string;
+  /** Activation: fixed delay before Ellie photo footer + CTAs (matches word_saved typing beat). */
+  photoEllieTypingDelayMs?: number;
+  /**
+   * First message + typing indicator on mount; after `typingDurationMs`, remaining messages and the prompt card appear.
+   * Do not pass `welcomeMessages` when using this (first message is only in `firstMessage`).
+   */
+  stagedWelcomeReveal?: {
+    firstMessage: string;
+    followingMessages: string[];
+    typingDurationMs?: number;
+  };
 }
 
 interface ChatItem {
@@ -69,6 +95,7 @@ interface ChatItem {
   type: "ellie" | "user" | "prompt" | "preview" | "thinking" | "custom";
   content?: string;
   customNode?: React.ReactNode;
+  showAvatar?: boolean;
 }
 
 const DURATION_SECONDS = 120;
@@ -102,15 +129,29 @@ export function EllieChatFlow({
   onSkip,
   hideTimerHint,
   timerHintOverride,
+  previewInstructionOverride,
   hideHelperText,
+  onAbortFlow,
+  stagedWelcomeReveal,
+  photoFooterNote,
+  photoPermissionBlocked,
+  onRequestPhotoAccess,
+  photoAccessButtonLabel,
+  photoEllieTypingDelayMs,
 }: EllieChatFlowProps) {
   const { colors } = useTheme();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const initialMessagesRef = useRef<ChatItem[]>([]);
 
   const [phase, setPhase] = useState<FlowPhase>("prompt");
+  /** Photo prompts: hide timer + CTAs until photo URI is ready, or after `photoEllieTypingDelayMs` (activation). */
+  const [photoFirstViewportReady, setPhotoFirstViewportReady] = useState(
+    () => promptType !== "photo"
+  );
   const [messages, setMessages] = useState<ChatItem[]>([]);
+  const [welcomeStageReady, setWelcomeStageReady] = useState(() => stagedWelcomeReveal == null);
   const [userInput, setUserInput] = useState("");
   const [rawText, setRawText] = useState("");
   const [allRawText, setAllRawText] = useState("");
@@ -132,6 +173,75 @@ export function EllieChatFlow({
   }, []);
 
   useEffect(() => {
+    if (promptType !== "photo") {
+      setPhotoFirstViewportReady(true);
+      return;
+    }
+    if (photoPermissionBlocked) {
+      setPhotoFirstViewportReady(false);
+      return;
+    }
+    /** Activation (`photoEllieTypingDelayMs`): CTAs unlock on a fixed timer from PromptCard / backup below — never force false just because the photo URI is still loading. */
+    if (photoEllieTypingDelayMs) {
+      return;
+    }
+    if (!photoUri) {
+      setPhotoFirstViewportReady(false);
+    }
+  }, [promptType, photoPermissionBlocked, photoUri, photoEllieTypingDelayMs]);
+
+  /** Activation: unlock Start speaking/typing after fixed ms from entering photo step (independent of photo fetch). */
+  useEffect(() => {
+    if (
+      promptType !== "photo" ||
+      !photoEllieTypingDelayMs ||
+      photoPermissionBlocked
+    ) {
+      return;
+    }
+    const t = setTimeout(() => {
+      setPhotoFirstViewportReady(true);
+    }, photoEllieTypingDelayMs);
+    return () => clearTimeout(t);
+  }, [promptType, photoEllieTypingDelayMs, photoPermissionBlocked]);
+
+  const handlePhotoViewportReady = useCallback(() => {
+    setPhotoFirstViewportReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (stagedWelcomeReveal) {
+      const { firstMessage, followingMessages, typingDurationMs = 5000 } = stagedWelcomeReveal;
+
+      const fullInitial: ChatItem[] = [];
+      const firstId = nextId();
+      fullInitial.push({ id: firstId, type: "ellie", content: firstMessage });
+      for (const text of followingMessages) {
+        fullInitial.push({ id: nextId(), type: "ellie", content: text });
+      }
+      fullInitial.push({ id: nextId(), type: "prompt" });
+      if (extraGuidance) {
+        fullInitial.push({ id: nextId(), type: "ellie", content: extraGuidance, showAvatar: true });
+      }
+      const snapshot = fullInitial.map((m) => ({ ...m }));
+      initialMessagesRef.current = snapshot;
+
+      const thinkingId = nextId();
+      setMessages([
+        { id: firstId, type: "ellie", content: firstMessage },
+        { id: thinkingId, type: "thinking" },
+      ]);
+      scrollToEnd();
+
+      const t = setTimeout(() => {
+        setMessages(snapshot.map((m) => ({ ...m })));
+        setWelcomeStageReady(true);
+        scrollToEnd();
+      }, typingDurationMs);
+
+      return () => clearTimeout(t);
+    }
+
     const initial: ChatItem[] = [];
     if (welcomeMessages) {
       for (const msg of welcomeMessages) {
@@ -142,6 +252,7 @@ export function EllieChatFlow({
     if (extraGuidance) {
       initial.push({ id: nextId(), type: "ellie", content: extraGuidance, showAvatar: true });
     }
+    initialMessagesRef.current = initial.map((m) => ({ ...m }));
     setMessages(initial);
   }, []);
 
@@ -158,6 +269,27 @@ export function EllieChatFlow({
       timerRef.current = null;
     }
   }, []);
+
+  const handleAbortFlow = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Keyboard.dismiss();
+    stopTimer();
+    setElapsed(0);
+    setPhase("prompt");
+    setUserInput("");
+    setRawText("");
+    setAllRawText("");
+    setAssembledTitle("");
+    setAssembledBody("");
+    setSaving(false);
+    setGoingDeeper(false);
+    setDeeperCount(0);
+    followUpAskedRef.current = false;
+    setWelcomeStageReady(true);
+    setMessages(initialMessagesRef.current.map((m) => ({ ...m })));
+    onAbortFlow?.();
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [stopTimer, onAbortFlow]);
 
   useEffect(() => () => stopTimer(), [stopTimer]);
 
@@ -184,6 +316,21 @@ export function EllieChatFlow({
     setPhase("mic");
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 400);
   }, [startTimer, onFlowStarted]);
+
+  const showPreview = useCallback(
+    (title: string, body: string) => {
+      setAssembledTitle(title);
+      setAssembledBody(body);
+      setMessages((prev) => [
+        ...prev.filter((m) => m.type !== "thinking"),
+        { id: nextId(), type: "ellie", content: previewInstructionOverride ?? PREVIEW_INSTRUCTION },
+        { id: nextId(), type: "preview" },
+      ]);
+      setPhase("preview");
+      scrollToEnd();
+    },
+    [scrollToEnd, previewInstructionOverride]
+  );
 
   const handleDone = useCallback(async () => {
     stopTimer();
@@ -258,21 +405,6 @@ export function EllieChatFlow({
       showPreview("", text);
     }
   }, [userInput, rawText, promptType, promptValue, stopTimer, scrollToEnd, firstReplyOverride, showPreview]);
-
-  const showPreview = useCallback(
-    (title: string, body: string) => {
-      setAssembledTitle(title);
-      setAssembledBody(body);
-      setMessages((prev) => [
-        ...prev.filter((m) => m.type !== "thinking"),
-        { id: nextId(), type: "ellie", content: PREVIEW_INSTRUCTION },
-        { id: nextId(), type: "preview" },
-      ]);
-      setPhase("preview");
-      scrollToEnd();
-    },
-    [scrollToEnd]
-  );
 
   const handleFollowUpAnswer = useCallback(async () => {
     const answer = userInput.trim();
@@ -428,10 +560,20 @@ export function EllieChatFlow({
   }, [userInput, allRawText, promptType, promptValue, scrollToEnd, showPreview, assembledTitle, assembledBody]);
 
   const handleSave = useCallback(
-    (title: string, body: string, attachedPhotoUri?: string) => {
+    async (title: string, body: string, attachedPhotoUri?: string) => {
       setSaving(true);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      onComplete({ title, body, rawText: allRawText, attachedPhotoUri });
+      try {
+        await Promise.resolve(
+          onComplete({ title, body, rawText: allRawText, attachedPhotoUri })
+        );
+      } catch {
+        setSaving(false);
+        return;
+      }
+
+      const stats = getStreakDisplayFromStores();
+      const saveFooter = afterSaveNode?.(stats);
 
       // Convert the preview to a static read-only card (same pattern as Go Deeper)
       setMessages((prev) => {
@@ -490,8 +632,8 @@ export function EllieChatFlow({
             : m
         );
 
-        if (afterSaveNode) {
-          converted.push({ id: nextId(), type: "custom", customNode: afterSaveNode });
+        if (saveFooter) {
+          converted.push({ id: nextId(), type: "custom", customNode: saveFooter });
         }
         return converted;
       });
@@ -544,18 +686,60 @@ export function EllieChatFlow({
           })}
 
           {/* Timer visible above the mic sheet */}
-          <View style={{ alignItems: "center", marginTop: 8, marginBottom: 16 }}>
-            <Text
+          {onAbortFlow ? (
+            <View
               style={{
-                fontFamily: "LibreBaskerville-Bold",
-                fontSize: 36,
-                color: isOvertime ? "#EF4444" : colors.text,
-                textAlign: "center",
+                flexDirection: "row",
+                alignItems: "center",
+                marginTop: 8,
+                marginBottom: 16,
+                paddingHorizontal: 4,
               }}
             >
-              {formatTimer(remaining)}
-            </Text>
-          </View>
+              <View style={{ width: 40 }} />
+              <Text
+                style={{
+                  flex: 1,
+                  fontFamily: "LibreBaskerville-Bold",
+                  fontSize: 36,
+                  color: isOvertime ? "#EF4444" : colors.text,
+                  textAlign: "center",
+                }}
+              >
+                {formatTimer(remaining)}
+              </Text>
+              <View style={{ width: 40, alignItems: "center", justifyContent: "center" }}>
+                <Pressable
+                  onPress={handleAbortFlow}
+                  hitSlop={12}
+                  accessibilityLabel="Exit moment capture"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: colors.surfaceSecondary,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="close" size={20} color={colors.icon} />
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <View style={{ alignItems: "center", marginTop: 8, marginBottom: 16 }}>
+              <Text
+                style={{
+                  fontFamily: "LibreBaskerville-Bold",
+                  fontSize: 36,
+                  color: isOvertime ? "#EF4444" : colors.text,
+                  textAlign: "center",
+                }}
+              >
+                {formatTimer(remaining)}
+              </Text>
+            </View>
+          )}
         </ScrollView>
 
         {/* Half-sheet mic recorder */}
@@ -620,6 +804,12 @@ export function EllieChatFlow({
                   onShuffle={onPhotoShuffle}
                   instruction={promptInstruction}
                   hideHelperText={hideHelperText}
+                  photoFooterNote={photoFooterNote}
+                  photoPermissionBlocked={photoPermissionBlocked}
+                  onRequestPhotoAccess={onRequestPhotoAccess}
+                  photoAccessButtonLabel={photoAccessButtonLabel}
+                  onPhotoViewportReady={handlePhotoViewportReady}
+                  photoEllieTypingDelayMs={photoEllieTypingDelayMs}
                 />
               );
             case "thinking":
@@ -645,7 +835,9 @@ export function EllieChatFlow({
         })}
 
         {/* Start options when in prompt phase */}
-        {phase === "prompt" && (
+        {phase === "prompt" &&
+          welcomeStageReady &&
+          (promptType !== "photo" || photoFirstViewportReady) && (
           <View style={{ gap: 10, marginTop: 8 }}>
             {!hideTimerHint && (
               <View style={{ alignItems: "center", marginBottom: 4 }}>
@@ -737,18 +929,59 @@ export function EllieChatFlow({
           }}
         >
           {phase === "recording" && (
-            <View style={{ alignItems: "center", marginBottom: 8 }}>
-              <Text
+            onAbortFlow ? (
+              <View
                 style={{
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 28,
-                  color: isOvertime ? "#EF4444" : colors.text,
-                  textAlign: "center",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 8,
+                  paddingHorizontal: 4,
                 }}
               >
-                {formatTimer(remaining)}
-              </Text>
-            </View>
+                <View style={{ width: 40 }} />
+                <Text
+                  style={{
+                    flex: 1,
+                    fontFamily: "LibreBaskerville-Bold",
+                    fontSize: 28,
+                    color: isOvertime ? "#EF4444" : colors.text,
+                    textAlign: "center",
+                  }}
+                >
+                  {formatTimer(remaining)}
+                </Text>
+                <View style={{ width: 40, alignItems: "center", justifyContent: "center" }}>
+                  <Pressable
+                    onPress={handleAbortFlow}
+                    hitSlop={12}
+                    accessibilityLabel="Exit moment capture"
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: colors.surfaceSecondary,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Ionicons name="close" size={20} color={colors.icon} />
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={{ alignItems: "center", marginBottom: 8 }}>
+                <Text
+                  style={{
+                    fontFamily: "LibreBaskerville-Bold",
+                    fontSize: 28,
+                    color: isOvertime ? "#EF4444" : colors.text,
+                    textAlign: "center",
+                  }}
+                >
+                  {formatTimer(remaining)}
+                </Text>
+              </View>
+            )
           )}
 
           <View

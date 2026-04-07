@@ -12,7 +12,6 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { Ionicons } from "@expo/vector-icons";
 import { differenceInDays, format } from "date-fns";
-import { Image as ExpoImage } from "expo-image";
 import { router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
 import { useMemo, useState } from "react";
@@ -31,7 +30,6 @@ import { StreakBadge } from "./StreakBadge";
 const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
 const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
 const STREAK_FLAME = require("@/assets/images/streak-flame.png");
-const STORY_STARTER_BADGE = require("@/assets/images/story-starter-badge.png");
 
 interface AppHeaderProps {
   streakCount: number;
@@ -43,6 +41,7 @@ interface AppHeaderProps {
   memoryRaceCount?: number;
   avgStoryLengthWords?: number;
   memberSince?: string | null;
+  threadsCount?: number;
 }
 
 export function AppHeader({
@@ -55,6 +54,7 @@ export function AppHeader({
   memoryRaceCount = 0,
   avgStoryLengthWords = 0,
   memberSince,
+  threadsCount = 0,
 }: AppHeaderProps) {
   const { colors, theme } = useTheme();
   const posthog = usePostHog();
@@ -119,7 +119,11 @@ export function AppHeader({
             totalMoments={totalMoments}
             isAtRisk={isAtRisk}
             onPress={() => {
-              posthog.capture("viewed_streaks", { streak_count: streakCount, total_moments: totalMoments });
+              posthog.capture("viewed_streaks", {
+                streak_count: streakCount,
+                total_moments: totalMoments,
+                longest_streak: longestStreak,
+              });
               setShowStreak(true);
             }}
           />
@@ -217,68 +221,116 @@ export function AppHeader({
             </View>
 
             <View style={{ flexDirection: "row", gap: 16, marginTop: 32, width: "100%" }}>
-              <View
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open Capsule, total moments"
+                onPress={() => {
+                  setShowStreak(false);
+                  router.push("/(tabs)/memories");
+                }}
                 style={{
                   flex: 1,
                   borderRadius: 16,
                   borderWidth: 1,
                   borderColor: colors.border,
                   backgroundColor: colors.surface,
-                  padding: 20,
-                  alignItems: "center",
+                  paddingVertical: 20,
+                  paddingHorizontal: 14,
+                  position: "relative",
                 }}
               >
-                <Text
+                <View style={{ alignItems: "center", paddingHorizontal: 8 }}>
+                  <Text
+                    style={{
+                      fontFamily: "LibreBaskerville-Bold",
+                      fontSize: 28,
+                      color: colors.text,
+                    }}
+                  >
+                    {totalMoments}
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Light",
+                      fontSize: 13,
+                      color: colors.textMuted,
+                      marginTop: 4,
+                    }}
+                  >
+                    Total Moments
+                  </Text>
+                </View>
+                <View
                   style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: colors.text,
+                    position: "absolute",
+                    right: 10,
+                    top: 0,
+                    bottom: 0,
+                    justifyContent: "center",
                   }}
                 >
-                  {longestStreak}
-                </Text>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 13,
-                    color: colors.textMuted,
-                    marginTop: 4,
-                  }}
-                >
-                  Longest Streak
-                </Text>
-              </View>
-              <View
+                  <Ionicons
+                    name="chevron-forward"
+                    size={20}
+                    color={colors.textMuted}
+                  />
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open Threads"
+                onPress={() => {
+                  setShowStreak(false);
+                  router.push("/threads");
+                }}
                 style={{
                   flex: 1,
                   borderRadius: 16,
                   borderWidth: 1,
                   borderColor: colors.border,
                   backgroundColor: colors.surface,
-                  padding: 20,
-                  alignItems: "center",
+                  paddingVertical: 20,
+                  paddingHorizontal: 14,
+                  position: "relative",
                 }}
               >
-                <Text
+                <View style={{ alignItems: "center", paddingHorizontal: 8 }}>
+                  <Text
+                    style={{
+                      fontFamily: "LibreBaskerville-Bold",
+                      fontSize: 28,
+                      color: colors.text,
+                    }}
+                  >
+                    {threadsCount}
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Light",
+                      fontSize: 13,
+                      color: colors.textMuted,
+                      marginTop: 4,
+                    }}
+                  >
+                    Total Threads
+                  </Text>
+                </View>
+                <View
                   style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: colors.text,
+                    position: "absolute",
+                    right: 10,
+                    top: 0,
+                    bottom: 0,
+                    justifyContent: "center",
                   }}
                 >
-                  {totalMoments}
-                </Text>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 13,
-                    color: colors.textMuted,
-                    marginTop: 4,
-                  }}
-                >
-                  Total Moments
-                </Text>
-              </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={20}
+                    color={colors.textMuted}
+                  />
+                </View>
+              </Pressable>
             </View>
 
             {memberSince ? (
@@ -341,42 +393,27 @@ export function AppHeader({
                       borderColor: colors.primary,
                       backgroundColor: colors.primary + "18",
                       padding: 20,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 12,
                     }}
                   >
-                    <ExpoImage
-                      source={STORY_STARTER_BADGE}
+                    <Text
                       style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 12,
-                        backgroundColor: "transparent",
+                        fontFamily: "Roboto-Medium",
+                        fontSize: 16,
+                        color: colors.text,
                       }}
-                      contentFit="contain"
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Medium",
-                          fontSize: 16,
-                          color: colors.text,
-                        }}
-                      >
-                        Story Starter!
-                      </Text>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Light",
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                          marginTop: 2,
-                        }}
-                      >
-                        You posted your first moment. The journey begins.
-                      </Text>
-                    </View>
+                    >
+                      Story Starter!
+                    </Text>
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Light",
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                        marginTop: 2,
+                      }}
+                    >
+                      You posted your first moment. The journey begins.
+                    </Text>
                   </View>
                 )}
                 {hasStoryFinderBadge && (
@@ -389,33 +426,27 @@ export function AppHeader({
                       borderColor: colors.primary,
                       backgroundColor: colors.primary + "18",
                       padding: 20,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 12,
                     }}
                   >
-                    <Text style={{ fontSize: 28 }}>🎯</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Medium",
-                          fontSize: 16,
-                          color: colors.text,
-                        }}
-                      >
-                        Story finder
-                      </Text>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Light",
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                          marginTop: 2,
-                        }}
-                      >
-                        You did your first memory race to find a story.
-                      </Text>
-                    </View>
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Medium",
+                        fontSize: 16,
+                        color: colors.text,
+                      }}
+                    >
+                      Story finder
+                    </Text>
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Light",
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                        marginTop: 2,
+                      }}
+                    >
+                      You did your first memory race to find a story.
+                    </Text>
                   </View>
                 )}
                 {hasPhilosopherBadge && (
@@ -428,34 +459,28 @@ export function AppHeader({
                       borderColor: colors.primary,
                       backgroundColor: colors.primary + "18",
                       padding: 20,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 12,
                     }}
                   >
-                    <Text style={{ fontSize: 28 }}>📜</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Medium",
-                          fontSize: 16,
-                          color: colors.text,
-                        }}
-                      >
-                        The Philosopher
-                      </Text>
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Light",
-                          fontSize: 13,
-                          color: colors.textSecondary,
-                          marginTop: 2,
-                        }}
-                      >
-                        You cared to understand the how and why of little
-                        moments.
-                      </Text>
-                    </View>
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Medium",
+                        fontSize: 16,
+                        color: colors.text,
+                      }}
+                    >
+                      The Philosopher
+                    </Text>
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Light",
+                        fontSize: 13,
+                        color: colors.textSecondary,
+                        marginTop: 2,
+                      }}
+                    >
+                      You cared to understand the how and why of little
+                      moments.
+                    </Text>
                   </View>
                 )}
               </>

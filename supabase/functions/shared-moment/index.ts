@@ -59,6 +59,36 @@ function getPublicMediaUrl(storagePath: string): string {
   return `${SUPABASE_URL}/storage/v1/object/public/entry-media/${storagePath}`;
 }
 
+/** Only allow https image URLs (profile avatars are Supabase public URLs). */
+function safeAvatarSrc(url: string | null | undefined): string | null {
+  const u = url?.trim();
+  if (!u || !/^https:\/\//i.test(u)) return null;
+  return u;
+}
+
+/** Show a byline name only when it is a real label, not an email (email is never loaded or rendered). */
+function sharerDisplayName(displayName: string | null | undefined): string | null {
+  const n = displayName?.trim();
+  if (!n) return null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(n)) return null;
+  return n;
+}
+
+function renderSharerByline(name: string | null, avatarUrl: string | null): string {
+  const imgSrc = safeAvatarSrc(avatarUrl);
+  const showName = !!name;
+  if (!imgSrc && !showName) return "";
+
+  const imgBlock = imgSrc
+    ? `<img src="${escapeHtml(imgSrc)}" alt="" width="40" height="40" style="width:40px;height:40px;border-radius:9999px;object-fit:cover;flex-shrink:0;border:1px solid rgba(0,0,0,0.08);" loading="lazy">`
+    : "";
+  const nameBlock = showName
+    ? `<span style="font-family:'Roboto',sans-serif;font-size:15px;font-weight:400;color:#5c5348;">${escapeHtml(name!)}</span>`
+    : "";
+
+  return `<div style="display:flex;flex-direction:row;align-items:center;gap:10px;margin-top:14px;">${imgBlock}${nameBlock}</div>`;
+}
+
 function renderPage(
   entry: {
     title: string | null;
@@ -69,7 +99,7 @@ function renderPage(
     word_of_day: string | null;
   },
   media: { storage_path: string; storage_url: string | null; display_order: number }[],
-  _displayName: string | null,
+  sharer: { displayName: string | null; avatarUrl: string | null },
   shareUrl: string
 ): string {
   const title = entry.title || "A Little Moment";
@@ -95,8 +125,10 @@ function renderPage(
     )
     .join("");
 
+  const bylineHtml = renderSharerByline(sharer.displayName, sharer.avatarUrl);
+
   const wordHtml = entry.word_of_day
-    ? `<div style="margin-top:12px;font-family:'Roboto',sans-serif;font-weight:400;font-size:13px;color:#8a7a6b;font-style:italic;">today&#8217;s word: ${escapeHtml(entry.word_of_day).toLowerCase()}</div>`
+    ? `<div style="margin-top:${bylineHtml ? "16px" : "12px"};font-family:'Roboto',sans-serif;font-weight:400;font-size:13px;color:#8a7a6b;font-style:italic;">today&#8217;s word: ${escapeHtml(entry.word_of_day).toLowerCase()}</div>`
     : "";
 
   return `<!DOCTYPE html>
@@ -137,6 +169,8 @@ function renderPage(
       ${imagesHtml ? `<div style="margin-bottom:24px;display:flex;flex-direction:column;gap:12px;">${imagesHtml}</div>` : ""}
 
       <h1 style="font-family:'Libre Baskerville',Georgia,serif;font-size:24px;font-weight:700;line-height:1.35;color:#1A1A1A;margin:0;">${escapeHtml(title)}</h1>
+
+      ${bylineHtml}
 
       ${wordHtml}
 
@@ -226,7 +260,7 @@ Deno.serve(async (req) => {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name")
+    .select("display_name, avatar_url")
     .eq("id", share.user_id)
     .single();
 
@@ -235,7 +269,10 @@ Deno.serve(async (req) => {
   const html = renderPage(
     entry,
     media ?? [],
-    profile?.display_name ?? null,
+    {
+      displayName: sharerDisplayName(profile?.display_name),
+      avatarUrl: profile?.avatar_url ?? null,
+    },
     shareUrl
   );
 

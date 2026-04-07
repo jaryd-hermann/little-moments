@@ -14,179 +14,176 @@ interface OnboardingDay {
 const DAYS: OnboardingDay[] = [
   {
     emailKey: "onboarding-day-1",
-    subject: "The two-minute thing that changes how you see your days",
-    preheader: "One question a night. About two minutes. Here's why it works.",
+    subject: "Your word of the day is a door — walk through it",
+    preheader: "One word. Two minutes. Capture something true.",
     body: `
       <p style="margin:0 0 16px;">
-        So here's the honest version of what Little Moments is.
+        Some days you'll get a <strong>single word</strong> as your starting point. Don't overthink it — let it unlock whatever memory or association it pulls up.
       </p>
       <p style="margin:0 0 16px;">
-        Each night, you answer one question: what was the most interesting thing that happened today? Not the most impressive. Not the most dramatic. Just the thing that made today different from yesterday.
+        The point isn't a perfect sentence. It's <strong>capture</strong>: something real, however rough. Talk it out, type a few lines, or both. Ellie may ask one focused follow-up to help shape what you said — still quick, still low pressure.
       </p>
       <p style="margin:0 0 16px;">
-        You can type it. You can talk it out and we'll transcribe it. You can drop in a photo and write a line about what was happening. However you want to do it — it takes about two minutes.
-      </p>
-      <p style="margin:0 0 16px;">
-        The strange thing is what happens after a few weeks. You start noticing things during the day because you know you'll have to pick something tonight. Your attention shifts. Days stop blurring. You start actually living inside them instead of moving through them.
-      </p>
-      <p style="margin:0 0 16px;">
-        I know that sounds like a lot to promise from two minutes. But I've seen it happen — including to me.
-      </p>
-      <p style="margin:0 0 16px;">
-        Your only job today: open the app and add a moment. One line is plenty. Just something real.
+        Open the app and try today's starting point when you have two minutes.
       </p>
     `,
     cta: "Open Little Moments",
     closing: "talk-soon",
-    ps: "The streak starts with tonight. No pressure — but there's something satisfying about a day-one entry that just says \"I started.\"",
+    ps: "Small honest beats polished empty. One line is enough.",
   },
   {
     emailKey: "onboarding-day-2",
-    subject: "The feature that turns your moments into actual stories",
-    preheader: "Dig Deeper pulls the story out of what you already wrote.",
+    subject: "A photo you already took — with the story behind it",
+    preheader: "Photo prompts: we never store your camera roll.",
     body: `
       <p style="margin:0 0 16px;">
-        So you've got a moment or two captured. Good.
+        Other days you'll get a <strong>photo from your camera roll</strong> as the nudge. We use it on your device as a prompt — <strong>we don't store or upload your photos</strong>.
       </p>
       <p style="margin:0 0 16px;">
-        Here's where it starts to get interesting.
+        Same focus as a word: <strong>what was happening, what you felt, what you'd forgotten</strong>. Not a caption for Instagram — a moment for you.
       </p>
       <p style="margin:0 0 16px;">
-        Inside the app there's a feature called <strong>Dig Deeper</strong>. Once you've logged a moment, Dig Deeper asks you a few follow-up questions about it — things like: what were you actually feeling? What changed? What would you have told someone about this over dinner?
-      </p>
-      <p style="margin:0 0 16px;">
-        The goal isn't to make you write more. It's to pull out the story that's already inside the moment you captured.
-      </p>
-      <p style="margin:0 0 16px;">
-        Because here's something I've come to believe: most people think they're not good storytellers because they don't have interesting things happen to them. That's not the problem. The problem is they haven't learned to look closely at the things that do. Dig Deeper is basically a structured way to look closely.
-      </p>
-      <p style="margin:0 0 16px;">
-        The stories you tell at work, with friends, with family — they get better when you know how to find the good detail, the moment of change, the thing that actually makes someone lean in. Dig Deeper is practice for that.
-      </p>
-      <p style="margin:0 0 16px;">
-        Try it on your last moment. You might surprise yourself.
+        Next time you see a photo prompt, give it two minutes and see what comes back.
       </p>
     `,
-    cta: "Try Dig Deeper",
+    cta: "Open Little Moments",
     closing: "talk-soon",
   },
   {
     emailKey: "onboarding-day-3",
-    subject: "Your memory is better than you think. Here's proof.",
-    preheader: "When your mind goes blank, Memory Jog sends you sideways into a real memory.",
+    subject: "Same question, different answer",
+    preheader: "Everyone sees the prompt — you find your moment.",
     body: `
       <p style="margin:0 0 16px;">
-        Some nights you'll open the app and your mind goes blank. Nothing happened today. Or nothing worth writing about.
+        Sometimes your starting point is a <strong>question of the day</strong> — the same prompt for everyone, but your answer is yours.
       </p>
       <p style="margin:0 0 16px;">
-        This is normal. And it's not true.
+        Hunt for <strong>one little moment</strong> from the last few days worth saving: a conversation, a meal, something someone said, a small thing you'd otherwise forget.
       </p>
       <p style="margin:0 0 16px;">
-        That's what <strong>Memory Jog</strong> is for.
-      </p>
-      <p style="margin:0 0 16px;">
-        Here's how it works: we give you a single random word. Could be anything — \"stairs,\" \"red,\" \"August.\" You look at the word, let it land, and see what memory it knocks loose. Then you follow that memory wherever it goes. One thing connects to another. You end up somewhere you didn't expect.
-      </p>
-      <p style="margin:0 0 16px;">
-        The reason a random word works better than \"think of a memory\" is that your brain stores things by association, not by date. A direct question narrows you down. A random word sends you sideways — into memories you forgot you had.
-      </p>
-      <p style="margin:0 0 16px;">
-        People are genuinely surprised by what surfaces. Not just the memory itself, but how vivid it is. How much feeling is still attached to it.
-      </p>
-      <p style="margin:0 0 16px;">
-        You can swap the word anytime if it's not sparking anything. But give it a few seconds first. The slow burn is usually the one worth following.
-      </p>
-      <p style="margin:0 0 16px;">
-        Tonight, try Memory Jog — even if you have something to write about already.
+        Epic optional. Specific wins. Capture it in the app when you can.
       </p>
     `,
-    cta: "Try Memory Jog",
+    cta: "Open Little Moments",
     closing: "talk-soon",
   },
   {
     emailKey: "onboarding-day-4",
-    subject: "The stories hiding in your camera roll",
-    preheader: "Rewind pairs old photos with the story the picture can't show.",
+    subject: "Your moments, findable — Capsule and Flipbook",
+    preheader: "Search your archive — or browse like a book.",
     body: `
       <p style="margin:0 0 16px;">
-        Quick one today — because this feature explains itself once you see it.
+        Everything you save lives in your <strong>Capsule</strong> — a <strong>searchable archive</strong> of moments. Keywords, people, feelings, dates: find what you wrote months ago in seconds.
       </p>
       <p style="margin:0 0 16px;">
-        <strong>Rewind</strong> surfaces old photos from your camera roll — from a year ago, five years ago, whatever — and invites you to add a moment to them. Not a caption. A real memory. What was happening that day. What you were feeling. What you'd forgotten until right now.
+        When you want to wander instead of search, try <strong>Flipbook</strong> — flip through your memories visually and see the month or year come back in order.
       </p>
       <p style="margin:0 0 16px;">
-        Photos are incredible time machines, but most of them just sit in your camera roll getting buried. Rewind gives them a story layer — the part that the photo can't show.
-      </p>
-      <p style="margin:0 0 16px;">
-        It's also one of the best ways to build your moment archive without starting from scratch tonight. You've already lived thousands of story-worthy days. A lot of the evidence is right there in your photos, waiting.
-      </p>
-      <p style="margin:0 0 16px;">
-        Spend five minutes with Rewind today. Dig up something from a year or two ago. See what comes back.
-      </p>
-    `,
-    cta: "Open Rewind",
-    closing: "talk-soon",
-  },
-  {
-    emailKey: "onboarding-day-5",
-    subject: "Every moment you've ever saved, instantly findable",
-    preheader: "Capsule is built to revisit — not just capture once and forget.",
-    body: `
-      <p style="margin:0 0 16px;">
-        By now you've got a handful of moments in the app. Maybe more.
-      </p>
-      <p style="margin:0 0 16px;">
-        Here's something worth knowing about where they live.
-      </p>
-      <p style="margin:0 0 16px;">
-        <strong>Capsule</strong> is your searchable memory archive — every moment you've ever captured, organized and searchable by date, keyword, feeling, person, place. Looking for everything you wrote about your dad? Search it. Want to find that moment from last March you barely remember? It's there.
-      </p>
-      <p style="margin:0 0 16px;">
-        Most journals are linear. You write forward and never look back. Capsule is built to be revisited — because the value of this practice isn't just in the capturing. It's in the returning.
-      </p>
-      <p style="margin:0 0 16px;">
-        One of my favorite things to do is pick a random month from a year ago and read through what I was noticing then. It feels like reading a letter from a version of yourself you'd almost forgotten. The small stuff you recorded — stuff you wouldn't have remembered otherwise — is suddenly right there, completely vivid.
-      </p>
-      <p style="margin:0 0 16px;">
-        Take a few minutes today to explore Capsule. Even with just a few entries it's worth seeing how the archive is starting to take shape.
+        Spend a minute in Capsule today, even if you only have a few entries. The archive grows faster than you'd think.
       </p>
     `,
     cta: "Explore Capsule",
     closing: "talk-soon",
   },
   {
-    emailKey: "onboarding-day-6",
-    subject: "We'll turn your moments into something beautiful",
-    preheader: "Log through the month — we build you a Chapter at the end.",
+    emailKey: "onboarding-day-5",
+    subject: "Each month becomes a Chapter",
+    preheader: "A beautiful read-through of your month — shareable.",
     body: `
       <p style="margin:0 0 16px;">
-        Last one in this series — and I think it's the best one.
+        When you capture consistently, something accumulates: real material from your actual month.
       </p>
       <p style="margin:0 0 16px;">
-        If you keep logging moments consistently throughout the month, something happens at the end of it: we take everything you've captured and build you a <strong>Chapter</strong>.
+        <strong>Chapters</strong> turn that into a <strong>beautiful, readable generation</strong> of your moments and photos — something you can sit with, look back on, or <strong>share with people you care about</strong>.
       </p>
       <p style="margin:0 0 16px;">
-        A Chapter is a beautifully designed, narrative version of your month — connecting your moments into a real story, finding the threads you didn't notice while you were living them, and giving you something you can actually read, share, or keep.
+        You don't need polished entries — consistent little captures are enough. The Chapter meets you where you are.
+      </p>
+    `,
+    cta: "Open Little Moments",
+    closing: "talk-soon",
+  },
+  {
+    emailKey: "onboarding-day-6",
+    subject: "Beyond Chapters: Threads",
+    preheader: "Ellie surfaces themes across your moments.",
+    body: `
+      <p style="margin:0 0 16px;">
+        <strong>Threads</strong> go wider than a single day or month. Ellie looks across what you've captured to surface <strong>themes</strong> and <strong>insights</strong> — patterns and through-lines you might not notice when you're in the weeds.
       </p>
       <p style="margin:0 0 16px;">
-        It's not a summary. It's not a timeline. It's a story — written from your own words and moments, shaped into something worth returning to.
+        It's not magic — it's your own words, reflected back with distance. When a Thread shows up, it's worth the read.
+      </p>
+    `,
+    cta: "Open Little Moments",
+    closing: "talk-soon",
+  },
+  {
+    emailKey: "onboarding-day-7",
+    subject: "Share a moment with someone who matters",
+    preheader: "Invite someone into a moment you choose — not your whole journal.",
+    body: `
+      <p style="margin:0 0 16px;">
+        Some moments are meant to be shared — with a partner, a parent, a friend.
       </p>
       <p style="margin:0 0 16px;">
-        The people who get the most out of Chapters are the ones who don't aim for perfect entries. They just capture consistently — a line here, a photo there, a voice memo on the commute. The raw material doesn't have to be polished. We'll do the rest.
+        Little Moments lets you <strong>share specific moments</strong> you pick, not your entire archive. It's a simple way to let someone in on a slice of your life.
       </p>
       <p style="margin:0 0 16px;">
-        A year from now you'll have twelve Chapters. Twelve months of your actual life, written down, beautiful, yours.
+        Next time you save something they'd appreciate, look for share from the moment.
+      </p>
+    `,
+    cta: "Open Little Moments",
+    closing: "talk-soon",
+  },
+  {
+    emailKey: "onboarding-day-8",
+    subject: "Little Moments Premium — what's included",
+    preheader: "Chapters, deeper Capsule, connections, Threads.",
+    body: `
+      <p style="margin:0 0 16px;">
+        <strong>Premium</strong> is for people who want the full arc: <strong>monthly Chapters</strong>, <strong>advanced Capsule search</strong>, <strong>memory connections</strong> across what you've saved, and <strong>Threads</strong> where your plan includes them.
       </p>
       <p style="margin:0 0 16px;">
-        That's what this is all about.
+        If you're happy on the free path, keep capturing — the daily habit matters most. If you want the synthesis layer on top, you'll see Premium when it's right in the app.
+      </p>
+    `,
+    cta: "Open Little Moments",
+    closing: "talk-soon",
+  },
+  {
+    emailKey: "onboarding-day-9",
+    subject: "I want your honest feedback",
+    preheader: "Tap Feedback in the app or reply here — I read it.",
+    body: `
+      <p style="margin:0 0 16px;">
+        I'm Jaryd. I'm building Little Moments in public and I want it to be genuinely useful — not just pretty in the App Store.
       </p>
       <p style="margin:0 0 16px;">
-        Thanks for being here. I mean that.
+        If something confuses you, annoys you, or could be better: use <strong>Feedback</strong> in the app (tap the menu) or email me at <a href="mailto:hermannjaryd@gmail.com" style="color:#1A1A1A;">hermannjaryd@gmail.com</a>. I read every message I can.
+      </p>
+      <p style="margin:0 0 16px;">
+        If you want to follow along as I ship: <a href="https://www.The-Diff.com" style="color:#1A1A1A;">The-Diff.com</a>
+      </p>
+    `,
+    cta: "Open Little Moments",
+    closing: "talk-soon",
+  },
+  {
+    emailKey: "onboarding-day-10",
+    subject: "If Little Moments has stuck with you…",
+    preheader: "One friend or one rating helps more people find us.",
+    body: `
+      <p style="margin:0 0 16px;">
+        If the app has been good to you, the most helpful things are small: <strong>tell one friend</strong> who might love the habit, or leave a <strong>rating on the App Store</strong> so more people discover us.
+      </p>
+      <p style="margin:0 0 16px;">
+        No guilt if you're not in that place — thanks for being here either way.
       </p>
     `,
     cta: "Open Little Moments",
     closing: "thanks",
-    ps: "Keep going. The first week is always the hardest part of any habit. You're already through it.",
+    ps: "Your streak and your archive are yours. Keep going.",
   },
 ];
 

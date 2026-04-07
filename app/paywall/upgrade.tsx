@@ -21,7 +21,7 @@ const PREMIUM_FEATURES = [
   { icon: "heart", label: "5% donated for you" },
 ];
 
-const CTA_LAVENDER = "#f0d7ff";
+const PREMIUM_CTA_BG = "#FECFB4";
 
 export default function UpgradeScreen() {
   const { colors } = useTheme();
@@ -116,7 +116,7 @@ export default function UpgradeScreen() {
               <Ionicons
                 name={f.icon as keyof typeof Ionicons.glyphMap}
                 size={22}
-                color={colors.primary}
+                color={PREMIUM_CTA_BG}
               />
               <Text
                 style={{
@@ -154,7 +154,7 @@ export default function UpgradeScreen() {
             height: 52,
             width: "100%",
             borderRadius: 9999,
-            backgroundColor: CTA_LAVENDER,
+            backgroundColor: PREMIUM_CTA_BG,
             alignItems: "center",
             justifyContent: "center",
           }}

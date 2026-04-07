@@ -116,6 +116,7 @@ export function CustomTabBar({
             <Pressable
               key={route.key}
               onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
                 if (!isFocused) navigation.navigate(route.name);
               }}
               style={{

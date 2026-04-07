@@ -67,7 +67,10 @@ function MiniFeedTile({ entry }: { entry: Entry }) {
 
   return (
     <RNPressable
-      onPress={() => router.push(`/entry/${entry.id}`)}
+      onPress={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.push(`/entry/${entry.id}`);
+      }}
       style={{
         width: "100%",
         borderRadius: 12,
@@ -628,7 +631,11 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
           </RNPressable>
 
           <RNPressable
-            onPress={() => current && router.push(`/entry/${current.id}`)}
+            onPress={() => {
+              if (!current) return;
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push(`/entry/${current.id}`);
+            }}
             disabled={!current}
             style={{
               flex: 1,

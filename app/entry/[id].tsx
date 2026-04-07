@@ -17,6 +17,7 @@ import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
 import type { Entry } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
+import { EntryMediaVideo } from "@/components/common/EntryMediaVideo";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 
 function stripHtml(html: string): string {
@@ -371,19 +372,20 @@ export default function EntryDetailScreen() {
 
         {entry.media && entry.media.length > 0 && (
           <View style={{ marginTop: 24, gap: 12 }}>
-            {entry.media.map((m) => (
-              <EntryMediaImage
-                key={m.id}
-                media={m}
-                style={{
-                  width: windowWidth - 40,
-                  aspectRatio: 4 / 3,
-                  borderRadius: 12,
-                  backgroundColor: colors.surfaceSecondary,
-                  alignSelf: "center",
-                }}
-              />
-            ))}
+            {entry.media.map((m) => {
+              const mediaStyle = {
+                width: windowWidth - 40,
+                aspectRatio: 4 / 3,
+                borderRadius: 12,
+                backgroundColor: colors.surfaceSecondary,
+                alignSelf: "center" as const,
+              };
+              return m.media_type === "video" ? (
+                <EntryMediaVideo key={m.id} media={m} style={mediaStyle} />
+              ) : (
+                <EntryMediaImage key={m.id} media={m} style={mediaStyle} />
+              );
+            })}
           </View>
         )}
       </ScrollView>

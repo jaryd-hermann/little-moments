@@ -8,6 +8,8 @@ import {
   useWindowDimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Alert,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
@@ -15,8 +17,8 @@ import { usePostHog } from "posthog-react-native";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { Image } from "expo-image";
 import { AppHeader } from "@/components/common/AppHeader";
+import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow, type InputMethod } from "@/components/ellie/EllieChatFlow";
@@ -24,29 +26,44 @@ import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { ChapterCard } from "@/components/today/ChapterCard";
 import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
 import { useEntries } from "@/hooks/useEntries";
-import { useStreak } from "@/hooks/useStreak";
+import { useStreak, type AfterSaveStats } from "@/hooks/useStreak";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import { useMediaLibrary } from "@/hooks/useMediaLibrary";
+import { hasPhotoLibraryAccess, useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useChapters } from "@/hooks/useChapters";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 import { useChapterDevStore } from "@/store/chapterStore";
+import { useThreadNotifStore } from "@/store/threadNotifStore";
+import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
+import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
+import { useThreads } from "@/hooks/useThreads";
+import { ThreadCard } from "@/components/threads/ThreadCard";
 import { getDailyPrompt } from "@/lib/dailyPrompt";
 import { shareInvite } from "@/lib/inviteShare";
 import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
+import {
+  getNotificationPermissionGranted,
+  requestNotificationPermissions,
+} from "@/lib/notifications";
+import { syncPushRegistration } from "@/lib/pushRegistration";
+import {
+  dismissTodayNotificationNudge,
+  isTodayNotificationNudgeDismissed,
+} from "@/lib/todayNotificationNudge";
 import { useAuthStore } from "@/store/authStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { useTabBarStore } from "@/store/tabBarStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import type { PromptType } from "@/lib/momentAssist";
 import type { Entry } from "@/store/entryStore";
 
 const CREAM = "#FFFFEB";
-const WORDMARK_PREMIUM = require("@/assets/images/wordmark-premium.png");
-
 export default function TodayScreen() {
   const { colors } = useTheme();
-  const { profile } = useAuth();
+  const { profile, fetchProfile } = useAuth();
+  const setNotificationEnabled = useSettingsStore((s) => s.setNotificationEnabled);
+  const notificationTime = useSettingsStore((s) => s.notificationTime);
   const posthog = usePostHog();
   const { entries, fetchEntries, saveEntry } = useEntries();
   const userId = useAuthStore((s) => s.user?.id ?? null);
@@ -58,7 +75,12 @@ export default function TodayScreen() {
     memoryRaceCount,
     avgStoryLengthWords,
   } = useStreak();
-  const { getRandomAsset } = useMediaLibrary();
+  const {
+    getRandomAsset,
+    requestPermission,
+    checkPermission,
+    permissionStatus,
+  } = useMediaLibrary();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const { latestChapter: realLatestChapter, fetchChapters } = useChapters();
   const dummyEnabled = useChapterDevStore((s) => s.dummyChapterEnabled);
@@ -68,6 +90,11 @@ export default function TodayScreen() {
   );
   const latestChapter = realLatestChapter ?? dummyChapter;
   const [chapterViewerOpen, setChapterViewerOpen] = useState(false);
+  const { todayThreads, fetchAll: fetchThreads, totalConnections } = useThreads();
+  const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+  const dummyNotificationNudgeEnabled = useTodayNotifDevStore(
+    (s) => s.dummyNotificationNudgeEnabled
+  );
 
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
@@ -88,6 +115,11 @@ export default function TodayScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const CARD_WIDTH = screenWidth - 40;
   const [activeCardIndex, setActiveCardIndex] = useState(0);
+  const [todayNotifNudgeVisible, setTodayNotifNudgeVisible] = useState(false);
+  const showTodayNotifNudge =
+    todayNotifNudgeVisible || (__DEV__ && dummyNotificationNudgeEnabled);
+  const todayNotifNudgeIsDevMockOnly =
+    __DEV__ && dummyNotificationNudgeEnabled && !todayNotifNudgeVisible;
 
   const todayEntries: Entry[] = useMemo(
     () =>
@@ -105,6 +137,7 @@ export default function TodayScreen() {
     useCallback(() => {
       fetchEntries();
       fetchChapters();
+      fetchThreads();
       setLastSavedEntryId(null);
       setShareModalVisible(false);
       setJustSaved(false);
@@ -113,10 +146,41 @@ export default function TodayScreen() {
       if (pendingId && latestChapter?.id === pendingId) {
         setChapterViewerOpen(true);
       }
+      const pendingThreadId = useThreadNotifStore.getState().consume();
+      if (pendingThreadId) {
+        router.push(`/threads/${pendingThreadId}`);
+      }
       return () => {
         setTabBarHidden(false);
       };
-    }, [fetchEntries, fetchChapters, latestChapter?.id, setTabBarHidden])
+    }, [fetchEntries, fetchChapters, fetchThreads, latestChapter?.id, setTabBarHidden])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) {
+        setTodayNotifNudgeVisible(false);
+        return;
+      }
+      let cancelled = false;
+      void (async () => {
+        const [dismissed, osGranted] = await Promise.all([
+          isTodayNotificationNudgeDismissed(userId),
+          getNotificationPermissionGranted(),
+        ]);
+        if (cancelled) return;
+        const p = useAuthStore.getState().profile;
+        const realName =
+          !!p?.display_name?.trim() && p.display_name.trim() !== p?.email;
+        const profileSaysOn = p?.notification_enabled === true;
+        const eligible =
+          realName && !dismissed && !(profileSaysOn && osGranted);
+        setTodayNotifNudgeVisible(eligible);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [userId, profile?.display_name, profile?.email, profile?.notification_enabled])
   );
 
   useFocusEffect(
@@ -135,17 +199,53 @@ export default function TodayScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (promptType === "photo" && !photoUri) {
-        void (async () => {
-          const photo = await getRandomAsset();
-          if (photo) {
-            setPhotoUri(photo.uri);
-            setPhotoDate(photo.creationTime);
-          }
-        })();
-      }
-    }, [promptType, photoUri, getRandomAsset])
+      void checkPermission();
+    }, [checkPermission])
   );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (promptType !== "photo") return;
+      const canAccess = hasPhotoLibraryAccess(permissionStatus);
+      if (!canAccess || photoUri) return;
+      let cancelled = false;
+      void getRandomAsset().then((photo) => {
+        if (cancelled || !photo) return;
+        setPhotoUri(photo.uri);
+        setPhotoDate(photo.creationTime);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [promptType, permissionStatus, photoUri, getRandomAsset])
+  );
+
+  const handleRequestPhotoAccess = useCallback(async () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (permissionStatus === "denied") {
+      Linking.openSettings();
+      return;
+    }
+    const ok = await requestPermission();
+    if (ok) {
+      const photo = await getRandomAsset();
+      if (photo) {
+        setPhotoUri(photo.uri);
+        setPhotoDate(photo.creationTime);
+      }
+    }
+    await checkPermission();
+  }, [
+    permissionStatus,
+    requestPermission,
+    getRandomAsset,
+    checkPermission,
+  ]);
+
+  const todayPhotoPermissionBlocked =
+    promptType === "photo" &&
+    !photoUri &&
+    (permissionStatus === "denied" || permissionStatus === "undetermined");
 
   const handlePhotoShuffle = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -209,14 +309,14 @@ export default function TodayScreen() {
               display_order: 0,
             });
             console.log("[TodayScreen] Photo uploaded and linked");
-            await fetchEntries();
+            await fetchEntries(entryId);
           } catch (err) {
             console.error("[TodayScreen] Failed to upload media:", err);
           }
         })();
       }
 
-      await fetchEntries();
+      await fetchEntries(saved?.id);
     },
     [saveEntry, promptType, dailyPrompt.value, posthog, userId, fetchEntries]
   );
@@ -231,17 +331,88 @@ export default function TodayScreen() {
     ? profile!.display_name!.trim().split(/\s+/)[0]
     : null;
 
-  const afterSaveNode = (
-    <View>
-      <CongratsCard
-        headline="Moment saved!"
-        totalMoments={totalMoments + 1}
-        streakCount={streakCount}
-      />
-      <EllieMessage
-        content={`Nice work — that's ${streakCount + 1} day${streakCount !== 0 ? "s" : ""} in a row. Your Capsule is growing. Where to next?`}
-      />
-      <View style={{ gap: 10, marginTop: 12 }}>
+  const handleTodayNotifNudgeTurnOn = useCallback(async () => {
+    if (!userId) return;
+    const granted = await requestNotificationPermissions();
+    setNotificationEnabled(granted);
+    await supabase
+      .from("profiles")
+      .update({ notification_enabled: granted })
+      .eq("id", userId);
+    if (!granted) {
+      Alert.alert(
+        "Notifications are off",
+        "You can enable them later in your phone's Settings when you're ready."
+      );
+    }
+    await dismissTodayNotificationNudge(userId);
+    setTodayNotifNudgeVisible(false);
+    await fetchProfile();
+    await syncPushRegistration({
+      notificationsEnabled: granted,
+      reminderHour: notificationTime.hour,
+      reminderMinute: notificationTime.minute,
+    });
+    posthog.capture("today_notification_nudge", { choice: "turn_on", granted });
+  }, [
+    userId,
+    setNotificationEnabled,
+    notificationTime.hour,
+    notificationTime.minute,
+    fetchProfile,
+    posthog,
+  ]);
+
+  const handleTodayNotifNudgeKeepOff = useCallback(async () => {
+    if (!userId) return;
+    setNotificationEnabled(false);
+    await supabase
+      .from("profiles")
+      .update({ notification_enabled: false })
+      .eq("id", userId);
+    await dismissTodayNotificationNudge(userId);
+    setTodayNotifNudgeVisible(false);
+    await fetchProfile();
+    await syncPushRegistration({
+      notificationsEnabled: false,
+      reminderHour: notificationTime.hour,
+      reminderMinute: notificationTime.minute,
+    });
+    posthog.capture("today_notification_nudge", { choice: "keep_off" });
+  }, [
+    userId,
+    setNotificationEnabled,
+    notificationTime.hour,
+    notificationTime.minute,
+    fetchProfile,
+    posthog,
+  ]);
+
+  const afterSaveNode = useCallback(
+    (stats: AfterSaveStats) => {
+      const goCapsule = () => {
+        setTabBarHidden(false);
+        setJustSaved(false);
+        router.push("/(tabs)/memories");
+      };
+      const goThreads = () => {
+        setTabBarHidden(false);
+        setJustSaved(false);
+        router.push("/threads");
+      };
+      const goDone = () => {
+        setTabBarHidden(false);
+        setJustSaved(false);
+      };
+
+      const totalDisplayed = stats.totalMoments;
+      const streakDisplayed = stats.streakCount;
+      const isFreeMilestone10 =
+        profile?.subscription_status === "free" &&
+        totalDisplayed > 0 &&
+        totalDisplayed % 10 === 0;
+
+      const shareButton = (
         <Pressable
           onPress={() => setShareModalVisible(true)}
           style={{
@@ -265,35 +436,11 @@ export default function TodayScreen() {
             Share this moment with someone
           </Text>
         </Pressable>
+      );
+
+      const doneButton = (
         <Pressable
-          onPress={() => void shareInvite()}
-          style={{
-            height: 48,
-            borderRadius: 9999,
-            borderWidth: 1,
-            borderColor: colors.border,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-          }}
-        >
-          <Ionicons name="send-outline" size={16} color={colors.textSecondary} />
-          <Text
-            style={{
-              fontFamily: "Roboto-Regular",
-              fontSize: 14,
-              color: colors.textSecondary,
-            }}
-          >
-            Suggest this app to someone
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => {
-            setTabBarHidden(false);
-            setJustSaved(false);
-          }}
+          onPress={goDone}
           style={{
             height: 48,
             borderRadius: 9999,
@@ -315,8 +462,78 @@ export default function TodayScreen() {
             I'm done
           </Text>
         </Pressable>
-      </View>
-    </View>
+      );
+
+      return (
+        <View>
+          <CongratsCard
+            headline="Moment saved!"
+            totalMoments={totalDisplayed}
+            streakCount={streakDisplayed}
+            threadsCount={totalConnections}
+            onPressMoments={goCapsule}
+            onPressThreads={goThreads}
+          />
+          {isFreeMilestone10 ? (
+            <>
+              <EllieMessage
+                content={`Another 10 moments logged. You're building a real memory archive${firstName ? `, ${firstName}` : ""}! Little Moments Premium might be for you — take a look.`}
+              />
+              <PremiumInlineCard
+                analyticsSource="today_chat_milestone"
+                style={{ marginTop: 12, marginBottom: 22 }}
+              />
+              <EllieMessage content="If not interested now, please continue with your today!" />
+              <View style={{ gap: 10, marginTop: 12 }}>
+                {shareButton}
+                {doneButton}
+              </View>
+            </>
+          ) : (
+            <>
+              <EllieMessage
+                content={`Nice work — that's ${streakDisplayed} day${streakDisplayed !== 1 ? "s" : ""} in a row. Your Capsule is growing. Where to next?`}
+              />
+              <View style={{ gap: 10, marginTop: 12 }}>
+                {shareButton}
+                <Pressable
+                  onPress={() => void shareInvite()}
+                  style={{
+                    height: 48,
+                    borderRadius: 9999,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Ionicons name="send-outline" size={16} color={colors.textSecondary} />
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Regular",
+                      fontSize: 14,
+                      color: colors.textSecondary,
+                    }}
+                  >
+                    Suggest this app to someone
+                  </Text>
+                </Pressable>
+                {doneButton}
+              </View>
+            </>
+          )}
+        </View>
+      );
+    },
+    [
+      colors,
+      firstName,
+      profile?.subscription_status,
+      setTabBarHidden,
+      totalConnections,
+    ]
   );
 
   return (
@@ -331,6 +548,7 @@ export default function TodayScreen() {
         memoryRaceCount={memoryRaceCount}
         avgStoryLengthWords={avgStoryLengthWords}
         memberSince={profile?.created_at}
+        threadsCount={totalConnections}
       />
 
       {todayEntry && !justSaved ? (
@@ -342,6 +560,20 @@ export default function TodayScreen() {
           <EllieMessage
             content={`You've already captured today's moment. Nice work — that's ${streakCount} day${streakCount !== 1 ? "s" : ""} in a row.`}
           />
+
+          {__DEV__ && dummyThreadEnabled && (
+            <View style={{ marginBottom: 16 }}>
+              <ThreadCard
+                thread={makeDummyThread()}
+                headline="1 New Thread found"
+              />
+            </View>
+          )}
+          {todayThreads().map((thread) => (
+            <View key={thread.id} style={{ marginBottom: 16 }}>
+              <ThreadCard thread={thread} headline="1 New Thread found" />
+            </View>
+          ))}
 
           {/* Today's moments — carousel if multiple */}
           <View style={{ marginHorizontal: -20, marginBottom: 20 }}>
@@ -367,6 +599,7 @@ export default function TodayScreen() {
                 return (
                   <Pressable
                     onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       posthog.capture("today_entry_tapped", { entry_id: item.id });
                       router.push(`/entry/${item.id}`);
                     }}
@@ -516,6 +749,74 @@ export default function TodayScreen() {
             </View>
           )}
 
+          {showTodayNotifNudge && (
+            <View style={{ marginBottom: 12 }}>
+              <EllieMessage
+                showAvatar
+                content="It looks like you might have missed turning on notifications, meaning you'll miss daily reminders. Do you want to turn these on?"
+              />
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    if (todayNotifNudgeIsDevMockOnly) return;
+                    void handleTodayNotifNudgeTurnOn();
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: 9999,
+                    backgroundColor: colors.primary,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Ionicons name="checkmark" size={18} color="#1A1A1A" />
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Medium",
+                      fontSize: 14,
+                      color: "#1A1A1A",
+                    }}
+                  >
+                    Turn on
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    if (todayNotifNudgeIsDevMockOnly) return;
+                    void handleTodayNotifNudgeKeepOff();
+                  }}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: 9999,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Ionicons name="close" size={18} color={colors.textSecondary} />
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Regular",
+                      fontSize: 14,
+                      color: colors.textSecondary,
+                    }}
+                  >
+                    Keep off
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
           {/* Ellie CTA to capture another moment */}
           <EllieMessage
             content="Come back tomorrow for your next daily word, photo, or prompt. Or if you're feeling inspired, I can help capture another moment with you now."
@@ -598,41 +899,7 @@ export default function TodayScreen() {
 
           {(profile?.subscription_status === "free" ||
             profile?.subscription_status === "trial") && (
-            <Pressable
-              onPress={() => {
-                posthog.capture("premium_card_tapped", { source: "today" });
-                router.push("/ellie-premium");
-              }}
-              style={{ marginTop: 24 }}
-            >
-              <View
-                style={{
-                  backgroundColor: "#202020",
-                  borderRadius: 14,
-                  borderWidth: 2,
-                  borderColor: "#FECFB4",
-                  paddingHorizontal: 24,
-                  paddingVertical: 24,
-                }}
-              >
-                <Image
-                  source={WORDMARK_PREMIUM}
-                  style={{ height: 36, width: "100%", alignSelf: "center" }}
-                  contentFit="contain"
-                />
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 14,
-                    color: "#FFFFFF",
-                    textAlign: "center",
-                    marginTop: 18,
-                  }}
-                >
-                  See if becoming a Premium member is right for you
-                </Text>
-              </View>
-            </Pressable>
+            <PremiumInlineCard analyticsSource="today" style={{ marginTop: 24 }} />
           )}
         </ScrollView>
       ) : (
@@ -644,7 +911,16 @@ export default function TodayScreen() {
           isShufflingPhoto={isShuffling}
           onComplete={handleComplete}
           onPhotoShuffle={
-            effectivePromptType === "photo" ? handlePhotoShuffle : undefined
+            effectivePromptType === "photo" && !todayPhotoPermissionBlocked
+              ? handlePhotoShuffle
+              : undefined
+          }
+          photoPermissionBlocked={todayPhotoPermissionBlocked}
+          onRequestPhotoAccess={
+            todayPhotoPermissionBlocked ? handleRequestPhotoAccess : undefined
+          }
+          photoAccessButtonLabel={
+            permissionStatus === "denied" ? "Open Settings" : "Grant photo access"
           }
           afterSaveNode={afterSaveNode}
           welcomeMessages={[
@@ -668,6 +944,10 @@ export default function TodayScreen() {
               input_method: inputMethod,
             });
             setTabBarHidden(true);
+          }}
+          onAbortFlow={() => {
+            setTabBarHidden(false);
+            inputMethodRef.current = null;
           }}
         />
       )}

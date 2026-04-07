@@ -30,6 +30,11 @@ export async function requestNotificationPermissions(): Promise<boolean> {
   return status === "granted";
 }
 
+export async function getNotificationPermissionGranted(): Promise<boolean> {
+  const { status } = await Notifications.getPermissionsAsync();
+  return status === "granted";
+}
+
 export async function scheduleDailyReminder(
   hour: number,
   minute: number

@@ -19,8 +19,11 @@ import { uploadAvatar } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useChapterDevStore } from "@/store/chapterStore";
+import { useThreadDevStore } from "@/store/threadDevStore";
+import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
@@ -697,6 +700,10 @@ export default function SettingsScreen() {
               }}
             >
               <DummyChapterToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <DummyNotificationsToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <DummyThreadToggle colors={colors} />
             </View>
           </>
         )}
@@ -946,6 +953,72 @@ function DummyChapterToggle({ colors }: { colors: ThemePalette }) {
   );
 }
 
+function DummyNotificationsToggle({ colors }: { colors: ThemePalette }) {
+  const enabled = useTodayNotifDevStore((s) => s.dummyNotificationNudgeEnabled);
+  const toggle = useTodayNotifDevStore((s) => s.toggleDummyNotificationNudge);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Dummy Notifications
+      </Text>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
+function DummyThreadToggle({ colors }: { colors: ThemePalette }) {
+  const enabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+  const toggle = useThreadDevStore((s) => s.toggleDummyThread);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Dummy Thread
+      </Text>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
 const WORDMARK_PREMIUM = require("@/assets/images/wordmark-premium.png");
 
 function MembershipCard({
@@ -975,6 +1048,7 @@ function MembershipCard({
     subscriptionStatus === "free" || subscriptionStatus === "trial";
 
   const handlePress = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
     if (isFree) {
       onExplore();
     } else {

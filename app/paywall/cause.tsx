@@ -13,6 +13,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { DonationCause } from "@/constants/donationCauses";
 
 const CTA_LAVENDER = "#f0d7ff";
+const CONTINUE_CTA_BG = "#FECFB4";
 
 export default function CauseScreen() {
   const { colors } = useTheme();
@@ -175,7 +176,7 @@ export default function CauseScreen() {
               height: 52,
               borderRadius: 9999,
               backgroundColor: selectedCause
-                ? CTA_LAVENDER
+                ? CONTINUE_CTA_BG
                 : "rgba(255,255,255,0.15)",
               alignItems: "center",
               justifyContent: "center",

@@ -13,6 +13,7 @@ import {
   ONBOARDING_DAY_COUNT,
 } from "../supabase/functions/_shared/email-templates/onboarding.ts";
 import { welcomeEmail } from "../supabase/functions/_shared/email-templates/welcome.ts";
+import { premiumWelcomeEmail } from "../supabase/functions/_shared/email-templates/premium-welcome.ts";
 import {
   trialExpiredEmail,
   trialExpiringEmail,
@@ -37,6 +38,12 @@ push(
   "welcome",
   "Welcome",
   welcomeEmail({ displayName: "Alex", causeTitle: "Environment" }).html,
+);
+
+push(
+  "premium-welcome",
+  "Premium welcome",
+  premiumWelcomeEmail({ displayName: "Alex" }).html,
 );
 
 for (let day = 1; day <= ONBOARDING_DAY_COUNT; day++) {

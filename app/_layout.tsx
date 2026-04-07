@@ -15,6 +15,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { configureRevenueCat, identifyUser } from "@/lib/revenuecat";
 import { initOneSignal, syncOneSignalUser } from "@/lib/onesignal";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
+import { useThreadNotifStore } from "@/store/threadNotifStore";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -66,6 +67,11 @@ function AppInner() {
           | undefined;
         if (data?.type === "chapter" && data.chapterId) {
           useChapterNotifStore.getState().setPendingChapterId(data.chapterId);
+        }
+        if (data?.type === "thread" && (data as Record<string, unknown>).threadId) {
+          useThreadNotifStore.getState().setPendingThreadId(
+            (data as Record<string, unknown>).threadId as string
+          );
         }
       }
     );
@@ -150,6 +156,14 @@ function AppInner() {
         />
         <Stack.Screen
           name="paywall/index"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="threads/index"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="threads/[id]"
           options={{ presentation: "modal" }}
         />
       </Stack>

@@ -22,7 +22,7 @@ import { supabase } from "@/lib/supabase";
 import type { DonationCause } from "@/constants/donationCauses";
 
 const WORDMARK = require("@/assets/images/wordmark-premium.png");
-const CTA_LAVENDER = "#F0D7FF";
+const PREMIUM_CTA_BG = "#FECFB4";
 
 type AnsweredTopic = "right_for_me" | "causes" | "price" | "threads_chapters";
 
@@ -41,7 +41,14 @@ export default function ElliePremiumScreen() {
 
   // ---------- chat state ----------
   const [phase, setPhase] = useState<
-    "greeting" | "thinking" | "explainer" | "causes_grid" | "choices" | "answering" | "done"
+    | "greeting"
+    | "thinking"
+    | "explainer"
+    | "cause_typing"
+    | "causes_grid"
+    | "choices"
+    | "answering"
+    | "done"
   >("greeting");
   const [answered, setAnswered] = useState<Set<AnsweredTopic>>(new Set());
   const [topicResponses, setTopicResponses] = useState<
@@ -75,7 +82,11 @@ export default function ElliePremiumScreen() {
       return () => clearTimeout(t);
     }
     if (phase === "explainer") {
-      const t = setTimeout(() => setPhase("causes_grid"), 400);
+      const t = setTimeout(() => setPhase("cause_typing"), 400);
+      return () => clearTimeout(t);
+    }
+    if (phase === "cause_typing") {
+      const t = setTimeout(() => setPhase("causes_grid"), 6000);
       return () => clearTimeout(t);
     }
     if (phase === "causes_grid") {
@@ -249,17 +260,21 @@ export default function ElliePremiumScreen() {
         {/* Greeting */}
         <EllieMessage content={greetingText} showAvatar />
 
-        {/* Thinking dots */}
+        {/* Thinking dots after greeting, before explainer */}
         {phase === "thinking" && <ThinkingDots />}
 
         {/* Explainer */}
         {(phase === "explainer" ||
+          phase === "cause_typing" ||
           phase === "causes_grid" ||
           phase === "choices" ||
           phase === "answering" ||
           phase === "done") && (
           <EllieMessage content={explainerText} showAvatar />
         )}
+
+        {/* Typing dots after explainer, before 5% pledge / causes / topic buttons */}
+        {phase === "cause_typing" && <ThinkingDots />}
 
         {/* Cause note + grid */}
         {(phase === "causes_grid" ||
@@ -362,7 +377,7 @@ export default function ElliePremiumScreen() {
           style={{
             height: 52,
             borderRadius: 9999,
-            backgroundColor: CTA_LAVENDER,
+            backgroundColor: PREMIUM_CTA_BG,
             alignItems: "center",
             justifyContent: "center",
           }}

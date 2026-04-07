@@ -1,6 +1,7 @@
 import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as Haptics from "expo-haptics";
 import { useTheme } from "@/hooks/useTheme";
 
 const STREAK_FLAME = require("@/assets/images/streak-flame.png");
@@ -21,7 +22,14 @@ export function StreakBadge({
   const { colors } = useTheme();
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? () => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+              onPress();
+            }
+          : undefined
+      }
       style={{
         flexDirection: "row",
         alignItems: "center",

@@ -20,7 +20,7 @@ export function useEntries() {
   } = useEntryStore();
   const userId = useAuthStore((s) => s.user?.id ?? null);
 
-  const fetchEntries = useCallback(async () => {
+  const fetchEntries = useCallback(async (pinnedEntryId?: string) => {
     if (!userId) return;
     setIsLoading(true);
     const { data } = await supabase
@@ -33,10 +33,23 @@ export function useEntries() {
         ...e,
         media: e.entry_media ?? [],
       })) as Entry[];
-      setEntries(mapped);
+      const prev = useEntryStore.getState().entries;
+      const serverIds = new Set(mapped.map((e) => e.id));
+      let merged: Entry[];
+      if (pinnedEntryId && !serverIds.has(pinnedEntryId)) {
+        const pinned = prev.find((e) => e.id === pinnedEntryId);
+        merged = pinned ? [pinned, ...mapped] : mapped;
+      } else {
+        merged = mapped;
+      }
+      merged.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setEntries(merged);
 
       const today = format(new Date(), "yyyy-MM-dd");
-      const todayE = mapped.find((e) => e.entry_date === today) ?? null;
+      const todayE = merged.find((e) => e.entry_date === today) ?? null;
       setTodayEntry(todayE);
     }
     setIsLoading(false);
@@ -63,6 +76,9 @@ export function useEntries() {
       void supabase.functions.invoke("notify-badges", { body: {} }).catch(
         () => {}
       );
+      void supabase.functions
+        .invoke("process-threads", { body: { entry_id: data.id } })
+        .catch(() => {});
       return data as Entry;
     },
     [userId]

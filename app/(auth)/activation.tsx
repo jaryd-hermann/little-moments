@@ -1,3 +1,4 @@
+import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow } from "@/components/ellie/EllieChatFlow";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
@@ -8,6 +9,7 @@ import { useEntries } from "@/hooks/useEntries";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
 import { requestNotificationPermissions } from "@/lib/notifications";
+import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
@@ -43,6 +45,13 @@ type ActivationPhase =
 const CTA_LAVENDER = "#f0d7ff";
 const NOTIFICATION_HERO = require("@/assets/images/notification.png");
 const ACTIVATION_PROMPT = "What's a little moment from the past few days you'd tell someone at the dinner table?";
+const ACTIVATION_PREVIEW_INSTRUCTION =
+  "Here's a preview of your moment. Tap anywhere in the card to edit it, and tap \"Add Moment\" to capture it.";
+const ACTIVATION_WORD_WELCOME_FIRST =
+  "Welcome! Let's capture your first memory together — it only takes two minutes.";
+const ACTIVATION_WORD_WELCOME_REST =
+  "Read the word below and let it take you somewhere. What memory or association does this unlock?\n\nThere's no right or wrong! Just speak about an associated memory for max 2 minutes.";
+const WORD_SAVED_PHOTO_OFFER_TYPING_MS = 5000;
 
 export default function ActivationScreen() {
   const { colors } = useTheme();
@@ -51,7 +60,7 @@ export default function ActivationScreen() {
   const { profile } = useAuth();
   const setProfile = useAuthStore((s) => s.setProfile);
   const user = useAuthStore((s) => s.user);
-  const { saveEntry } = useEntries();
+  const { saveEntry, fetchEntries } = useEntries();
   const setNotificationEnabled = useSettingsStore((s) => s.setNotificationEnabled);
   const {
     checkPermission,
@@ -61,21 +70,44 @@ export default function ActivationScreen() {
 
   const [phase, setPhase] = useState<ActivationPhase>("word_flow");
   const [photoUri, setPhotoUri] = useState<string | undefined>();
+  const [photoDate, setPhotoDate] = useState<number | undefined>();
   const [momentCount, setMomentCount] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const completedPhotoRef = useRef(false);
   const completedPromptRef = useRef(false);
   const notificationsEnabledRef = useRef(false);
+  /** Sync with latest photoUri for race-safe checks (concurrent getRandomAsset completions). */
+  const photoUriRef = useRef<string | undefined>(undefined);
+  const photoLoadGenerationRef = useRef(0);
+
+  useEffect(() => {
+    photoUriRef.current = photoUri;
+  }, [photoUri]);
 
   useEffect(() => {
     posthog.capture("started_activation");
   }, []);
+
+  const [wordSavedPhotoOfferVisible, setWordSavedPhotoOfferVisible] = useState(false);
 
   const word = getDailyWord();
 
   const scrollToEnd = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "word_saved") {
+      setWordSavedPhotoOfferVisible(false);
+      return;
+    }
+    setWordSavedPhotoOfferVisible(false);
+    const t = setTimeout(() => {
+      setWordSavedPhotoOfferVisible(true);
+      scrollToEnd();
+    }, WORD_SAVED_PHOTO_OFFER_TYPING_MS);
+    return () => clearTimeout(t);
+  }, [phase, scrollToEnd]);
 
   const handleWordComplete = useCallback(
     async (entry: { title: string; body: string; rawText: string }) => {
@@ -112,9 +144,14 @@ export default function ActivationScreen() {
   );
 
   const handlePhotoComplete = useCallback(
-    async (entry: { title: string; body: string; rawText: string }) => {
+    async (entry: {
+      title: string;
+      body: string;
+      rawText: string;
+      attachedPhotoUri?: string;
+    }) => {
       const today = format(new Date(), "yyyy-MM-dd");
-      await saveEntry({
+      const saved = await saveEntry({
         title: entry.title,
         body: entry.body,
         entry_type: "moment",
@@ -131,6 +168,29 @@ export default function ActivationScreen() {
         chapter_id: null,
       });
 
+      if (entry.attachedPhotoUri && user?.id && saved?.id) {
+        try {
+          const { publicUrl, storagePath } = await uploadEntryMedia(
+            user.id,
+            saved.id,
+            entry.attachedPhotoUri,
+            "image"
+          );
+          await supabase.from("entry_media").insert({
+            entry_id: saved.id,
+            user_id: user.id,
+            storage_path: storagePath,
+            storage_url: publicUrl,
+            media_type: "image",
+            display_order: 0,
+          });
+        } catch (err) {
+          console.error("[Activation] Failed to upload media:", err);
+        }
+      }
+
+      await fetchEntries();
+
       if (user) {
         await supabase
           .from("profiles")
@@ -143,7 +203,7 @@ export default function ActivationScreen() {
       posthog.capture("activation_photo_saved");
       setPhase("photo_saved");
     },
-    [saveEntry, user, posthog]
+    [saveEntry, fetchEntries, user, posthog]
   );
 
   const handlePromptComplete = useCallback(
@@ -179,6 +239,7 @@ export default function ActivationScreen() {
     const alreadyGranted = await checkPermission();
 
     const loadPhotoAndNavigate = async (navigate: boolean) => {
+      const generation = ++photoLoadGenerationRef.current;
       if (navigate) {
         setPhase("photo_flow");
       }
@@ -186,10 +247,16 @@ export default function ActivationScreen() {
       const photo = await getRandomAsset();
       console.log("[Activation] loadPhoto: got photo:", photo?.uri?.substring(0, 60) ?? "null");
       if (photo?.uri) {
+        photoUriRef.current = photo.uri;
         setPhotoUri(photo.uri);
+        setPhotoDate(photo.creationTime);
         if (!navigate) setPhase("photo_flow");
-      } else {
-        setPhase("notifications");
+        return;
+      }
+      // Never leave photo_flow for a late/stale empty result — user already entered this step.
+      // (Concurrent getRandomAsset calls used to fire setPhase("notifications") after a photo loaded.)
+      if (!photoUriRef.current && generation === photoLoadGenerationRef.current) {
+        setPhase((prev) => (prev === "photo_flow" ? prev : "notifications"));
       }
     };
 
@@ -208,7 +275,11 @@ export default function ActivationScreen() {
 
   const handlePhotoShuffle = useCallback(async () => {
     const photo = await getRandomAsset();
-    if (photo?.uri) setPhotoUri(photo.uri);
+    if (photo?.uri) {
+      photoUriRef.current = photo.uri;
+      setPhotoUri(photo.uri);
+      setPhotoDate(photo.creationTime);
+    }
   }, [getRandomAsset]);
 
   const handleNotification = useCallback(async (enable: boolean) => {
@@ -267,9 +338,11 @@ export default function ActivationScreen() {
           promptValue={word}
           onComplete={handleWordComplete}
           headerNode={<MeetEllieCard />}
-          welcomeMessages={[
-            "Welcome! Let's capture your first memory together — it only takes two minutes.\n\nRead the word below and let it take you somewhere. What memory or association does this unlock?",
-          ]}
+          stagedWelcomeReveal={{
+            firstMessage: ACTIVATION_WORD_WELCOME_FIRST,
+            followingMessages: [ACTIVATION_WORD_WELCOME_REST],
+            typingDurationMs: 5000,
+          }}
           firstReplyOverride="Nice — Ellie pulled out a detail from what you shared. She does this to help you capture more of the moment. Here's a follow-up:"
           onFlowStarted={(inputMethod) => {
             posthog.capture("activation_initiated", { input_method: inputMethod });
@@ -277,6 +350,7 @@ export default function ActivationScreen() {
           onSkip={handleFinish}
           hideTimerHint
           hideHelperText
+          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
         />
       </SafeAreaView>
     );
@@ -290,9 +364,14 @@ export default function ActivationScreen() {
           promptType="photo"
           promptValue=""
           photoUri={photoUri}
+          photoDate={photoDate}
           onComplete={handlePhotoComplete}
           onPhotoShuffle={handlePhotoShuffle}
+          onSkip={handleFinish}
           timerHintOverride="You'll have 2 minutes again. When you're ready..."
+          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+          photoFooterNote="p.s If you want a different photo, tap shuffle."
+          photoEllieTypingDelayMs={WORD_SAVED_PHOTO_OFFER_TYPING_MS}
         />
       </SafeAreaView>
     );
@@ -308,6 +387,7 @@ export default function ActivationScreen() {
           onComplete={handlePromptComplete}
           welcomeMessages={["Last one. This time, just answer a simple question."]}
           extraGuidance="Think about little things — a conversation, a meal, something that happened on a walk. Not the big symbolic moments. The ones you'll forget."
+          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
         />
       </SafeAreaView>
     );
@@ -335,61 +415,69 @@ export default function ActivationScreen() {
               content={"Over time, we'll turn these into beautiful chapters and send them to you — a real record of your life.\n\nEvery day you'll get a starting point — a word like you just did, a random photo from your camera roll, or a simple prompt."}
               showAvatar
             />
-            <View
-              style={{
-                marginTop: 4,
-                marginBottom: 16,
-                borderRadius: 16,
-                borderWidth: 2,
-                borderColor: "#F0D7FF",
-                padding: 20,
-                gap: 14,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Regular",
-                  fontSize: 15,
-                  lineHeight: 24,
-                  color: colors.text,
-                }}
-              >
-                Let's try one more — <Text style={{ fontFamily: "Roboto-Bold" }}>this time with a photo.</Text>{"\n\n"}We'll show you a photo you took. You'll have two minutes max to talk about it.
-              </Text>
-              <Pressable
-                onPress={handleRequestPhotoAccess}
-                style={{
-                  height: 52,
-                  borderRadius: 9999,
-                  backgroundColor: CTA_LAVENDER,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={ctaTextStyle}>Make first photo moment</Text>
-              </Pressable>
-              <Text
-                style={{
-                  fontFamily: "Roboto-Light",
-                  fontSize: 13,
-                  color: colors.textMuted,
-                  textAlign: "center",
-                }}
-              >
-                We <Text style={{ fontFamily: "Roboto-Bold", fontStyle: "italic" }}>never</Text> access and store all your device photos.
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => {
-                posthog.capture("activation_photo_skipped");
-                setPhase("notifications");
-              }}
-              style={{ height: 44, alignItems: "center", justifyContent: "center" }}
-            >
-              <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: colors.textMuted }}>
-                Skip for now
-              </Text>
-            </Pressable>
+            {!wordSavedPhotoOfferVisible ? (
+              <View style={{ marginTop: 8, marginLeft: 38 }}>
+                <ThinkingDots />
+              </View>
+            ) : (
+              <>
+                <View
+                  style={{
+                    marginTop: 4,
+                    marginBottom: 16,
+                    borderRadius: 16,
+                    borderWidth: 2,
+                    borderColor: "#F0D7FF",
+                    padding: 20,
+                    gap: 14,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Regular",
+                      fontSize: 15,
+                      lineHeight: 24,
+                      color: colors.text,
+                    }}
+                  >
+                    Let's try one more — <Text style={{ fontFamily: "Roboto-Bold" }}>this time with a photo.</Text>{"\n\n"}We'll show you a photo you took. You'll have two minutes max to talk about it.
+                  </Text>
+                  <Pressable
+                    onPress={handleRequestPhotoAccess}
+                    style={{
+                      height: 52,
+                      borderRadius: 9999,
+                      backgroundColor: CTA_LAVENDER,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={ctaTextStyle}>Make first photo moment</Text>
+                  </Pressable>
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Light",
+                      fontSize: 13,
+                      color: colors.textMuted,
+                      textAlign: "center",
+                    }}
+                  >
+                    We <Text style={{ fontFamily: "Roboto-Bold", fontStyle: "italic" }}>never</Text> access and store all your device photos.
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    posthog.capture("activation_photo_skipped");
+                    setPhase("notifications");
+                  }}
+                  style={{ height: 44, alignItems: "center", justifyContent: "center" }}
+                >
+                  <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: colors.textMuted }}>
+                    Skip for now
+                  </Text>
+                </Pressable>
+              </>
+            )}
           </>
         )}
 

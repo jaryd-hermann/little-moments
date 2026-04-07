@@ -1,4 +1,5 @@
 import { View, Text, Pressable } from "react-native";
+import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { usePostHog } from "posthog-react-native";
@@ -32,6 +33,7 @@ export function EntryRow({ entry, onOpenChapter }: EntryRowProps) {
   const isChapter = entry.entry_type === "chapter";
 
   const handlePress = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isChapter && entry.chapter_id && onOpenChapter) {
       posthog.capture("opened_chapter_from_capsule", { chapter_id: entry.chapter_id });
       onOpenChapter(entry.chapter_id);

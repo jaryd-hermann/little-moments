@@ -10,6 +10,33 @@ import {
   exactEntryDateKeys,
 } from "@/lib/streak";
 
+/** Snapshot after a save completes (reads Zustand stores synchronously). */
+export type AfterSaveStats = {
+  streakCount: number;
+  totalMoments: number;
+};
+
+export function getStreakDisplayFromStores(): AfterSaveStats {
+  const entries = useEntryStore.getState().entries;
+  const profile = useAuthStore.getState().profile;
+  const exactDates = entries
+    .filter((e) => e.date_precision === "exact" && e.entry_date)
+    .map((e) => {
+      const [y, m, d] = e.entry_date!.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    });
+  const streakData = calculateStreak(exactDates);
+  const totalMomentsFromEntries = countMomentEntries(entries);
+  const totalMoments = Math.max(
+    profile?.total_moments ?? 0,
+    totalMomentsFromEntries
+  );
+  return {
+    streakCount: streakData.streakCount,
+    totalMoments,
+  };
+}
+
 export function useStreak() {
   const entries = useEntryStore((s) => s.entries);
   const profile = useAuthStore((s) => s.profile);

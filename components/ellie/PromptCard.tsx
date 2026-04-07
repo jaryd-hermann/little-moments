@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, Image as RNImage, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import { useTheme } from "@/hooks/useTheme";
 import type { PromptType } from "@/lib/momentAssist";
+import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 
 const APP_ICON = require("@/assets/images/white-icon.png");
 
@@ -17,10 +18,27 @@ interface PromptCardProps {
   onShuffle?: () => void;
   instruction?: string;
   hideHelperText?: boolean;
+  /** Extra copy below the photo prompt (e.g. activation shuffle hint). */
+  photoFooterNote?: string;
+  /** No library access: show gate instead of loading spinner. */
+  photoPermissionBlocked?: boolean;
+  onRequestPhotoAccess?: () => void;
+  photoAccessButtonLabel?: string;
+  /** Notifies parent to show Start speaking/typing: after `photoEllieTypingDelayMs` from mount (activation), or when URI is set (other flows). */
+  onPhotoViewportReady?: () => void;
+  /**
+   * When set (e.g. activation), ThinkingDots run for this many ms from first paint of the photo
+   * prompt, then Ellie footer + CTAs — independent of when the random photo URI resolves.
+   */
+  photoEllieTypingDelayMs?: number;
 }
 
 function PhotoImage({ uri }: { uri: string }) {
-  const [useRnFallback, setUseRnFallback] = useState(false);
+  const [useRnFallback, setUseRnFallback] = useState(() => uri.startsWith("file://"));
+
+  useEffect(() => {
+    setUseRnFallback(uri.startsWith("file://"));
+  }, [uri]);
 
   if (useRnFallback) {
     return (
@@ -38,7 +56,6 @@ function PhotoImage({ uri }: { uri: string }) {
       source={{ uri }}
       style={{ width: "100%", aspectRatio: 1 }}
       contentFit="cover"
-      recyclingKey={uri}
       onError={() => {
         console.log("[PromptCard] expo-image failed, trying RN Image for:", uri?.substring(0, 60));
         setUseRnFallback(true);
@@ -56,10 +73,66 @@ export function PromptCard({
   onShuffle,
   instruction,
   hideHelperText,
+  photoFooterNote,
+  photoPermissionBlocked,
+  onRequestPhotoAccess,
+  photoAccessButtonLabel,
+  onPhotoViewportReady,
+  photoEllieTypingDelayMs,
 }: PromptCardProps) {
   const { colors } = useTheme();
+  const firstPhotoReadyNotifiedRef = useRef(false);
+  const [activationPostTypingReveal, setActivationPostTypingReveal] = useState(false);
+
+  const onPhotoViewportReadyRef = useRef(onPhotoViewportReady);
+  onPhotoViewportReadyRef.current = onPhotoViewportReady;
+
+  const notifyViewportReadyOnce = useCallback(() => {
+    if (firstPhotoReadyNotifiedRef.current) return;
+    firstPhotoReadyNotifiedRef.current = true;
+    onPhotoViewportReadyRef.current?.();
+  }, []);
+
+  /** Activation: fixed 5s typing row from mount — not tied to photo library fetch. */
+  useEffect(() => {
+    if (!photoEllieTypingDelayMs || photoPermissionBlocked) {
+      return;
+    }
+    const t = setTimeout(() => {
+      setActivationPostTypingReveal(true);
+      notifyViewportReadyOnce();
+    }, photoEllieTypingDelayMs);
+    return () => clearTimeout(t);
+  }, [photoEllieTypingDelayMs, photoPermissionBlocked, notifyViewportReadyOnce]);
+
+  useEffect(() => {
+    if (!photoUri) {
+      firstPhotoReadyNotifiedRef.current = false;
+    }
+  }, [photoUri]);
+
+  /** Today / Add: show CTAs as soon as we have a URI (no waiting on image decode). */
+  useEffect(() => {
+    if (photoEllieTypingDelayMs || photoPermissionBlocked) return;
+    if (photoUri) {
+      notifyViewportReadyOnce();
+    }
+  }, [photoUri, photoEllieTypingDelayMs, photoPermissionBlocked, notifyViewportReadyOnce]);
 
   if (promptType === "photo") {
+    const useTypingDelay = !!photoEllieTypingDelayMs;
+    const showLoadingRowBelowCard =
+      useTypingDelay && !photoPermissionBlocked && !activationPostTypingReveal;
+    const showQuestionRow =
+      !photoPermissionBlocked &&
+      (useTypingDelay ? activationPostTypingReveal : !!photoUri);
+
+    const showShuffleControl =
+      !!onShuffle &&
+      !photoPermissionBlocked &&
+      !!photoUri &&
+      (!useTypingDelay || activationPostTypingReveal);
+
     return (
       <View style={{ marginBottom: 16 }}>
         <View
@@ -71,7 +144,51 @@ export function PromptCard({
             backgroundColor: colors.surfaceSecondary,
           }}
         >
-          {photoUri ? (
+          {photoPermissionBlocked ? (
+            <Pressable
+              onPress={onRequestPhotoAccess}
+              style={{
+                width: "100%",
+                aspectRatio: 1,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: 24,
+                backgroundColor: "rgba(0,0,0,0.05)",
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 15,
+                  lineHeight: 24,
+                  color: colors.text,
+                  textAlign: "center",
+                  marginBottom: 16,
+                }}
+              >
+                To see your photo of the day, tap to grant permission.
+              </Text>
+              <View
+                style={{
+                  borderRadius: 9999,
+                  backgroundColor: colors.primary,
+                  paddingHorizontal: 24,
+                  paddingVertical: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 15,
+                    color: "#1A1A1A",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  {photoAccessButtonLabel ?? "Grant photo access"}
+                </Text>
+              </View>
+            </Pressable>
+          ) : photoUri ? (
             <View>
               <PhotoImage uri={photoUri} />
               {photoDate != null && (
@@ -121,22 +238,39 @@ export function PromptCard({
                 aspectRatio: 1,
                 alignItems: "center",
                 justifyContent: "center",
+                backgroundColor: colors.surfaceSecondary,
               }}
             >
               <ActivityIndicator size="large" color={colors.primary} />
               <Text
                 style={{
-                  fontFamily: "Roboto-Light",
-                  fontSize: 14,
-                  color: colors.textMuted,
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 15,
+                  lineHeight: 24,
+                  color: colors.text,
+                  textAlign: "center",
                   marginTop: 12,
+                  paddingHorizontal: 24,
                 }}
               >
-                Finding a photo...
+                Finding a photo you took
+              </Text>
+              <Text
+                style={{
+                  fontFamily: "Roboto-Light",
+                  fontSize: 14,
+                  lineHeight: 22,
+                  color: colors.textMuted,
+                  textAlign: "center",
+                  marginTop: 6,
+                  paddingHorizontal: 24,
+                }}
+              >
+                The first time can take a few seconds
               </Text>
             </View>
           )}
-          {onShuffle && (
+          {showShuffleControl ? (
             <Pressable
               onPress={onShuffle}
               hitSlop={8}
@@ -154,25 +288,38 @@ export function PromptCard({
             >
               <Ionicons name="shuffle" size={20} color="#FFFFFF" />
             </Pressable>
-          )}
+          ) : null}
         </View>
-        <View style={{ flexDirection: "row", alignItems: "flex-start", marginTop: 10, paddingRight: 32 }}>
-          <RNImage
-            source={APP_ICON}
-            style={{ width: 28, height: 28, borderRadius: 8, marginRight: 10, marginTop: 2 }}
-          />
-          <Text
-            style={{
-              flex: 1,
-              fontFamily: "Roboto-Regular",
-              fontSize: 15,
-              lineHeight: 24,
-              color: colors.text,
-            }}
-          >
-            What was happening here? Where does this photo take you or what does it remind you of?
-          </Text>
-        </View>
+        {showLoadingRowBelowCard ? (
+          <View style={{ marginTop: 10 }}>
+            <ThinkingDots />
+          </View>
+        ) : null}
+        {showQuestionRow ? (
+          <View style={{ flexDirection: "row", alignItems: "flex-start", marginTop: 10, paddingRight: 32 }}>
+            <RNImage
+              source={APP_ICON}
+              style={{ width: 28, height: 28, borderRadius: 8, marginRight: 10, marginTop: 2 }}
+            />
+            <Text
+              style={{
+                flex: 1,
+                fontFamily: "Roboto-Regular",
+                fontSize: 15,
+                lineHeight: 24,
+                color: colors.text,
+              }}
+            >
+              What was happening here? Where does this photo take you or what does it remind you of?
+              {photoFooterNote ? (
+                <>
+                  {"\n\n"}
+                  <Text style={{ fontStyle: "italic" }}>{photoFooterNote}</Text>
+                </>
+              ) : null}
+            </Text>
+          </View>
+        ) : null}
       </View>
     );
   }

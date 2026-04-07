@@ -6,17 +6,27 @@ import {
   MEMORIES_SEARCH_ROW_HEIGHT,
 } from "./MemorySearchBar";
 import { EntryRow } from "./EntryRow";
+import { ThreadCard } from "@/components/threads/ThreadCard";
 import type { Entry } from "@/store/entryStore";
+import type { Thread } from "@/hooks/useThreads";
+import type { CapsuleFilter } from "./CapsuleStatBar";
 import { useTheme } from "@/hooks/useTheme";
+import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
 
 type Grouping = "day" | "month" | "year";
 type SortOrder = "newest" | "oldest";
+
+type ListItem =
+  | { type: "entry"; entry: Entry }
+  | { type: "thread"; thread: Thread };
 
 interface ListViewMemoriesProps {
   entries: Entry[];
   searchQuery: string;
   onChangeQuery: (q: string) => void;
   onOpenChapter?: (chapterId: string) => void;
+  capsuleFilter?: CapsuleFilter;
+  threads?: Thread[];
 }
 
 const GROUPING_OPTIONS: { value: Grouping; label: string }[] = [
@@ -35,15 +45,32 @@ export function ListViewMemories({
   searchQuery,
   onChangeQuery,
   onOpenChapter,
+  capsuleFilter = "all",
+  threads = [],
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
+
+  const threadOrdinals = useMemo(
+    () => threadOrdinalByIdMap(threads),
+    [threads]
+  );
   const [grouping, setGrouping] = useState<Grouping>("day");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [showDropdown, setShowDropdown] = useState(false);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
+  const filteredByType = useMemo(() => {
+    if (capsuleFilter === "moments") {
+      return entries.filter((e) => e.entry_type !== "chapter");
+    }
+    if (capsuleFilter === "chapters") {
+      return entries.filter((e) => e.entry_type === "chapter");
+    }
+    return entries;
+  }, [entries, capsuleFilter]);
+
   const sections = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => {
+    const sorted = [...filteredByType].sort((a, b) => {
       const da = a.entry_date ?? "";
       const db = b.entry_date ?? "";
       return sortOrder === "newest"
@@ -51,17 +78,89 @@ export function ListViewMemories({
         : da.localeCompare(db);
     });
 
-    const grouped = new Map<string, Entry[]>();
+    if (grouping === "day") {
+      const entryOnlyGrouped = new Map<string, Entry[]>();
+      for (const entry of sorted) {
+        const date = entry.entry_date ? new Date(entry.entry_date) : null;
+        const key =
+          date != null && !Number.isNaN(date.getTime())
+            ? format(date, "EEEE, MMMM d, yyyy")
+            : `${entry.entry_year}`;
+        if (!entryOnlyGrouped.has(key)) entryOnlyGrouped.set(key, []);
+        entryOnlyGrouped.get(key)!.push(entry);
+      }
 
+      const threadsByDayKey = new Map<string, Thread[]>();
+      for (const t of threads) {
+        if (t.dismissed) continue;
+        const created = new Date(t.created_at);
+        if (Number.isNaN(created.getTime())) continue;
+        const key = format(created, "EEEE, MMMM d, yyyy");
+        if (!threadsByDayKey.has(key)) threadsByDayKey.set(key, []);
+        threadsByDayKey.get(key)!.push(t);
+      }
+      for (const [k, arr] of threadsByDayKey) {
+        const seen = new Set<string>();
+        const deduped: Thread[] = [];
+        for (const t of arr) {
+          if (seen.has(t.id)) continue;
+          seen.add(t.id);
+          deduped.push(t);
+        }
+        deduped.sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime()
+        );
+        threadsByDayKey.set(k, deduped);
+      }
+
+      const allKeys = new Set([
+        ...entryOnlyGrouped.keys(),
+        ...threadsByDayKey.keys(),
+      ]);
+
+      const getRepTime = (key: string): number => {
+        const ents = entryOnlyGrouped.get(key);
+        if (ents?.length) {
+          const d = ents[0].entry_date;
+          return d ? new Date(d).getTime() : 0;
+        }
+        const ths = threadsByDayKey.get(key);
+        if (ths?.length) {
+          return new Date(ths[0].created_at).getTime();
+        }
+        return 0;
+      };
+
+      const sortedKeys = [...allKeys].sort((a, b) => {
+        const ta = getRepTime(a);
+        const tb = getRepTime(b);
+        return sortOrder === "newest" ? tb - ta : ta - tb;
+      });
+
+      return sortedKeys.map((title) => {
+        const threadItems: ListItem[] = (threadsByDayKey.get(title) ?? []).map(
+          (thread) => ({ type: "thread", thread })
+        );
+        const entryItems: ListItem[] = (entryOnlyGrouped.get(title) ?? []).map(
+          (entry) => ({ type: "entry", entry })
+        );
+        const data = [...threadItems, ...entryItems];
+        return {
+          title,
+          count: entryItems.length,
+          data,
+        };
+      });
+    }
+
+    const grouped = new Map<string, ListItem[]>();
     for (const entry of sorted) {
       let key: string;
-      const date = entry.entry_date
-        ? new Date(entry.entry_date)
-        : null;
+      const date = entry.entry_date ? new Date(entry.entry_date) : null;
 
-      if (grouping === "day" && date) {
-        key = format(date, "EEEE, MMMM d, yyyy");
-      } else if (grouping === "year") {
+      if (grouping === "year") {
         key = `${entry.entry_year}`;
       } else {
         key = date
@@ -70,15 +169,15 @@ export function ListViewMemories({
       }
 
       if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(entry);
+      grouped.get(key)!.push({ type: "entry", entry });
     }
 
     return Array.from(grouped.entries()).map(([title, data]) => ({
       title,
-      count: data.length,
+      count: data.filter((d) => d.type === "entry").length,
       data,
     }));
-  }, [entries, grouping, sortOrder]);
+  }, [filteredByType, grouping, sortOrder, threads]);
 
   const currentLabel =
     GROUPING_OPTIONS.find((o) => o.value === grouping)?.label ?? "By Day";
@@ -312,7 +411,9 @@ export function ListViewMemories({
       {grouping === "month" || grouping === "year" ? (
         <SectionList
           sections={sections}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) =>
+            item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
+          }
           renderItem={() => null}
           renderSectionHeader={({ section }) =>
             renderMonthCard(section)
@@ -324,12 +425,28 @@ export function ListViewMemories({
       ) : (
         <SectionList
           sections={sections}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={{ marginBottom: 12 }}>
-              <EntryRow entry={item} onOpenChapter={onOpenChapter} />
-            </View>
-          )}
+          keyExtractor={(item) =>
+            item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
+          }
+          renderItem={({ item }) => {
+            if (item.type === "thread") {
+              return (
+                <View style={{ marginBottom: 12 }}>
+                  <ThreadCard
+                    thread={item.thread}
+                    ordinalRank={
+                      threadOrdinals.get(item.thread.id) ?? 1
+                    }
+                  />
+                </View>
+              );
+            }
+            return (
+              <View style={{ marginBottom: 12 }}>
+                <EntryRow entry={item.entry} onOpenChapter={onOpenChapter} />
+              </View>
+            );
+          }}
           renderSectionHeader={({ section }) => (
             <View
               style={{

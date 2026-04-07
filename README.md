@@ -140,31 +140,33 @@ supabase db push
 
 ### Edge Functions
 
-There are three Edge Functions in `supabase/functions/`:
+Deploy from the repo root with the [Supabase CLI](https://supabase.com/docs/guides/cli) linked to your project.
 
-| Function | Purpose |
-|----------|---------|
-| `dig-deeper` | Multi-round AI conversation using Claude to enhance journal entries |
-| `transcribe` | Audio transcription via OpenAI Whisper |
-| `crash-burn-analyze` | AI analysis of free-writing sessions |
-| `revenuecat-webhook` | Handles RevenueCat subscription events |
-
-Deploy them:
+**Threads (embeddings + real-time analysis, and nightly batch):**
 
 ```bash
-supabase functions deploy dig-deeper
-supabase functions deploy transcribe
-supabase functions deploy crash-burn-analyze
-supabase functions deploy revenuecat-webhook
+supabase functions deploy process-threads --project-ref smwmkeoljqnifaoqzemb
+supabase functions deploy cron-threads-nightly --project-ref smwmkeoljqnifaoqzemb
 ```
 
-Set Edge Function secrets (these are separate from your `.env`):
+`process-threads` calls **OpenAI** (embeddings) and **Anthropic** (Haiku + Sonnet). `cron-threads-nightly` uses **Anthropic** and existing DB vectors only — no OpenAI call — but secrets are **project-wide**, so set `OPENAI_API_KEY` once for `transcribe`, `process-threads`, and any future use.
+
+Other examples:
 
 ```bash
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-supabase secrets set OPENAI_API_KEY=sk-...
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ...
+supabase functions deploy dig-deeper --project-ref smwmkeoljqnifaoqzemb
+supabase functions deploy transcribe --project-ref smwmkeoljqnifaoqzemb
 ```
+
+Set Edge Function secrets (these are separate from your `.env`; one set applies to **all** functions on the project):
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-... --project-ref smwmkeoljqnifaoqzemb
+supabase secrets set OPENAI_API_KEY=sk-... --project-ref smwmkeoljqnifaoqzemb
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ... --project-ref smwmkeoljqnifaoqzemb
+```
+
+Use the same `OPENAI_API_KEY` you use for Whisper in `transcribe`.
 
 ## Build & Deploy
 

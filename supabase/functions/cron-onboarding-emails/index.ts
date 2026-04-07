@@ -1,13 +1,13 @@
 /**
- * Daily drip: send onboarding emails on days 1-6 after signup.
+ * Daily drip: send onboarding emails on days 1-10 after signup.
  *
  * Auth: Authorization: Bearer <CRON_SECRET>
  * Disable JWT verification for this function in the Dashboard.
  *
  * Scheduling: migration 0013 registers a pg_cron job that POSTs here
  * every hour. The function finds users whose profiles.created_at is
- * 1-6 days ago, checks email_sends for duplicates, and sends the
- * appropriate day's email via Resend.
+ * 1-10 days ago (UTC calendar day), checks email_sends for duplicates,
+ * and sends the appropriate day's email via Resend.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { sendEmail } from "../_shared/resend.ts";

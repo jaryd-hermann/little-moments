@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ListViewMemories } from "@/components/memories/ListViewMemories";
@@ -26,6 +27,9 @@ import { useChapterDevStore } from "@/store/chapterStore";
 import type { ChapterRecord } from "@/lib/chapters";
 import { chapterMonthName } from "@/lib/chapters";
 import type { Entry } from "@/store/entryStore";
+import { CapsuleStatBar, type CapsuleFilter } from "@/components/memories/CapsuleStatBar";
+import { useThreads } from "@/hooks/useThreads";
+import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 
 type ViewMode = "list" | "flipbook";
 
@@ -37,6 +41,16 @@ export default function MemoriesScreen() {
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchQuery, setSearchQuery] = useState("");
+  const [capsuleFilter, setCapsuleFilter] = useState<CapsuleFilter>("all");
+  const { totalConnections, threads, fetchAll: fetchThreadData } = useThreads();
+  const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+
+  const threadsForCapsule = useMemo(() => {
+    if (__DEV__ && dummyThreadEnabled) {
+      return [makeDummyThread(), ...threads];
+    }
+    return threads;
+  }, [dummyThreadEnabled, threads]);
   const searchTrackedRef = useRef(false);
   const handleSearchQuery = useCallback((q: string) => {
     setSearchQuery(q);
@@ -88,7 +102,8 @@ export default function MemoriesScreen() {
       searchTrackedRef.current = false;
       fetchEntries();
       fetchChapters();
-    }, [fetchEntries, fetchChapters])
+      fetchThreadData();
+    }, [fetchEntries, fetchChapters, fetchThreadData])
   );
 
   useFocusEffect(
@@ -201,7 +216,7 @@ export default function MemoriesScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <View
-        className="px-5 pt-2 pb-2"
+        className="px-5 pt-2 pb-0"
         style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}
       >
         <Text
@@ -209,20 +224,20 @@ export default function MemoriesScreen() {
             fontFamily: "LibreBaskerville-Bold",
             fontSize: 28,
             color: colors.text,
-            marginBottom: 8,
           }}
         >
           Capsule
         </Text>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 14,
-            color: colors.textMuted,
-          }}
-        >
-          {totalMoments} moment{totalMoments !== 1 ? "s" : ""}
-        </Text>
+      </View>
+
+      <View className="px-5">
+        <CapsuleStatBar
+          totalMoments={totalMoments}
+          totalChapters={allChapters.length}
+          totalThreads={totalConnections}
+          activeFilter={capsuleFilter}
+          onFilterChange={setCapsuleFilter}
+        />
       </View>
 
       <View className="flex-1 px-5">
@@ -230,6 +245,8 @@ export default function MemoriesScreen() {
           entries={filteredEntries}
           searchQuery={searchQuery}
           onChangeQuery={handleSearchQuery}
+          capsuleFilter={capsuleFilter}
+          threads={threadsForCapsule}
           onOpenChapter={(chapterId) => {
             const ch = chapterByIdMap.get(chapterId);
             if (ch) setChapterViewerChapter(ch);
@@ -239,6 +256,7 @@ export default function MemoriesScreen() {
 
       <Pressable
         onPress={() => {
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
           posthog.capture("capsule_flipbook_opened", { entry_count: entries.length });
           setViewMode("flipbook");
         }}
