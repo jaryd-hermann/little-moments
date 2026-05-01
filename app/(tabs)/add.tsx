@@ -42,6 +42,16 @@ function getRandomWord(): string {
   return CRASH_BURN_WORDS[Math.floor(Math.random() * CRASH_BURN_WORDS.length)];
 }
 
+function photoAnalyticsProps(photoDate: number | undefined) {
+  if (photoDate == null) return {};
+  const ageDays = Math.floor((Date.now() - photoDate) / (1000 * 60 * 60 * 24));
+  return {
+    photo_creation_time: new Date(photoDate).toISOString(),
+    photo_age_days: ageDays,
+    photo_is_throwback: ageDays > 90,
+  };
+}
+
 export default function AddScreen() {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -160,9 +170,10 @@ export default function AddScreen() {
     posthog.capture("add_flow_started", {
       prompt_type: promptType,
       input_method: inputMethod,
+      ...(promptType === "photo" ? photoAnalyticsProps(photoDate) : {}),
     });
     setTabBarHidden(true);
-  }, [setTabBarHidden, posthog, promptType]);
+  }, [setTabBarHidden, posthog, promptType, photoDate]);
 
   const handleComplete = useCallback(
     async (entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }) => {
@@ -190,6 +201,7 @@ export default function AddScreen() {
         source: "add_tab",
         prompt_type: promptType,
         input_method: inputMethodRef.current,
+        ...(promptType === "photo" ? photoAnalyticsProps(photoDate) : {}),
       });
 
       if (isFirstTime) {
@@ -233,6 +245,7 @@ export default function AddScreen() {
 
   const handlePhotoShuffle = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    posthog.capture("photo_shuffled", photoAnalyticsProps(photoDate));
     setIsShuffling(true);
     try {
       const photo = await getRandomAsset();
@@ -243,7 +256,7 @@ export default function AddScreen() {
     } finally {
       setIsShuffling(false);
     }
-  }, [getRandomAsset]);
+  }, [getRandomAsset, posthog, photoDate]);
 
   const handleRequestPhotoAccess = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

@@ -200,10 +200,22 @@ export default function ActivationScreen() {
 
       setMomentCount(2);
       completedPhotoRef.current = true;
-      posthog.capture("activation_photo_saved");
+      const ageDays =
+        photoDate != null
+          ? Math.floor((Date.now() - photoDate) / (1000 * 60 * 60 * 24))
+          : null;
+      posthog.capture("activation_photo_saved", {
+        ...(photoDate != null
+          ? {
+              photo_creation_time: new Date(photoDate).toISOString(),
+              photo_age_days: ageDays,
+              photo_is_throwback: ageDays != null && ageDays > 90,
+            }
+          : {}),
+      });
       setPhase("photo_saved");
     },
-    [saveEntry, fetchEntries, user, posthog]
+    [saveEntry, fetchEntries, user, posthog, photoDate]
   );
 
   const handlePromptComplete = useCallback(
