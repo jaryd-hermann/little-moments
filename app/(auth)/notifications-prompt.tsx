@@ -8,7 +8,9 @@ import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { requestNotificationPermissions } from "@/lib/notifications";
+import { syncPushRegistration } from "@/lib/pushRegistration";
 import { useSettingsStore } from "@/store/settingsStore";
+import { NotificationTimePicker } from "@/components/settings/NotificationTimePicker";
 
 const BG = "#FFFFFF";
 const INK = "#000000";
@@ -18,12 +20,26 @@ const CTA_VIOLET = "#f0d7ff";
 
 const HERO = require("@/assets/images/notification.png");
 
+// Onboarding screen forces light theme tokens; pass a minimal palette
+// to the shared NotificationTimePicker.
+const PICKER_PALETTE = {
+  text: "#1A1A1A",
+  textSecondary: "rgba(0, 0, 0, 0.6)",
+  textMuted: "rgba(0, 0, 0, 0.4)",
+  surface: "#FFFFFF",
+  surfaceSecondary: "#F5F5E4",
+  border: "rgba(0, 0, 0, 0.15)",
+  primary: "#f0d7ff",
+};
+
 export default function NotificationsPromptScreen() {
   const user = useAuthStore((s) => s.user);
   const setProfile = useAuthStore((s) => s.setProfile);
   const setNotificationEnabled = useSettingsStore(
     (s) => s.setNotificationEnabled
   );
+  const notificationTime = useSettingsStore((s) => s.notificationTime);
+  const setNotificationTime = useSettingsStore((s) => s.setNotificationTime);
 
   const finishOnboarding = async (enabled: boolean) => {
     if (!user) return;
@@ -44,6 +60,14 @@ export default function NotificationsPromptScreen() {
       .eq("id", user.id)
       .single();
     if (fresh) setProfile(fresh as Profile);
+
+    if (enabled) {
+      await syncPushRegistration({
+        notificationsEnabled: true,
+        reminderHour: notificationTime.hour,
+        reminderMinute: notificationTime.minute,
+      });
+    }
 
     router.replace("/(tabs)/capture");
   };
@@ -91,18 +115,32 @@ export default function NotificationsPromptScreen() {
           />
         </View>
 
-        <View style={{ marginTop: 28, gap: 18 }}>
+        <View style={{ marginTop: 24, gap: 14 }}>
           <BenefitRow
             icon="bulb-outline"
             text="Learn tips that help you capture moments faster"
           />
           <BenefitRow
-            icon="refresh-outline"
-            text="Stay in the loop with new features"
-          />
-          <BenefitRow
             icon="time-outline"
-            text="Receive gentle reminders to log your moment"
+            text="Receive a gentle daily reminder at a time you choose"
+          />
+        </View>
+
+        <View style={{ marginTop: 22 }}>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 13,
+              color: INK,
+              marginBottom: 10,
+            }}
+          >
+            When should we nudge you?
+          </Text>
+          <NotificationTimePicker
+            value={notificationTime}
+            onChange={(h, m) => setNotificationTime(h, m)}
+            colors={PICKER_PALETTE}
           />
         </View>
       </View>
