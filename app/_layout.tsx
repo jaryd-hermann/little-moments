@@ -3,7 +3,7 @@ import "../global.css";
 import { useEffect, useCallback } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { PostHogProvider, PostHogSurveyProvider, usePostHog } from "posthog-react-native";
-import { Stack } from "expo-router";
+import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useColorScheme, InteractionManager } from "react-native";
 import { useFonts } from "expo-font";
@@ -63,7 +63,12 @@ function AppInner() {
     const sub = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const data = response.notification.request.content.data as
-          | { type?: string; chapterId?: string }
+          | {
+              type?: string;
+              chapterId?: string;
+              source?: string;
+              route?: string;
+            }
           | undefined;
         if (data?.type === "chapter" && data.chapterId) {
           useChapterNotifStore.getState().setPendingChapterId(data.chapterId);
@@ -72,6 +77,11 @@ function AppInner() {
           useThreadNotifStore.getState().setPendingThreadId(
             (data as Record<string, unknown>).threadId as string
           );
+        }
+        if (data?.source === "daily_reminder" || data?.route === "/(tabs)/capture") {
+          // Land users squarely on the v3 Capture home — the daily push
+          // is the entry point to the capture loop.
+          router.replace("/(tabs)/capture");
         }
       }
     );

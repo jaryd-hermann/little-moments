@@ -43,9 +43,10 @@ export async function scheduleDailyReminder(
   await Notifications.cancelAllScheduledNotificationsAsync();
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "Your daily prompt is ready",
-      body: "Capture your moment — it takes less than 2 minutes.",
+      title: "A moment from your past is waiting",
+      body: "Tap to capture today's — we'll surface a photo to start with.",
       sound: true,
+      data: { route: "/(tabs)/capture", source: "daily_reminder" },
       ...(Platform.OS === "android"
         ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
         : {}),
