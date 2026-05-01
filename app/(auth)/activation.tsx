@@ -1,14 +1,21 @@
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
+import { ActivationClosingChat } from "@/components/ellie/ActivationClosingChat";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow } from "@/components/ellie/EllieChatFlow";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { MeetEllieCard } from "@/components/ellie/MeetEllieCard";
+import {
+  DailyPromptReminderSchedule,
+  useReminderScheduleState,
+} from "@/components/settings/DailyPromptReminderSchedule";
 import { getDailyWord } from "@/constants/words";
 import { useAuth } from "@/hooks/useAuth";
 import { useEntries } from "@/hooks/useEntries";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
 import { requestNotificationPermissions } from "@/lib/notifications";
+import { syncPushRegistration } from "@/lib/pushRegistration";
 import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/store/authStore";
@@ -37,21 +44,70 @@ type ActivationPhase =
   | "photo_flow"
   | "photo_saved"
   | "notifications"
-  | "prompt_offer"
-  | "prompt_flow"
-  | "prompt_saved"
+  | "notification_reminder_time"
+  | "closing_chat"
   | "wrapup";
 
 const CTA_LAVENDER = "#f0d7ff";
 const NOTIFICATION_HERO = require("@/assets/images/notification.png");
-const ACTIVATION_PROMPT = "What's a little moment from the past few days you'd tell someone at the dinner table?";
-const ACTIVATION_PREVIEW_INSTRUCTION =
-  "Here's a preview of your moment. Tap anywhere in the card to edit it, and tap \"Add Moment\" to capture it.";
+const ACTIVATION_PREVIEW_INSTRUCTION = `Here's a preview of your moment. Tap anywhere in the card to edit it, or tap the photo icon to add a pic to the moment, or tap "Go Deeper" and I'll help pull out more details for this moment.
+
+If you're happy, tap "Add Moment" to save it!`;
 const ACTIVATION_WORD_WELCOME_FIRST =
   "Welcome! Let's capture your first memory together — it only takes two minutes.";
 const ACTIVATION_WORD_WELCOME_REST =
   "Read the word below and let it take you somewhere. What memory or association does this unlock?\n\nThere's no right or wrong! Just speak about an associated memory for max 2 minutes.";
 const WORD_SAVED_PHOTO_OFFER_TYPING_MS = 5000;
+
+function ActivationNotificationReminderInner({
+  userId,
+  onDone,
+}: {
+  userId: string | undefined;
+  onDone: () => void;
+}) {
+  const posthog = usePostHog();
+  const { selectedSlot, times, selectSlot, changeTimeForSlot } = useReminderScheduleState();
+  const setNotificationTime = useSettingsStore((s) => s.setNotificationTime);
+  const [busy, setBusy] = useState(false);
+
+  const onContinue = async () => {
+    const t = times[selectedSlot];
+    setBusy(true);
+    try {
+      setNotificationTime(t.hour, t.minute);
+      if (userId) {
+        await syncPushRegistration({
+          notificationsEnabled: true,
+          reminderHour: t.hour,
+          reminderMinute: t.minute,
+        });
+      }
+      posthog.capture("activation_daily_reminder_time_set", { slot: selectedSlot });
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+
+  return (
+    <>
+      <EllieMessage
+        content="When do you want to get your daily reminder to share a moment?"
+        showAvatar
+      />
+      <DailyPromptReminderSchedule
+        selectedSlot={selectedSlot}
+        times={times}
+        onSelectSlot={selectSlot}
+        onChangeTimeForSlot={changeTimeForSlot}
+        continueLabel="Continue"
+        onContinue={() => void onContinue()}
+        continueDisabled={busy}
+      />
+    </>
+  );
+}
 
 export default function ActivationScreen() {
   const { colors } = useTheme();
@@ -67,6 +123,10 @@ export default function ActivationScreen() {
     requestPermission,
     getRandomAsset,
   } = useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
+    checkPermission,
+    requestPermission,
+  });
 
   const [phase, setPhase] = useState<ActivationPhase>("word_flow");
   const [photoUri, setPhotoUri] = useState<string | undefined>();
@@ -74,7 +134,6 @@ export default function ActivationScreen() {
   const [momentCount, setMomentCount] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const completedPhotoRef = useRef(false);
-  const completedPromptRef = useRef(false);
   const notificationsEnabledRef = useRef(false);
   /** Sync with latest photoUri for race-safe checks (concurrent getRandomAsset completions). */
   const photoUriRef = useRef<string | undefined>(undefined);
@@ -97,6 +156,12 @@ export default function ActivationScreen() {
   }, []);
 
   useEffect(() => {
+    if (phase === "notification_reminder_time") {
+      scrollToEnd();
+    }
+  }, [phase, scrollToEnd]);
+
+  useEffect(() => {
     if (phase !== "word_saved") {
       setWordSavedPhotoOfferVisible(false);
       return;
@@ -110,7 +175,12 @@ export default function ActivationScreen() {
   }, [phase, scrollToEnd]);
 
   const handleWordComplete = useCallback(
-    async (entry: { title: string; body: string; rawText: string }) => {
+    async (entry: {
+      title: string;
+      body: string;
+      rawText: string;
+      analytics?: any;
+    }) => {
       const today = format(new Date(), "yyyy-MM-dd");
       await saveEntry({
         title: entry.title,
@@ -137,7 +207,10 @@ export default function ActivationScreen() {
       }
 
       setMomentCount(1);
-      posthog.capture("activation_word_saved");
+      posthog.capture("activation_word_saved", {
+        prompt_type: "word",
+        ...entry.analytics,
+      });
       setPhase("word_saved");
     },
     [saveEntry, word, user, posthog]
@@ -149,6 +222,7 @@ export default function ActivationScreen() {
       body: string;
       rawText: string;
       attachedPhotoUri?: string;
+      analytics?: any;
     }) => {
       const today = format(new Date(), "yyyy-MM-dd");
       const saved = await saveEntry({
@@ -200,38 +274,13 @@ export default function ActivationScreen() {
 
       setMomentCount(2);
       completedPhotoRef.current = true;
-      posthog.capture("activation_photo_saved");
+      posthog.capture("activation_photo_saved", {
+        prompt_type: "photo",
+        ...entry.analytics,
+      });
       setPhase("photo_saved");
     },
     [saveEntry, fetchEntries, user, posthog]
-  );
-
-  const handlePromptComplete = useCallback(
-    async (entry: { title: string; body: string; rawText: string }) => {
-      const today = format(new Date(), "yyyy-MM-dd");
-      await saveEntry({
-        title: entry.title,
-        body: entry.body,
-        entry_type: "moment",
-        entry_date: today,
-        entry_month: new Date().getMonth() + 1,
-        entry_year: new Date().getFullYear(),
-        date_precision: "exact",
-        word_of_day: null,
-        ai_conversation: null,
-        ai_enhanced_body: null,
-        original_body: entry.rawText,
-        is_ai_enhanced: true,
-        streak_day_number: 1,
-        chapter_id: null,
-      });
-
-      setMomentCount(3);
-      completedPromptRef.current = true;
-      posthog.capture("activation_prompt_saved");
-      setPhase("prompt_saved");
-    },
-    [saveEntry, posthog]
   );
 
   const handleRequestPhotoAccess = useCallback(async () => {
@@ -265,13 +314,13 @@ export default function ActivationScreen() {
       return;
     }
 
-    const granted = await requestPermission();
+    const granted = await ensureFullPhotoAccess();
     if (granted) {
       await loadPhotoAndNavigate(true);
     } else {
       setPhase("notifications");
     }
-  }, [checkPermission, requestPermission, getRandomAsset]);
+  }, [checkPermission, ensureFullPhotoAccess, getRandomAsset]);
 
   const handlePhotoShuffle = useCallback(async () => {
     const photo = await getRandomAsset();
@@ -298,7 +347,11 @@ export default function ActivationScreen() {
         .update({ notification_enabled: granted })
         .eq("id", user.id);
     }
-    setPhase("prompt_offer");
+    if (granted) {
+      setPhase("notification_reminder_time");
+    } else {
+      setPhase("closing_chat");
+    }
     scrollToEnd();
   }, [user, posthog, setNotificationEnabled, scrollToEnd]);
 
@@ -306,7 +359,6 @@ export default function ActivationScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     posthog.capture("activation_completed", {
       completed_photo: completedPhotoRef.current,
-      completed_prompt: completedPromptRef.current,
       notifications_enabled: notificationsEnabledRef.current,
     });
     if (user) {
@@ -333,6 +385,7 @@ export default function ActivationScreen() {
   if (phase === "word_flow") {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        {fullPhotoAccessModal}
         <EllieChatFlow
           promptType="word"
           promptValue={word}
@@ -351,6 +404,8 @@ export default function ActivationScreen() {
           hideTimerHint
           hideHelperText
           previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+          analyticsSource="activation"
+          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
         />
       </SafeAreaView>
     );
@@ -360,6 +415,7 @@ export default function ActivationScreen() {
   if (phase === "photo_flow") {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        {fullPhotoAccessModal}
         <EllieChatFlow
           promptType="photo"
           promptValue=""
@@ -372,22 +428,22 @@ export default function ActivationScreen() {
           previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
           photoFooterNote="p.s If you want a different photo, tap shuffle."
           photoEllieTypingDelayMs={WORD_SAVED_PHOTO_OFFER_TYPING_MS}
+          analyticsSource="activation"
+          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
         />
       </SafeAreaView>
     );
   }
 
-  // ── Prompt flow ──
-  if (phase === "prompt_flow") {
+  // ── Closing chat (after notifications) ──
+  if (phase === "closing_chat") {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        <EllieChatFlow
-          promptType="question"
-          promptValue={ACTIVATION_PROMPT}
-          onComplete={handlePromptComplete}
-          welcomeMessages={["Last one. This time, just answer a simple question."]}
-          extraGuidance="Think about little things — a conversation, a meal, something that happened on a walk. Not the big symbolic moments. The ones you'll forget."
-          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+        {fullPhotoAccessModal}
+        <ActivationClosingChat
+          momentCount={momentCount}
+          userId={user?.id}
+          onFinish={handleFinish}
         />
       </SafeAreaView>
     );
@@ -396,6 +452,7 @@ export default function ActivationScreen() {
   // ── Interstitial phases ──
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+      {fullPhotoAccessModal}
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
@@ -518,74 +575,14 @@ export default function ActivationScreen() {
           </>
         )}
 
-        {/* ── Prompt offer ── */}
-        {phase === "prompt_offer" && (
-          <>
-            <EllieMessage
-              content="One last thing — want to try capturing a moment with just a question? It takes 2 minutes and walks you through the last way we help you remember."
-              showAvatar
-            />
-            <View style={{ gap: 12, marginTop: 8 }}>
-              <Pressable
-                onPress={() => setPhase("prompt_flow")}
-                style={{
-                  height: 52,
-                  borderRadius: 9999,
-                  backgroundColor: CTA_LAVENDER,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={ctaTextStyle}>Let's do it</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  posthog.capture("activation_prompt_skipped");
-                  handleFinish();
-                }}
-                style={{
-                  height: 48,
-                  borderRadius: 9999,
-                  borderWidth: 2,
-                  borderColor: "#F0D7FF",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={{ fontFamily: "Roboto-Medium", fontSize: 15, color: colors.text, letterSpacing: 0.5 }}>
-                  Not now, explore the app
-                </Text>
-              </Pressable>
-            </View>
-          </>
-        )}
-
-        {/* ── After prompt saved ── */}
-        {phase === "prompt_saved" && (
-          <>
-            <CongratsCard
-              headline="Three memories captured!"
-              totalMoments={3}
-              streakCount={1}
-            />
-            <EllieMessage
-              content={"Amazing. You've already added three moments to your Capsule in just a few minutes here.\n\nThese are moments you'd likely have forgotten. Now you noticed and logged them.\n\nAfter a few more moments captured, I'll be able to start seeing threads between them. I'm excited to share those with you.\n\nCome back tomorrow — I'll have a new starting point ready for your 2 minute practice."}
-              showAvatar
-            />
-            <Pressable
-              onPress={handleFinish}
-              style={{
-                height: 52,
-                borderRadius: 9999,
-                backgroundColor: CTA_LAVENDER,
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 12,
-              }}
-            >
-              <Text style={ctaTextStyle}>Explore the app</Text>
-            </Pressable>
-          </>
+        {phase === "notification_reminder_time" && (
+          <ActivationNotificationReminderInner
+            userId={user?.id}
+            onDone={() => {
+              setPhase("closing_chat");
+              scrollToEnd();
+            }}
+          />
         )}
 
         {/* ── Wrapup (fallback) ── */}

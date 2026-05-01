@@ -22,6 +22,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { usePostHog } from "posthog-react-native";
 
 const FIRST_ADVANCE_MS = 9000;
@@ -62,7 +63,10 @@ export default function SplashScreen() {
           .single()
           .then(({ data: profile }) => {
             const p = profile as Profile | null;
-            if (p) setProfile(p);
+            if (p) {
+              setProfile(p);
+              applyNotificationTimeFromProfile(p.notification_time);
+            }
             routeAfterAuth(p);
           });
       }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   Alert,
-  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
@@ -21,15 +20,26 @@ import { AppHeader } from "@/components/common/AppHeader";
 import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
-import { EllieChatFlow, type InputMethod } from "@/components/ellie/EllieChatFlow";
+import {
+  EllieChatFlow,
+  type InputMethod,
+  type MomentCaptureAnalytics,
+} from "@/components/ellie/EllieChatFlow";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { ChapterCard } from "@/components/today/ChapterCard";
 import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
 import { useEntries } from "@/hooks/useEntries";
-import { useStreak, type AfterSaveStats } from "@/hooks/useStreak";
+import {
+  useStreak,
+  type AfterSaveStats,
+  type AfterSaveContext,
+} from "@/hooks/useStreak";
+import { SlideToPinMoment } from "@/components/common/SlideToPinMoment";
+import { EntryPinToggle } from "@/components/common/EntryPinToggle";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import { hasPhotoLibraryAccess, useMediaLibrary } from "@/hooks/useMediaLibrary";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
+import { hasFullPhotoLibraryAccess, useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useChapters } from "@/hooks/useChapters";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 import { useChapterDevStore } from "@/store/chapterStore";
@@ -80,7 +90,12 @@ export default function TodayScreen() {
     requestPermission,
     checkPermission,
     permissionStatus,
+    accessPrivileges,
   } = useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
+    checkPermission,
+    requestPermission,
+  });
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const { latestChapter: realLatestChapter, fetchChapters } = useChapters();
   const dummyEnabled = useChapterDevStore((s) => s.dummyChapterEnabled);
@@ -130,6 +145,20 @@ export default function TodayScreen() {
       ),
     [entries]
   );
+
+  const todayEntriesLayoutKey = useMemo(
+    () => todayEntries.map((e) => e.id).join(","),
+    [todayEntries]
+  );
+  const todayCardHeightsRef = useRef<Record<string, number>>({});
+  const [todayCarouselMinHeight, setTodayCarouselMinHeight] = useState<
+    number | undefined
+  >(undefined);
+
+  useEffect(() => {
+    todayCardHeightsRef.current = {};
+    setTodayCarouselMinHeight(undefined);
+  }, [todayEntriesLayoutKey]);
 
   const todayEntry = todayEntries.length > 0 ? todayEntries[0] : null;
 
@@ -206,7 +235,7 @@ export default function TodayScreen() {
   useFocusEffect(
     useCallback(() => {
       if (promptType !== "photo") return;
-      const canAccess = hasPhotoLibraryAccess(permissionStatus);
+      const canAccess = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
       if (!canAccess || photoUri) return;
       let cancelled = false;
       void getRandomAsset().then((photo) => {
@@ -217,16 +246,12 @@ export default function TodayScreen() {
       return () => {
         cancelled = true;
       };
-    }, [promptType, permissionStatus, photoUri, getRandomAsset])
+    }, [promptType, permissionStatus, accessPrivileges, photoUri, getRandomAsset])
   );
 
   const handleRequestPhotoAccess = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (permissionStatus === "denied") {
-      Linking.openSettings();
-      return;
-    }
-    const ok = await requestPermission();
+    const ok = await ensureFullPhotoAccess();
     if (ok) {
       const photo = await getRandomAsset();
       if (photo) {
@@ -235,17 +260,12 @@ export default function TodayScreen() {
       }
     }
     await checkPermission();
-  }, [
-    permissionStatus,
-    requestPermission,
-    getRandomAsset,
-    checkPermission,
-  ]);
+  }, [ensureFullPhotoAccess, getRandomAsset, checkPermission]);
 
   const todayPhotoPermissionBlocked =
     promptType === "photo" &&
     !photoUri &&
-    (permissionStatus === "denied" || permissionStatus === "undetermined");
+    !hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
 
   const handlePhotoShuffle = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -262,7 +282,13 @@ export default function TodayScreen() {
   }, [getRandomAsset]);
 
   const handleComplete = useCallback(
-    async (entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }) => {
+    async (entry: {
+      title: string;
+      body: string;
+      rawText: string;
+      attachedPhotoUri?: string;
+      analytics?: MomentCaptureAnalytics;
+    }) => {
       setJustSaved(true);
       const today = format(new Date(), "yyyy-MM-dd");
       const saved = await saveEntry({
@@ -288,6 +314,7 @@ export default function TodayScreen() {
         source: "today",
         prompt_type: promptType,
         input_method: inputMethodRef.current,
+        ...entry.analytics,
       });
 
       if (entry.attachedPhotoUri && userId && saved?.id) {
@@ -317,6 +344,7 @@ export default function TodayScreen() {
       }
 
       await fetchEntries(saved?.id);
+      return saved ?? null;
     },
     [saveEntry, promptType, dailyPrompt.value, posthog, userId, fetchEntries]
   );
@@ -389,7 +417,7 @@ export default function TodayScreen() {
   ]);
 
   const afterSaveNode = useCallback(
-    (stats: AfterSaveStats) => {
+    (stats: AfterSaveStats, ctx: AfterSaveContext) => {
       const goCapsule = () => {
         setTabBarHidden(false);
         setJustSaved(false);
@@ -484,6 +512,9 @@ export default function TodayScreen() {
                 style={{ marginTop: 12, marginBottom: 22 }}
               />
               <EllieMessage content="If not interested now, please continue with your today!" />
+              {ctx.savedEntryId ? (
+                <SlideToPinMoment entryId={ctx.savedEntryId} />
+              ) : null}
               <View style={{ gap: 10, marginTop: 12 }}>
                 {shareButton}
                 {doneButton}
@@ -494,6 +525,9 @@ export default function TodayScreen() {
               <EllieMessage
                 content={`Nice work — that's ${streakDisplayed} day${streakDisplayed !== 1 ? "s" : ""} in a row. Your Capsule is growing. Where to next?`}
               />
+              {ctx.savedEntryId ? (
+                <SlideToPinMoment entryId={ctx.savedEntryId} />
+              ) : null}
               <View style={{ gap: 10, marginTop: 12 }}>
                 {shareButton}
                 <Pressable
@@ -538,6 +572,7 @@ export default function TodayScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+      {fullPhotoAccessModal}
       <AppHeader
         streakCount={streakCount}
         isAtRisk={isAtRisk}
@@ -586,6 +621,9 @@ export default function TodayScreen() {
               contentContainerStyle={{ paddingHorizontal: 20 }}
               snapToInterval={CARD_WIDTH + 12}
               decelerationRate="fast"
+              initialNumToRender={todayEntries.length}
+              windowSize={Math.max(5, todayEntries.length + 2)}
+              removeClippedSubviews={false}
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const idx = Math.round(
                   e.nativeEvent.contentOffset.x / (CARD_WIDTH + 12)
@@ -596,83 +634,114 @@ export default function TodayScreen() {
               renderItem={({ item, index }) => {
                 const media =
                   item.media && item.media.length > 0 ? item.media[0] : null;
+                const recordCardHeight = (h: number) => {
+                  if (h <= 0) return;
+                  todayCardHeightsRef.current[item.id] = h;
+                  const heights = todayEntries.map(
+                    (e) => todayCardHeightsRef.current[e.id] ?? 0
+                  );
+                  if (heights.some((x) => x <= 0)) return;
+                  const maxH = Math.max(...heights);
+                  setTodayCarouselMinHeight((prev) =>
+                    prev === maxH ? prev : maxH
+                  );
+                };
                 return (
-                  <Pressable
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      posthog.capture("today_entry_tapped", { entry_id: item.id });
-                      router.push(`/entry/${item.id}`);
-                    }}
+                  <View
                     style={{
                       width: CARD_WIDTH,
                       marginRight: index < todayEntries.length - 1 ? 12 : 0,
-                      borderRadius: 16,
-                      borderWidth: 1,
-                      borderColor: "rgba(0,0,0,0.08)",
-                      backgroundColor: CREAM,
-                      overflow: "hidden",
+                      position: "relative",
+                      minHeight: todayCarouselMinHeight,
                     }}
                   >
-                    {media && (
-                      <EntryMediaImage
-                        media={media}
-                        style={{
-                          width: "100%",
-                          height: 220,
-                        }}
-                      />
-                    )}
-                    <View style={{ padding: 16 }}>
-                      {item.title && (
-                        <Text
+                    <Pressable
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        posthog.capture("today_entry_tapped", { entry_id: item.id });
+                        router.push(`/entry/${item.id}`);
+                      }}
+                      onLayout={(e) => recordCardHeight(e.nativeEvent.layout.height)}
+                      style={{
+                        flex: todayCarouselMinHeight ? 1 : undefined,
+                        borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: "rgba(0,0,0,0.08)",
+                        backgroundColor: CREAM,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {media && (
+                        <EntryMediaImage
+                          media={media}
                           style={{
-                            fontFamily: "LibreBaskerville-Bold",
-                            fontSize: 16,
-                            color: "#1A1A1A",
-                            marginBottom: 6,
+                            width: "100%",
+                            height: 220,
                           }}
-                        >
-                          {item.title}
-                        </Text>
+                        />
                       )}
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Regular",
-                          fontSize: 14,
-                          lineHeight: 22,
-                          color: "#333333",
-                        }}
-                        numberOfLines={4}
-                      >
-                        {item.body}
-                      </Text>
-                      {item.word_of_day && (
-                        <View
-                          style={{
-                            marginTop: 10,
-                            alignSelf: "flex-start",
-                            borderRadius: 8,
-                            backgroundColor: "rgba(0,0,0,0.06)",
-                            paddingHorizontal: 10,
-                            paddingVertical: 4,
-                          }}
-                        >
+                      <View style={{ padding: 16 }}>
+                        {item.title && (
                           <Text
                             style={{
-                              fontFamily: "Roboto-Regular",
-                              fontSize: 12,
-                              color: "#555555",
+                              fontFamily: "LibreBaskerville-Bold",
+                              fontSize: 16,
+                              color: "#1A1A1A",
+                              marginBottom: 6,
                             }}
                           >
-                            starting word:{" "}
-                            <Text style={{ fontFamily: "Roboto-Medium" }}>
-                              {item.word_of_day.toLowerCase()}
-                            </Text>
+                            {item.title}
                           </Text>
-                        </View>
-                      )}
+                        )}
+                        <Text
+                          style={{
+                            fontFamily: "Roboto-Regular",
+                            fontSize: 14,
+                            lineHeight: 22,
+                            color: "#333333",
+                          }}
+                          numberOfLines={4}
+                        >
+                          {item.body}
+                        </Text>
+                        {item.word_of_day && (
+                          <View
+                            style={{
+                              marginTop: 10,
+                              alignSelf: "flex-start",
+                              borderRadius: 8,
+                              backgroundColor: "rgba(0,0,0,0.06)",
+                              paddingHorizontal: 10,
+                              paddingVertical: 4,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontFamily: "Roboto-Regular",
+                                fontSize: 12,
+                                color: "#555555",
+                              }}
+                            >
+                              starting word:{" "}
+                              <Text style={{ fontFamily: "Roboto-Medium" }}>
+                                {item.word_of_day.toLowerCase()}
+                              </Text>
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </Pressable>
+                    <View
+                      style={{
+                        position: "absolute",
+                        top: 10,
+                        right: 10,
+                        zIndex: 2,
+                      }}
+                    >
+                      <EntryPinToggle entryId={item.id} />
                     </View>
-                  </Pressable>
+                  </View>
                 );
               }}
             />
@@ -920,8 +989,11 @@ export default function TodayScreen() {
             todayPhotoPermissionBlocked ? handleRequestPhotoAccess : undefined
           }
           photoAccessButtonLabel={
-            permissionStatus === "denied" ? "Open Settings" : "Grant photo access"
+            permissionStatus === "denied" || accessPrivileges === "limited"
+              ? "Open Settings"
+              : "Grant photo access"
           }
+          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
           afterSaveNode={afterSaveNode}
           welcomeMessages={[
             streakCount > 0
@@ -945,6 +1017,7 @@ export default function TodayScreen() {
             });
             setTabBarHidden(true);
           }}
+          analyticsSource="today"
           onAbortFlow={() => {
             setTabBarHidden(false);
             inputMethodRef.current = null;

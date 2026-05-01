@@ -32,10 +32,27 @@ export async function callDigDeeper(
     throw new Error("Not authenticated");
   }
 
-  const { data, error } = await supabase.functions.invoke<DigDeeperResponse>(
-    "dig-deeper",
-    { body: request }
-  );
+  const invokeOnce = () =>
+    supabase.functions.invoke<DigDeeperResponse>("dig-deeper", {
+      body: request,
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+
+  let { data, error } = await invokeOnce();
+  if (error) {
+    await supabase.auth.refreshSession();
+    const {
+      data: { session: refreshed },
+    } = await supabase.auth.getSession();
+    if (!refreshed?.access_token) throw error;
+    ({ data, error } = await supabase.functions.invoke<DigDeeperResponse>(
+      "dig-deeper",
+      {
+        body: request,
+        headers: { Authorization: `Bearer ${refreshed.access_token}` },
+      }
+    ));
+  }
 
   if (error) {
     throw error;

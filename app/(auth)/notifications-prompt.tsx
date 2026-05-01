@@ -9,6 +9,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { requestNotificationPermissions } from "@/lib/notifications";
 import { useSettingsStore } from "@/store/settingsStore";
+import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 
 const BG = "#FFFFFF";
 const INK = "#000000";
@@ -43,7 +44,10 @@ export default function NotificationsPromptScreen() {
       .select("*")
       .eq("id", user.id)
       .single();
-    if (fresh) setProfile(fresh as Profile);
+    if (fresh) {
+      setProfile(fresh as Profile);
+      applyNotificationTimeFromProfile(fresh.notification_time);
+    }
 
     router.replace("/(tabs)/today");
   };

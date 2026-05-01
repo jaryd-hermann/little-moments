@@ -7,6 +7,7 @@ import {
   scheduleDailyReminder,
   cancelAllNotifications,
 } from "@/lib/notifications";
+import { formatNotificationTimeForDb } from "@/lib/notificationTimeSync";
 
 function getExpoProjectId(): string | undefined {
   const extra = Constants.expoConfig?.extra as
@@ -48,13 +49,25 @@ export async function syncPushRegistration(options: {
   const timezone =
     Intl.DateTimeFormat().resolvedOptions().timeZone ?? undefined;
 
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (session?.user) {
+    await supabase
+      .from("profiles")
+      .update({
+        notification_time: formatNotificationTimeForDb(
+          options.reminderHour,
+          options.reminderMinute
+        ),
+      })
+      .eq("id", session.user.id);
+  }
+
   const token = await tryGetExpoPushToken();
 
   if (token) {
     await cancelAllNotifications();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
     if (!session) return;
 
     const { error } = await supabase.functions.invoke("register-push-token", {

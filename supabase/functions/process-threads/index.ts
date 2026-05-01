@@ -4,6 +4,13 @@ import { sendExpoPushTickets } from "../_shared/expo-push.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
 import { observationPlainPreview } from "../_shared/thread-text.ts";
+import {
+  THEME_ENUM,
+  EMOTION_ENUM,
+  coerceTheme,
+  coerceEmotion,
+} from "../_shared/graph-palette.ts";
+import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const EMBEDDING_MODEL = "text-embedding-3-large";
@@ -28,10 +35,25 @@ Return ONLY a JSON object with these fields:
   "places": ["list of named or referenced places"],
   "named_feelings": ["specific feelings mentioned — grief, pride, longing, etc."],
   "sensory_details": ["descriptive sensory details — warm, light, early morning, the smell of coffee, etc."],
-  "primary_emotion": "one word",
-  "primary_theme": "one short phrase"
+  "primary_emotion": "EXACTLY ONE of: ${EMOTION_ENUM.join(", ")}",
+  "primary_theme": "EXACTLY ONE of: ${THEME_ENUM.join(", ")}"
 }
-If a field has no matches, use an empty array or empty string. Return valid JSON only.`;
+
+primary_emotion and primary_theme MUST be chosen from the lists above — no other values are accepted. If none fit well, choose the closest match. If the entry is too short or neutral to classify, use an empty string "" for that field.
+
+Theme guidance:
+- belonging: feeling held, seen, part of something
+- loss: grief, endings, what's gone
+- pride: accomplishment, self-respect, showing up
+- family: parents, kids, siblings, family-of-origin dynamics
+- work: job, career, craft, professional identity
+- change: transition, uncertainty, something shifting
+- place: a specific location's hold on the person
+- growth: learning, becoming, expanding
+- joy: delight, play, lightness
+- uncertain: confusion, ambivalence, not-knowing
+
+If a list field has no matches, use an empty array. Return valid JSON only.`;
 
 const CONNECTION_SYSTEM_PROMPT = `You are Ellie, a thoughtful memory companion for the Little Moments app.
 You have been given a user's latest entry alongside several past entries that may be related.
@@ -136,21 +158,20 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
 async function extractMetadata(text: string) {
   const response = await anthropic.messages.create({
-    model: "claude-haiku-4-20250414",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 512,
     system: METADATA_SYSTEM_PROMPT,
     messages: [{ role: "user", content: text }],
   });
-  const raw =
-    response.content[0].type === "text" ? response.content[0].text : "{}";
+  const raw = anthropicAssistantText(response.content).trim() || "{}";
   const parsed = tryParseJSON(raw);
   return {
     people: Array.isArray(parsed?.people) ? parsed.people as string[] : [],
     places: Array.isArray(parsed?.places) ? parsed.places as string[] : [],
     named_feelings: Array.isArray(parsed?.named_feelings) ? parsed.named_feelings as string[] : [],
     sensory_details: Array.isArray(parsed?.sensory_details) ? parsed.sensory_details as string[] : [],
-    primary_emotion: typeof parsed?.primary_emotion === "string" ? parsed.primary_emotion : "",
-    primary_theme: typeof parsed?.primary_theme === "string" ? parsed.primary_theme : "",
+    primary_emotion: coerceEmotion(parsed?.primary_emotion),
+    primary_theme: coerceTheme(parsed?.primary_theme),
   };
 }
 
@@ -180,18 +201,14 @@ async function analyzeConnections(
   const userMessage = `NEW ENTRY (id: ${newEntry.id}):\nTitle: ${newEntry.title ?? "(untitled)"}\n${newEntry.body}\n\nPAST ENTRIES:\n${candidateBlock}`;
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     max_tokens: 1400,
     system: CONNECTION_SYSTEM_PROMPT,
-    messages: [
-      { role: "user", content: userMessage },
-      { role: "assistant", content: "{" },
-    ],
+    messages: [{ role: "user", content: userMessage }],
   });
 
-  const raw =
-    response.content[0].type === "text" ? response.content[0].text : "";
-  return tryParseJSON(`{${raw}`);
+  const raw = anthropicAssistantText(response.content).trim();
+  return tryParseJSON(raw);
 }
 
 // ── Main Handler ──────────────────────────────────────────────────

@@ -39,6 +39,8 @@ import { supabase } from "@/lib/supabase";
 import { getEntryMediaDisplayUri } from "@/lib/entryMediaUrl";
 import { plainTextToComposerHtml } from "@/lib/digDeeperReturn";
 import { useDraftStore } from "@/store/draftStore";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
+import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 
 const MAX_ATTACHMENTS = 5;
 /** Bottom dock height (gallery + optional toolbar + action row); scroll padding so content clears it. */
@@ -262,11 +264,20 @@ export default function ComposerScreen() {
     setEditLoaded(true);
   }, [entryIdParam, editingEntry, isLoading]);
 
+  const { checkPermission, requestPermission } = useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
+    checkPermission,
+    requestPermission,
+  });
+
   const openGallery = async () => {
     if (media.length >= MAX_ATTACHMENTS) {
       Alert.alert("Limit reached", `You can attach up to ${MAX_ATTACHMENTS} items.`);
       return;
     }
+
+    const accessOk = await ensureFullPhotoAccess();
+    if (!accessOk) return;
 
     const remaining = MAX_ATTACHMENTS - media.length;
 
@@ -499,6 +510,7 @@ export default function ComposerScreen() {
         ai_conversation: null,
         is_ai_enhanced: wasEnhanced,
         streak_day_number: null,
+        chapter_id: null,
       });
 
       const insertedMedia: EntryMedia[] = [];
@@ -583,6 +595,7 @@ export default function ComposerScreen() {
         style={{ flex: 1, backgroundColor: colors.background }}
         edges={["top"]}
       >
+        {fullPhotoAccessModal}
         <KeyboardAvoidingView
           className="flex-1"
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -631,6 +644,7 @@ export default function ComposerScreen() {
       style={{ flex: 1, backgroundColor: colors.background }}
       edges={["top"]}
     >
+      {fullPhotoAccessModal}
       {/* Header — outside keyboard shift so it stays pinned */}
       <View
         style={{

@@ -21,6 +21,8 @@ interface EntryMediaImageProps {
   media: EntryMedia;
   style?: StyleProp<ViewStyle>;
   recyclingKey?: string;
+  /** Defaults to cover. Use contain for letterboxed full-screen previews. */
+  contentFit?: "cover" | "contain" | "fill" | "scale-down";
 }
 
 type SourceShape = { uri: string; headers?: Record<string, string> };
@@ -44,6 +46,7 @@ export function EntryMediaImage({
   media,
   style,
   recyclingKey,
+  contentFit = "cover",
 }: EntryMediaImageProps) {
   const [displayUri, setDisplayUri] = useState<string | null>(null);
   const [useRnFallback, setUseRnFallback] = useState(false);
@@ -112,12 +115,21 @@ export function EntryMediaImage({
   const rnSource = expoSource;
   const flatStyle = flattenImageStyle(style);
 
+  const rnResizeMode =
+    contentFit === "contain"
+      ? "contain"
+      : contentFit === "fill"
+        ? "stretch"
+        : contentFit === "scale-down"
+          ? "center"
+          : "cover";
+
   if (useRnFallback) {
     return (
       <RNImage
         source={rnSource}
         style={flatStyle}
-        resizeMode="cover"
+        resizeMode={rnResizeMode}
         onError={(e) => {
           if (__DEV__) {
             console.warn(
@@ -135,7 +147,7 @@ export function EntryMediaImage({
     <Image
       source={expoSource}
       style={flatStyle}
-      contentFit="cover"
+      contentFit={contentFit}
       cachePolicy="memory-disk"
       recyclingKey={recyclingKey ?? media.id}
       onError={(e) => {

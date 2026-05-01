@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 import { View, Text, SectionList, Pressable } from "react-native";
 import { format } from "date-fns";
 import {
@@ -49,6 +50,7 @@ export function ListViewMemories({
   threads = [],
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
+  const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
 
   const threadOrdinals = useMemo(
     () => threadOrdinalByIdMap(threads),
@@ -60,14 +62,19 @@ export function ListViewMemories({
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const filteredByType = useMemo(() => {
+    let list = entries;
     if (capsuleFilter === "moments") {
-      return entries.filter((e) => e.entry_type !== "chapter");
+      list = list.filter((e) => e.entry_type !== "chapter");
+    } else if (capsuleFilter === "chapters") {
+      list = list.filter((e) => e.entry_type === "chapter");
     }
-    if (capsuleFilter === "chapters") {
-      return entries.filter((e) => e.entry_type === "chapter");
+    if (pinnedOnly) {
+      list = list.filter(
+        (e) => e.entry_type === "moment" && Boolean(e.is_pinned)
+      );
     }
-    return entries;
-  }, [entries, capsuleFilter]);
+    return list;
+  }, [entries, capsuleFilter, pinnedOnly]);
 
   const sections = useMemo(() => {
     const sorted = [...filteredByType].sort((a, b) => {

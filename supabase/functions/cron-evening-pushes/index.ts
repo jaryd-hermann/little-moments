@@ -25,7 +25,37 @@ type ProfileRow = {
   last_daily_push_local_date: string | null;
   last_streak_risk_push_local_date: string | null;
   notification_timezone: string | null;
+  /** Local time (HH:MM:SS) for the daily new-prompt push, interpreted in notification_timezone */
+  notification_time: string | null;
 };
+
+function parseLocalPromptTime(
+  notificationTime: string | null | undefined
+): { hour: number; minute: number } {
+  if (!notificationTime || typeof notificationTime !== "string") {
+    return { hour: 6, minute: 0 };
+  }
+  const parts = notificationTime.trim().split(":");
+  const h = parseInt(parts[0] ?? "6", 10);
+  const m = parseInt(parts[1] ?? "0", 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return { hour: 6, minute: 0 };
+  return {
+    hour: Math.min(23, Math.max(0, h)),
+    minute: Math.min(59, Math.max(0, m)),
+  };
+}
+
+function inTimeWindow(
+  localHour: number,
+  localMinute: number,
+  targetHour: number,
+  targetMinute: number,
+  windowMinutes = 20
+): boolean {
+  const now = localHour * 60 + localMinute;
+  const start = targetHour * 60 + targetMinute;
+  return now >= start && now < start + windowMinutes;
+}
 
 /**
  * Mirrors client-side getDailyPromptType() from lib/dailyPrompt.ts.
@@ -103,7 +133,7 @@ Deno.serve(async (req) => {
     const { data: profiles, error: profErr } = await supabase
       .from("profiles")
       .select(
-        "id, notification_enabled, streak_at_risk_enabled, streak_count, last_morning_push_local_date, last_daily_push_local_date, last_streak_risk_push_local_date, notification_timezone"
+        "id, notification_enabled, streak_at_risk_enabled, streak_count, last_morning_push_local_date, last_daily_push_local_date, last_streak_risk_push_local_date, notification_timezone, notification_time"
       )
       .in("id", userIds);
 
@@ -166,7 +196,8 @@ Deno.serve(async (req) => {
       const hour = local.hour;
       const minute = local.minute;
 
-      const inMorningWindow = hour === 7 && minute < 20;
+      const promptT = parseLocalPromptTime(p.notification_time);
+      const inMorningWindow = inTimeWindow(hour, minute, promptT.hour, promptT.minute);
       const inDailyWindow = hour === 18 && minute < 20;
       const inStreakWindow = hour === 21 && minute < 20;
 

@@ -161,6 +161,7 @@ export default function CrashBurnScreen() {
         ai_conversation: null,
         is_ai_enhanced: false,
         streak_day_number: null,
+        chapter_id: null,
       });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setPhase("pre-race");

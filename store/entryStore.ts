@@ -17,6 +17,7 @@ export interface Entry {
   is_ai_enhanced: boolean;
   streak_day_number: number | null;
   chapter_id: string | null;
+  is_pinned: boolean;
   created_at: string;
   updated_at: string;
   media?: EntryMedia[];
@@ -58,7 +59,14 @@ export const useEntryStore = create<EntryStore>((set) => ({
   setIsLoading: (isLoading) => set({ isLoading }),
   addEntry: (entry) =>
     set((state) => ({
-      entries: [{ ...entry, media: entry.media ?? [] }, ...state.entries],
+      entries: [
+        {
+          ...entry,
+          media: entry.media ?? [],
+          is_pinned: Boolean(entry.is_pinned),
+        },
+        ...state.entries,
+      ],
     })),
   updateEntry: (id, updates) =>
     set((state) => ({

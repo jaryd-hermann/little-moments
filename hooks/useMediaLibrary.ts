@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { Dimensions, PixelRatio } from "react-native";
+import { Dimensions, PixelRatio, Platform } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
@@ -8,6 +8,31 @@ export function hasPhotoLibraryAccess(
   status: MediaLibrary.PermissionStatus | null | undefined
 ): boolean {
   return status === "granted" || (status as string) === "limited";
+}
+
+export type PhotoLibraryAccessPrivileges = "all" | "limited" | "none" | null;
+
+function parseAccessPrivileges(
+  response: MediaLibrary.PermissionResponse & {
+    accessPrivileges?: "all" | "limited" | "none";
+  }
+): PhotoLibraryAccessPrivileges {
+  return response.accessPrivileges ?? null;
+}
+
+/**
+ * Random photo roll and broad library queries need **all** photos on iOS.
+ * `limited` (selected photos only) is treated as insufficient.
+ */
+export function hasFullPhotoLibraryAccess(
+  status: MediaLibrary.PermissionStatus | null | undefined,
+  accessPrivileges: PhotoLibraryAccessPrivileges
+): boolean {
+  if (!hasPhotoLibraryAccess(status)) return false;
+  if ((status as string) === "limited") return false;
+  if (Platform.OS === "android") return true;
+  if (accessPrivileges === "limited") return false;
+  return true;
 }
 
 export interface MediaAsset {
@@ -333,22 +358,36 @@ export function warmUpPhotoCache(): void {
 export function useMediaLibrary() {
   const [permissionStatus, setPermissionStatus] =
     useState<MediaLibrary.PermissionStatus | null>(null);
+  const [accessPrivileges, setAccessPrivileges] =
+    useState<PhotoLibraryAccessPrivileges>(null);
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const allPhotosCache = useRef<MediaAsset[]>([]);
 
   const requestPermission = useCallback(async () => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    setPermissionStatus(status);
-    if (hasPhotoLibraryAccess(status)) warmUpPhotoCache();
-    return hasPhotoLibraryAccess(status);
+    const response = await MediaLibrary.requestPermissionsAsync();
+    const ap = parseAccessPrivileges(
+      response as MediaLibrary.PermissionResponse & {
+        accessPrivileges?: "all" | "limited" | "none";
+      }
+    );
+    setPermissionStatus(response.status);
+    setAccessPrivileges(ap);
+    if (hasPhotoLibraryAccess(response.status)) warmUpPhotoCache();
+    return hasFullPhotoLibraryAccess(response.status, ap);
   }, []);
 
   const checkPermission = useCallback(async () => {
-    const { status } = await MediaLibrary.getPermissionsAsync();
-    setPermissionStatus(status);
-    if (hasPhotoLibraryAccess(status)) warmUpPhotoCache();
-    return hasPhotoLibraryAccess(status);
+    const response = await MediaLibrary.getPermissionsAsync();
+    const ap = parseAccessPrivileges(
+      response as MediaLibrary.PermissionResponse & {
+        accessPrivileges?: "all" | "limited" | "none";
+      }
+    );
+    setPermissionStatus(response.status);
+    setAccessPrivileges(ap);
+    if (hasPhotoLibraryAccess(response.status)) warmUpPhotoCache();
+    return hasFullPhotoLibraryAccess(response.status, ap);
   }, []);
 
   const fetchAllPhotos = useCallback(async () => {
@@ -465,6 +504,7 @@ export function useMediaLibrary() {
 
   return {
     permissionStatus,
+    accessPrivileges,
     assets,
     isLoading,
     requestPermission,

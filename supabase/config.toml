@@ -46,8 +46,17 @@ verify_jwt = false
 [functions.shared-moment]
 verify_jwt = false
 
+[functions.open-app]
+verify_jwt = false
+
 [functions.process-threads]
 verify_jwt = false
 
 [functions.cron-threads-nightly]
+verify_jwt = false
+
+[functions.backfill-entry-metadata]
+verify_jwt = false
+
+[functions.canonicalize-people]
 verify_jwt = false

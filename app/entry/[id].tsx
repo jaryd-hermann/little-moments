@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, ScrollView, Pressable, Alert, useWindowDimensions } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Alert,
+  useWindowDimensions,
+  Modal,
+} from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,10 +23,11 @@ import * as Haptics from "expo-haptics";
 import { supabase } from "@/lib/supabase";
 import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
-import type { Entry } from "@/store/entryStore";
+import type { Entry, EntryMedia } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryMediaVideo } from "@/components/common/EntryMediaVideo";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
+import { EntryPinToggle } from "@/components/common/EntryPinToggle";
 
 function stripHtml(html: string): string {
   return html
@@ -45,6 +54,7 @@ export default function EntryDetailScreen() {
   const { entries, deleteEntry } = useEntries();
   const [entry, setEntry] = useState<Entry | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [fullScreenMedia, setFullScreenMedia] = useState<EntryMedia | null>(null);
   const peekDragY = useSharedValue(0);
 
   const timeline = useMemo(() => {
@@ -113,6 +123,7 @@ export default function EntryDetailScreen() {
             setEntry({
               ...data,
               media: data.entry_media ?? [],
+              is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
             } as Entry);
           }
         });
@@ -204,6 +215,9 @@ export default function EntryDetailScreen() {
         </Pressable>
         {entry.entry_type !== "chapter" && (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
+            {entry.entry_type === "moment" ? (
+              <EntryPinToggle entryId={entry.id} />
+            ) : null}
             <Pressable onPress={() => setShareModalVisible(true)}>
               <Ionicons
                 name="share-outline"
@@ -298,6 +312,33 @@ export default function EntryDetailScreen() {
           ) : null}
         </View>
 
+        {entry.media && entry.media.length > 0 ? (
+          <View style={{ marginTop: 24, gap: 12 }}>
+            {entry.media.map((m) => {
+              const mediaStyle = {
+                width: windowWidth - 40,
+                aspectRatio: 4 / 3,
+                borderRadius: 12,
+                backgroundColor: colors.surfaceSecondary,
+                alignSelf: "center" as const,
+              };
+              if (m.media_type === "video") {
+                return <EntryMediaVideo key={m.id} media={m} style={mediaStyle} />;
+              }
+              return (
+                <Pressable
+                  key={m.id}
+                  onPress={() => setFullScreenMedia(m)}
+                  accessibilityRole="button"
+                  accessibilityLabel="View full screen"
+                >
+                  <EntryMediaImage media={m} style={mediaStyle} />
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+
         {entry.entry_type === "crash_and_burn" &&
         entry.is_ai_enhanced &&
         entry.ai_enhanced_body ? (
@@ -370,24 +411,32 @@ export default function EntryDetailScreen() {
           </Text>
         )}
 
-        {entry.media && entry.media.length > 0 && (
-          <View style={{ marginTop: 24, gap: 12 }}>
-            {entry.media.map((m) => {
-              const mediaStyle = {
-                width: windowWidth - 40,
-                aspectRatio: 4 / 3,
-                borderRadius: 12,
-                backgroundColor: colors.surfaceSecondary,
-                alignSelf: "center" as const,
-              };
-              return m.media_type === "video" ? (
-                <EntryMediaVideo key={m.id} media={m} style={mediaStyle} />
-              ) : (
-                <EntryMediaImage key={m.id} media={m} style={mediaStyle} />
-              );
-            })}
-          </View>
-        )}
+        {entry.entry_type !== "chapter" ? (
+          <Pressable
+            onPress={() => setShareModalVisible(true)}
+            style={{
+              marginTop: 28,
+              height: 48,
+              borderRadius: 9999,
+              backgroundColor: colors.primary,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <Ionicons name="share-outline" size={18} color="#1A1A1A" />
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 14,
+                color: "#1A1A1A",
+              }}
+            >
+              Share with someone
+            </Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       {previousEntry && previousTitle ? (
@@ -446,6 +495,56 @@ export default function EntryDetailScreen() {
           </Animated.View>
         </GestureDetector>
       ) : null}
+
+      <Modal
+        visible={!!fullScreenMedia}
+        animationType="fade"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setFullScreenMedia(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: "#000000" }}>
+          <Pressable
+            onPress={() => setFullScreenMedia(null)}
+            hitSlop={12}
+            style={{
+              position: "absolute",
+              right: 16,
+              top: insets.top + 8,
+              zIndex: 2,
+              width: 44,
+              height: 44,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Close full screen"
+          >
+            <Ionicons name="close" size={32} color="#FFFFFF" />
+          </Pressable>
+          <View
+            style={{
+              flex: 1,
+              paddingTop: insets.top + 52,
+              paddingBottom: insets.bottom + 16,
+              paddingHorizontal: 12,
+            }}
+          >
+            {fullScreenMedia?.media_type === "video" ? (
+              <EntryMediaVideo
+                media={fullScreenMedia}
+                style={{ flex: 1, borderRadius: 8 }}
+              />
+            ) : fullScreenMedia ? (
+              <EntryMediaImage
+                media={fullScreenMedia}
+                contentFit="contain"
+                style={{ flex: 1, width: "100%" }}
+              />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
 
       <ShareMomentModal
         visible={shareModalVisible}

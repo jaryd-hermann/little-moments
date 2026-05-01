@@ -32,6 +32,7 @@ export function useEntries() {
       const mapped = data.map((e) => ({
         ...e,
         media: e.entry_media ?? [],
+        is_pinned: Boolean((e as { is_pinned?: boolean }).is_pinned),
       })) as Entry[];
       const prev = useEntryStore.getState().entries;
       const serverIds = new Set(mapped.map((e) => e.id));
@@ -59,7 +60,7 @@ export function useEntries() {
     async (
       entryData: Omit<
         Entry,
-        "id" | "user_id" | "created_at" | "updated_at" | "media"
+        "id" | "user_id" | "created_at" | "updated_at" | "media" | "is_pinned"
       >
     ) => {
       if (!userId) throw new Error("Not authenticated");
@@ -71,7 +72,10 @@ export function useEntries() {
         .single();
 
       if (error) throw error;
-      addEntry(data as Entry);
+      addEntry({
+        ...(data as Entry),
+        is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
+      });
       await updateStreakAfterEntry(userId);
       void supabase.functions.invoke("notify-badges", { body: {} }).catch(
         () => {}
@@ -79,7 +83,10 @@ export function useEntries() {
       void supabase.functions
         .invoke("process-threads", { body: { entry_id: data.id } })
         .catch(() => {});
-      return data as Entry;
+      return {
+        ...(data as Entry),
+        is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
+      };
     },
     [userId]
   );

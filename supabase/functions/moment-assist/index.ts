@@ -1,4 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
+import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 import { requireAuthUser } from "../_shared/requireAuthUser.ts";
 
 const anthropic = new Anthropic({
@@ -57,6 +58,46 @@ function tryParseJSON(text: string): Record<string, unknown> | null {
   }
 }
 
+/** Recover a JSON string value for "key" when full JSON.parse fails (truncation, extra prose). */
+function parseJsonStringField(raw: string, key: string): string | null {
+  const re = new RegExp(
+    `"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`,
+    "s",
+  );
+  const m = raw.match(re);
+  if (!m?.[1]) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`) as string;
+  } catch {
+    return m[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+}
+
+function fallbackTitleFromRaw(raw: string): string {
+  const words = raw
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6);
+  if (words.length === 0) return "A moment";
+  const t = words.join(" ");
+  return t.length > 56 ? `${t.slice(0, 53)}…` : t;
+}
+
+function fallbackAssembleBody(
+  raw_text: string,
+  follow_up_answer: string | null | undefined,
+): string {
+  const parts = [raw_text?.trim(), follow_up_answer?.trim()].filter(
+    (p): p is string => Boolean(p),
+  );
+  return parts.join("\n\n") || raw_text?.trim() || "";
+}
+
 Deno.serve(async (req) => {
   const auth = await requireAuthUser(req);
   if (!auth.ok) return auth.response;
@@ -83,17 +124,19 @@ Deno.serve(async (req) => {
       const userMessage = `${contextLine}\n\nHere's what the user said:\n\n${raw_text}\n\n${FOLLOW_UP_INSTRUCTION}`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 256,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userMessage }],
       });
 
-      const text =
-        response.content[0].type === "text" ? response.content[0].text : "";
+      const text = anthropicAssistantText(response.content).trim();
+      const question =
+        text ||
+        "What is one small detail from that moment — a sound, a face, or where you were standing — that you still remember clearly?";
 
       return new Response(
-        JSON.stringify({ question: text.trim() }),
+        JSON.stringify({ question }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
@@ -110,19 +153,17 @@ Deno.serve(async (req) => {
 
       const userMessage = `${contextLine}\n\nOriginal response:\n${raw_text}\n\nFollow-up answer:\n${follow_up_answer ?? "(skipped)"}\n\n${ASSEMBLE_INSTRUCTION}`;
 
+      // Claude Sonnet 4.6+ rejects trailing assistant "prefill" messages; end with user only.
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 512,
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
         system: SYSTEM_PROMPT,
-        messages: [
-          { role: "user", content: userMessage },
-          { role: "assistant", content: "{" },
-        ],
+        messages: [{ role: "user", content: userMessage }],
       });
 
-      const rawText =
-        response.content[0].type === "text" ? response.content[0].text : "";
-      const fullText = `{${rawText}`;
+      const fullText = stripCodeFences(
+        anthropicAssistantText(response.content).trim(),
+      );
 
       const parsed = tryParseJSON(fullText);
       if (
@@ -131,15 +172,31 @@ Deno.serve(async (req) => {
         typeof parsed.body === "string"
       ) {
         return new Response(
-          JSON.stringify({ title: parsed.title, body: parsed.body }),
+          JSON.stringify({
+            title: parsed.title.trim(),
+            body: parsed.body.trim(),
+          }),
           { headers: { "Content-Type": "application/json" } },
         );
       }
 
+      const extractedTitle = parseJsonStringField(fullText, "title");
+      const extractedBody = parseJsonStringField(fullText, "body");
+      if (extractedTitle?.trim() && extractedBody?.trim()) {
+        return new Response(
+          JSON.stringify({
+            title: extractedTitle.trim(),
+            body: extractedBody.trim(),
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const fallbackBody = fallbackAssembleBody(raw_text, follow_up_answer);
       return new Response(
         JSON.stringify({
-          title: "A moment",
-          body: stripCodeFences(fullText),
+          title: fallbackTitleFromRaw(raw_text ?? ""),
+          body: fallbackBody || stripCodeFences(fullText),
         }),
         { headers: { "Content-Type": "application/json" } },
       );

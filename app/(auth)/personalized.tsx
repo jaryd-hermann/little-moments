@@ -25,14 +25,14 @@ interface PersonalizedCopy {
 function getCopyForTags(tags: string[]): PersonalizedCopy {
   const set = new Set(tags);
 
-  if (set.has("legacy")) {
+  if (set.has("family") || set.has("legacy")) {
     return {
       letter:
-        "You want the people who matter to know who you really are — not the highlight reel, but the real moments. The Tuesday nights, the little things your kids said, the details that make your story yours.\n\nThat's exactly what Little Moments is for.\n\nEvery day, you'll get a simple starting point — a word, a photo, or a question. You speak or type for two minutes, and Ellie, your memory guide, helps you capture the moment.\n\nOver time, these moments become chapters. A real record of your life, written in your words.",
+        "You want the people who matter to know who you really are — not the highlight reel, but the real moments. The Tuesday nights, the little things your family said, the details that make your story yours.\n\nThat's exactly what Little Moments is for.\n\nEvery day, you'll get a simple starting point — a word, a photo, or a question. You speak or type for two minutes, and Ellie, your memory guide, helps you capture the moment.\n\nOver time, these moments become chapters. A real record of your life, written in your words.",
     };
   }
 
-  if (set.has("time") || set.has("memory")) {
+  if (set.has("time") || set.has("memory") || set.has("self")) {
     return {
       letter:
         "You've noticed it — days blurring together, weeks disappearing before you've had a chance to hold onto them. You're not losing your memory. You're just not catching the moments before they slip away.\n\nThat's what Little Moments changes.\n\nEvery day, you'll get a simple starting point — a word, a photo, or a question. Two minutes is all it takes. Ellie, your memory guide, will help you pull out the details that matter.\n\nThe more moments you capture, the more connections we find. And once a month, we turn it all into a chapter of your life.",

@@ -15,6 +15,7 @@ import { sendExpoPushTickets } from "../_shared/expo-push.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
 import { observationPlainPreview } from "../_shared/thread-text.ts";
+import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 
 const ANDROID_CHANNEL = "default";
 const MIN_SIMILARITY = 0.78;
@@ -163,20 +164,14 @@ Deno.serve(async (req) => {
           const userMessage = `ANCHOR ENTRY (id: ${entry.id}, date: ${entry.entry_date}):\nTitle: ${entry.title ?? "(untitled)"}\n${entryText}\n\nPAST ENTRIES:\n${candidateBlock}`;
 
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-4-6",
             max_tokens: 1400,
             system: BATCH_SYSTEM_PROMPT,
-            messages: [
-              { role: "user", content: userMessage },
-              { role: "assistant", content: "{" },
-            ],
+            messages: [{ role: "user", content: userMessage }],
           });
 
-          const raw =
-            response.content[0].type === "text"
-              ? response.content[0].text
-              : "";
-          const result = tryParseJSON(`{${raw}`);
+          const raw = anthropicAssistantText(response.content).trim();
+          const result = tryParseJSON(raw);
 
           if (!result || result.has_connection !== true) continue;
 

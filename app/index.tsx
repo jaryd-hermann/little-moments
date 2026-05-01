@@ -6,6 +6,7 @@ import type { Profile } from "@/store/authStore";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 
 export default function IndexRedirect() {
   const { colors } = useTheme();
@@ -28,7 +29,10 @@ export default function IndexRedirect() {
       .single()
       .then(({ data: profile }) => {
         const p = profile as Profile | null;
-        if (p) setProfile(p);
+        if (p) {
+          setProfile(p);
+          applyNotificationTimeFromProfile(p.notification_time);
+        }
         routeAfterAuth(p);
       });
   }, [user, isLoading]);

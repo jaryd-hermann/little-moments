@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
     const { race_text, word_of_day } = await req.json();
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: `You analyze "Crash & Burn" freewriting races. The user wrote continuously for 2+ minutes starting from a single word. Your job is to find the story seeds — specific memories, people, or moments that surfaced. Be warm and observant. Return JSON with "message" (your observation) and "questions" (2-3 questions about the specific memories you detected).`,
       messages: [

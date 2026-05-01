@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { View, Text, Pressable, Linking, ImageBackground } from "react-native";
+import { View, Text, Pressable, ImageBackground } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { usePostHog } from "posthog-react-native";
@@ -9,11 +9,13 @@ import { useTheme } from "@/hooks/useTheme";
 import { SpinWheel } from "@/components/rewind/SpinWheel";
 import { DiceButton } from "@/components/rewind/DiceButton";
 import { PhotoSlideshow } from "@/components/rewind/PhotoSlideshow";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import {
   useMediaLibrary,
   MediaAsset,
   pickRandomPhotoFromLibrary,
   mergePhotoIntoSortedDesc,
+  hasFullPhotoLibraryAccess,
 } from "@/hooks/useMediaLibrary";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
@@ -34,7 +36,12 @@ export default function RewindScreen() {
     requestPermission,
     checkPermission,
     fetchAllPhotos,
+    accessPrivileges,
   } = useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
+    checkPermission,
+    requestPermission,
+  });
 
   const [allPhotos, setAllPhotos] = useState<MediaAsset[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -62,10 +69,10 @@ export default function RewindScreen() {
   }, []);
 
   useEffect(() => {
-    if (permissionStatus === "granted") {
+    if (hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges)) {
       loadPhotos();
     }
-  }, [permissionStatus]);
+  }, [permissionStatus, accessPrivileges]);
 
   useEffect(() => {
     allPhotosRef.current = allPhotos;
@@ -142,7 +149,7 @@ export default function RewindScreen() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      if (permissionStatus === "granted") {
+      if (hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges)) {
         void pickRandomPhotoFromLibrary().then((asset) => {
           if (cancelled || !asset) {
             if (!cancelled) setRewindComposeContext(null, null);
@@ -166,7 +173,7 @@ export default function RewindScreen() {
         cancelled = true;
         setRewindComposeContext(null, null);
       };
-    }, [permissionStatus, posthog, setRewindComposeContext])
+    }, [permissionStatus, accessPrivileges, posthog, setRewindComposeContext])
   );
 
   const handleMakeMoment = () => {
@@ -183,9 +190,10 @@ export default function RewindScreen() {
   /** Reserve space for floating CustomTabBar (~72px) + safe area so CTAs stay visible */
   const permissionGateBottomPad = insets.bottom + 108;
 
-  if (permissionStatus !== "granted") {
+  if (!hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges)) {
     return (
       <View style={{ flex: 1, backgroundColor: "#000000" }}>
+        {fullPhotoAccessModal}
         <ImageBackground
           source={REWIND_BG}
           style={{
@@ -207,55 +215,35 @@ export default function RewindScreen() {
               zIndex: 2,
             }}
           >
-          {permissionStatus === "denied" ? (
-            <Pressable
-              onPress={() => Linking.openSettings()}
+          <Pressable
+            onPress={() => {
+              void ensureFullPhotoAccess().then((ok) => {
+                if (ok) void checkPermission();
+              });
+            }}
+            style={{
+              marginTop: 16,
+              borderRadius: 9999,
+              backgroundColor: colors.primary,
+              borderWidth: 2,
+              borderColor: "#000000",
+              paddingHorizontal: 28,
+              paddingVertical: 14,
+            }}
+          >
+            <Text
               style={{
-                marginTop: 16,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                borderWidth: 2,
-                borderColor: "#000000",
-                paddingHorizontal: 28,
-                paddingVertical: 14,
+                fontFamily: "Roboto-Medium",
+                fontSize: 15,
+                color: "#000000",
+                letterSpacing: 0.5,
               }}
             >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: "#000000",
-                  letterSpacing: 0.5,
-                }}
-              >
-                Open Settings
-              </Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              onPress={requestPermission}
-              style={{
-                marginTop: 16,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                borderWidth: 2,
-                borderColor: "#000000",
-                paddingHorizontal: 28,
-                paddingVertical: 14,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: "#000000",
-                  letterSpacing: 0.5,
-                }}
-              >
-                Grant Access
-              </Text>
-            </Pressable>
-          )}
+              {permissionStatus === "denied" || accessPrivileges === "limited"
+                ? "Open Settings"
+                : "Grant access"}
+            </Text>
+          </Pressable>
           </View>
         </ImageBackground>
       </View>
@@ -264,6 +252,7 @@ export default function RewindScreen() {
 
   return (
     <View className="flex-1 bg-black">
+      {fullPhotoAccessModal}
       {/* Full-bleed background photo */}
       <PhotoSlideshow uri={currentPhoto?.uri ?? null} />
 

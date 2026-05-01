@@ -16,6 +16,11 @@ export type AfterSaveStats = {
   totalMoments: number;
 };
 
+/** Passed to `afterSaveNode` so post-save UI can target the new entry. */
+export type AfterSaveContext = {
+  savedEntryId: string | null;
+};
+
 export function getStreakDisplayFromStores(): AfterSaveStats {
   const entries = useEntryStore.getState().entries;
   const profile = useAuthStore.getState().profile;

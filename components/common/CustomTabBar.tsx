@@ -85,13 +85,16 @@ export function CustomTabBar({
                     }
                   }}
                   style={{
-                    width: 48,
-                    height: 48,
+                    minHeight: 48,
+                    paddingLeft: 14,
+                    paddingRight: 18,
                     borderRadius: 9999,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
                     backgroundColor: colors.primary,
                     borderWidth: 2,
                     borderColor: theme === "dark" ? "#FFFFFF" : "#1A1A1A",
-                    alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
@@ -100,6 +103,15 @@ export function CustomTabBar({
                     style={{ width: 26, height: 26 }}
                     resizeMode="contain"
                   />
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontFamily: "Roboto-Medium",
+                      color: "#1A1A1A",
+                    }}
+                  >
+                    Add
+                  </Text>
                 </Pressable>
               </View>
             );

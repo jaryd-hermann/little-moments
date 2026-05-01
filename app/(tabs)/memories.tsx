@@ -28,6 +28,8 @@ import type { ChapterRecord } from "@/lib/chapters";
 import { chapterMonthName } from "@/lib/chapters";
 import type { Entry } from "@/store/entryStore";
 import { CapsuleStatBar, type CapsuleFilter } from "@/components/memories/CapsuleStatBar";
+import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
+import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
 import { useThreads } from "@/hooks/useThreads";
 import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 
@@ -42,8 +44,16 @@ export default function MemoriesScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchQuery, setSearchQuery] = useState("");
   const [capsuleFilter, setCapsuleFilter] = useState<CapsuleFilter>("all");
+  const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
+  const togglePinnedOnly = useCapsuleFlipbookStore((s) => s.togglePinnedOnly);
   const { totalConnections, threads, fetchAll: fetchThreadData } = useThreads();
   const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+
+  const pinnedMomentCount = useMemo(
+    () =>
+      entries.filter((e) => e.entry_type === "moment" && e.is_pinned).length,
+    [entries]
+  );
 
   const threadsForCapsule = useMemo(() => {
     if (__DEV__ && dummyThreadEnabled) {
@@ -136,6 +146,7 @@ export default function MemoriesScreen() {
       is_ai_enhanced: false,
       streak_day_number: null,
       chapter_id: dummyChapter.id,
+      is_pinned: false,
       created_at: dummyChapter.created_at,
       updated_at: dummyChapter.updated_at,
     };
@@ -217,7 +228,11 @@ export default function MemoriesScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <View
         className="px-5 pt-2 pb-0"
-        style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
       >
         <Text
           style={{
@@ -228,6 +243,41 @@ export default function MemoriesScreen() {
         >
           Capsule
         </Text>
+        <Pressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            togglePinnedOnly();
+          }}
+          hitSlop={8}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            paddingVertical: 8,
+            paddingHorizontal: 12,
+            borderRadius: 9999,
+            borderWidth: 1.5,
+            borderColor: pinnedOnly
+              ? "rgba(0,0,0,0.14)"
+              : "rgba(0,0,0,0.12)",
+            backgroundColor: pinnedOnly ? colors.primary : "#FFFFFF",
+          }}
+        >
+          <ThumbtackIcon
+            size={17}
+            color="#000000"
+            weight={pinnedOnly ? "solid" : "regular"}
+          />
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 13,
+              color: "#1A1A1A",
+            }}
+          >
+            {pinnedMomentCount} Pinned
+          </Text>
+        </Pressable>
       </View>
 
       <View className="px-5">
@@ -254,42 +304,95 @@ export default function MemoriesScreen() {
         />
       </View>
 
-      <Pressable
-        onPress={() => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-          posthog.capture("capsule_flipbook_opened", { entry_count: entries.length });
-          setViewMode("flipbook");
-        }}
+      <View
         style={{
           position: "absolute",
           bottom: 120,
           right: 20,
           flexDirection: "row",
-          alignItems: "center",
-          gap: 6,
-          backgroundColor: colors.text,
-          paddingVertical: 12,
-          paddingHorizontal: 16,
-          borderRadius: 28,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.15,
-          shadowRadius: 8,
-          elevation: 4,
+          gap: 10,
         }}
       >
-        <Ionicons name="swap-horizontal" size={16} color={colors.background} />
-        <Text
+        <Pressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+            posthog.capture("capsule_brain_graph_opened", {
+              entry_count: entries.length,
+            });
+            router.push("/threads?tab=graph");
+          }}
           style={{
-            fontFamily: "Roboto-Medium",
-            fontSize: 13,
-            color: colors.background,
-            letterSpacing: 0.3,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            backgroundColor: colors.text,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 28,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.15,
+            shadowRadius: 8,
+            elevation: 4,
           }}
         >
-          Flipbook
-        </Text>
-      </Pressable>
+          <Ionicons
+            name="git-network-outline"
+            size={16}
+            color={colors.background}
+          />
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 13,
+              color: colors.background,
+              letterSpacing: 0.3,
+            }}
+          >
+            Brain Graph
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
+            posthog.capture("capsule_flipbook_opened", {
+              entry_count: entries.length,
+            });
+            setViewMode("flipbook");
+          }}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            backgroundColor: colors.text,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 28,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.15,
+            shadowRadius: 8,
+            elevation: 4,
+          }}
+        >
+          <Ionicons
+            name="swap-horizontal"
+            size={16}
+            color={colors.background}
+          />
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 13,
+              color: colors.background,
+              letterSpacing: 0.3,
+            }}
+          >
+            Flipbook
+          </Text>
+        </Pressable>
+      </View>
 
       <ChapterStoryViewer
         visible={!!chapterViewerChapter}

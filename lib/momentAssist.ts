@@ -24,13 +24,33 @@ interface AssembleResponse {
   body: string;
 }
 
+async function invokeMomentAssist<T>(body: Record<string, unknown>) {
+  const invokeOnce = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const jwt = session?.access_token;
+    return supabase.functions.invoke<T>("moment-assist", {
+      body,
+      ...(jwt ? { headers: { Authorization: `Bearer ${jwt}` } } : {}),
+    });
+  };
+
+  let { data, error } = await invokeOnce();
+  if (error) {
+    await supabase.auth.refreshSession();
+    ({ data, error } = await invokeOnce());
+  }
+  return { data, error };
+}
+
 export async function callMomentFollowUp(
   request: FollowUpRequest
 ): Promise<FollowUpResponse> {
-  const { data, error } = await supabase.functions.invoke<FollowUpResponse>(
-    "moment-assist",
-    { body: { stage: "follow_up", ...request } }
-  );
+  const { data, error } = await invokeMomentAssist<FollowUpResponse>({
+    stage: "follow_up",
+    ...request,
+  });
 
   if (error) throw error;
   if (!data) throw new Error("moment-assist returned no data");
@@ -40,10 +60,10 @@ export async function callMomentFollowUp(
 export async function callMomentAssemble(
   request: AssembleRequest
 ): Promise<AssembleResponse> {
-  const { data, error } = await supabase.functions.invoke<AssembleResponse>(
-    "moment-assist",
-    { body: { stage: "assemble", ...request } }
-  );
+  const { data, error } = await invokeMomentAssist<AssembleResponse>({
+    stage: "assemble",
+    ...request,
+  });
 
   if (error) throw error;
   if (!data) throw new Error("moment-assist returned no data");

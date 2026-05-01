@@ -27,6 +27,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 
 const WORDMARK = require("@/assets/images/wordmark-little-moments.png");
 
@@ -115,6 +116,9 @@ export default function SignInScreen() {
     }
 
     setProfile(profile);
+    if (profile) {
+      applyNotificationTimeFromProfile(profile.notification_time);
+    }
 
     if (
       profile?.created_at &&
@@ -174,7 +178,18 @@ export default function SignInScreen() {
               paddingHorizontal: 16,
             }}
           >
-            Capture a lifetime of memories, starting with a single word.
+            Your 2-minute daily journalling habit without any blank pages.
+            {"\n"}
+            <Text
+              style={{
+                fontFamily: "LibreBaskerville-Italic",
+                fontSize: 16,
+                lineHeight: 24,
+                color: "#FFA946",
+              }}
+            >
+              This one sticks.
+            </Text>
           </Text>
         </View>
         {/* Benefit carousel commented out

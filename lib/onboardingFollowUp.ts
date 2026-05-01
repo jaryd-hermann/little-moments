@@ -4,16 +4,20 @@ export type ResonanceTag =
   | "habit"
   | "presence"
   | "memory"
-  | "legacy";
+  | "legacy"
+  | "self"
+  | "family";
 
 export type FollowUpScreenKey =
   | "time_storytelling"
   | "storytelling"
   | "legacy"
+  | "family"
   | "memory"
   | "time"
   | "presence"
-  | "habit";
+  | "habit"
+  | "self";
 
 export interface FollowUpScreenCopy {
   heading: string;
@@ -94,10 +98,37 @@ const COPY: Record<FollowUpScreenKey, FollowUpScreenCopy> = {
     ],
   },
   legacy: {
-    heading: "Your best stories are already happening. You're just not seeing them yet.",
+    heading: "Your memories become a gift when they're captured.",
     subtext:
-      "The moments that make people lean in aren't the dramatic ones — they're the small, true ones. Little Moments trains you to spot them every single day.",
-    checks: STORYTELLING_CHECKS,
+      "Family doesn't just inherit photos — they inherit stories, voice, and meaning. A few minutes a day helps preserve the life only you can describe.",
+    checks: [
+      "Create a memory archive your family can return to for years",
+      "Preserve the small details that disappear fastest",
+      "Turn everyday moments into stories worth passing down",
+      "A tiny daily habit that builds a lasting family record",
+    ],
+  },
+  family: {
+    heading: "Your memories become a gift when they're captured.",
+    subtext:
+      "Family doesn't just inherit photos — they inherit stories, voice, and meaning. A few minutes a day helps preserve the life only you can describe.",
+    checks: [
+      "Create a memory archive your family can return to for years",
+      "Preserve the small details that disappear fastest",
+      "Turn everyday moments into stories worth passing down",
+      "A tiny daily habit that builds a lasting family record",
+    ],
+  },
+  self: {
+    heading: "Build a memory archive that's for you first.",
+    subtext:
+      "Most moments fade because no one captures them in time. Little Moments helps you quickly record the details that matter so your own life stays vivid and searchable.",
+    checks: [
+      "Capture what happened before it blurs together",
+      "Build a personal archive you can revisit anytime",
+      "Reconnect with moments you would have forgotten",
+      "Just 5 minutes a day to preserve your own story",
+    ],
   },
 };
 
@@ -109,7 +140,9 @@ export function resolveFollowUpScreenKey(tags: ResonanceTag[]): FollowUpScreenKe
 
   const order: FollowUpScreenKey[] = [
     "storytelling",
+    "family",
     "legacy",
+    "self",
     "memory",
     "time",
     "presence",

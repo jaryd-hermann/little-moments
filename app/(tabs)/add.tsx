@@ -1,3 +1,5 @@
+import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
+import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { ChoiceCards } from "@/components/ellie/ChoiceCards";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow, type InputMethod } from "@/components/ellie/EllieChatFlow";
@@ -5,11 +7,15 @@ import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { CRASH_BURN_WORDS } from "@/constants/words";
 import { useAuth } from "@/hooks/useAuth";
 import { useEntries } from "@/hooks/useEntries";
-import { useMediaLibrary } from "@/hooks/useMediaLibrary";
-import { type AfterSaveStats } from "@/hooks/useStreak";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
+import { hasFullPhotoLibraryAccess, useMediaLibrary } from "@/hooks/useMediaLibrary";
+import {
+  type AfterSaveStats,
+  type AfterSaveContext,
+} from "@/hooks/useStreak";
+import { SlideToPinMoment } from "@/components/common/SlideToPinMoment";
 import { useTheme } from "@/hooks/useTheme";
-import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
-import { ShareMomentModal } from "@/components/common/ShareMomentModal";
+import { useThreads } from "@/hooks/useThreads";
 import { shareInvite } from "@/lib/inviteShare";
 import type { PromptType } from "@/lib/momentAssist";
 import { uploadEntryMedia } from "@/lib/storage";
@@ -17,26 +23,84 @@ import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import type { Entry } from "@/store/entryStore";
 import { useTabBarStore } from "@/store/tabBarStore";
-import { useThreads } from "@/hooks/useThreads";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import { router, useFocusEffect } from "expo-router";
 import { usePostHog } from "posthog-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const REWIND_USED_KEY = "rewind_flow_used";
 
 type AddPhase = "choose" | "flow" | "saved";
 
+/** Add-tab photo flows only: random roll vs user-picked from gallery first. */
+type AddTabPhotoMode = "random" | "library";
+
 const CHOICES = [
-  { id: "word", label: "Give me a word", subtitle: "A single word to unlock a memory", icon: "text-outline" as const },
-  { id: "photo", label: "Show me a photo", subtitle: "A photo from your camera roll to talk about", icon: "image-outline" as const },
+  { id: "word", label: "Give me a random word", subtitle: "A single word to unlock a memory", icon: "text-outline" as const },
+  {
+    id: "photo",
+    label: "Show me a photo I took",
+    subtitle: "Add stories to your photos for a richer album",
+    icon: "image-outline" as const,
+  },
+  {
+    id: "photo_pick",
+    label: "Choose my own photo",
+    subtitle: "Pick any picture, then tell the story behind it",
+    icon: "camera-outline" as const,
+  },
   { id: "freetext", label: "Add my own moment", subtitle: "Share any moment on your mind right now", icon: "chatbubble-outline" as const },
 ];
+
+async function pickPhotoFromLibrary(): Promise<{ uri: string; creationTime?: number } | null> {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) {
+    Alert.alert(
+      "Photo access needed",
+      "Allow photo library access to choose a picture for this moment.",
+      perm.canAskAgain === false
+        ? [
+            { text: "Not now", style: "cancel" as const },
+            { text: "Open Settings", onPress: () => void Linking.openSettings() },
+          ]
+        : [{ text: "OK" }],
+    );
+    return null;
+  }
+  try {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: false,
+      quality: 1,
+    });
+    if (result.canceled || result.assets.length === 0) return null;
+    const asset = result.assets[0];
+    const uri = asset.uri;
+    let creationTime: number | undefined;
+    if (asset.assetId) {
+      try {
+        const info = await MediaLibrary.getAssetInfoAsync(asset.assetId);
+        if (typeof info.creationTime === "number") {
+          creationTime = info.creationTime;
+        }
+      } catch {
+        // Date badge optional when metadata is unavailable
+      }
+    }
+    return { uri, creationTime };
+  } catch (err) {
+    console.error("[AddScreen] Gallery error:", err);
+    Alert.alert("Could not open photos", "Try again or pick a different image.");
+    return null;
+  }
+}
 
 function getRandomWord(): string {
   return CRASH_BURN_WORDS[Math.floor(Math.random() * CRASH_BURN_WORDS.length)];
@@ -52,7 +116,12 @@ export default function AddScreen() {
     requestPermission,
     checkPermission,
     permissionStatus,
+    accessPrivileges,
   } = useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
+    checkPermission,
+    requestPermission,
+  });
   const { totalConnections } = useThreads();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const addResetTrigger = useTabBarStore((s) => s.addResetTrigger);
@@ -71,6 +140,7 @@ export default function AddScreen() {
   const [promptValue, setPromptValue] = useState("");
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
+  const [addTabPhotoMode, setAddTabPhotoMode] = useState<AddTabPhotoMode | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(true);
   const mountedRef = useRef(false);
@@ -97,6 +167,7 @@ export default function AddScreen() {
       setPromptValue("");
       setPhotoUri(undefined);
       setPhotoDate(undefined);
+      setAddTabPhotoMode(null);
       setIsShuffling(false);
       setTabBarHidden(false);
       setLastSavedEntryId(null);
@@ -115,6 +186,7 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setAddTabPhotoMode(null);
     setIsShuffling(false);
     setTabBarHidden(false);
     setLastSavedEntryId(null);
@@ -126,10 +198,12 @@ export default function AddScreen() {
       posthog.capture("add_tab_choice", { choice: id });
 
       if (id === "word") {
+        setAddTabPhotoMode(null);
         setPromptType("word");
         setPromptValue(getRandomWord());
         setPhase("flow");
       } else if (id === "photo") {
+        setAddTabPhotoMode("random");
         setPromptType("photo");
         setPromptValue("");
         setPhotoUri(undefined);
@@ -146,13 +220,25 @@ export default function AddScreen() {
             })
             .catch(() => {});
         }
+      } else if (id === "photo_pick") {
+        const ok = await ensureFullPhotoAccess();
+        if (!ok) return;
+        const picked = await pickPhotoFromLibrary();
+        if (!picked) return;
+        setAddTabPhotoMode("library");
+        setPromptType("photo");
+        setPromptValue("");
+        setPhotoUri(picked.uri);
+        setPhotoDate(picked.creationTime);
+        setPhase("flow");
       } else {
+        setAddTabPhotoMode(null);
         setPromptType("freetext");
         setPromptValue("What's the little moment you want to capture?");
         setPhase("flow");
       }
     },
-    [getRandomAsset, checkPermission, posthog]
+    [getRandomAsset, checkPermission, posthog, ensureFullPhotoAccess]
   );
 
   const handleFlowStarted = useCallback((inputMethod: InputMethod) => {
@@ -160,12 +246,21 @@ export default function AddScreen() {
     posthog.capture("add_flow_started", {
       prompt_type: promptType,
       input_method: inputMethod,
+      ...(promptType === "photo" && addTabPhotoMode
+        ? { photo_add_mode: addTabPhotoMode }
+        : {}),
     });
     setTabBarHidden(true);
-  }, [setTabBarHidden, posthog, promptType]);
+  }, [setTabBarHidden, posthog, promptType, addTabPhotoMode]);
 
   const handleComplete = useCallback(
-    async (entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }) => {
+    async (entry: {
+      title: string;
+      body: string;
+      rawText: string;
+      attachedPhotoUri?: string;
+      analytics?: any;
+    }) => {
       const today = format(new Date(), "yyyy-MM-dd");
       const saved = await saveEntry({
         title: entry.title,
@@ -190,6 +285,10 @@ export default function AddScreen() {
         source: "add_tab",
         prompt_type: promptType,
         input_method: inputMethodRef.current,
+        ...(promptType === "photo" && addTabPhotoMode
+          ? { photo_add_mode: addTabPhotoMode }
+          : {}),
+        ...entry.analytics,
       });
 
       if (isFirstTime) {
@@ -227,8 +326,9 @@ export default function AddScreen() {
       }
 
       await fetchEntries(saved?.id);
+      return saved ?? null;
     },
-    [saveEntry, promptType, promptValue, posthog, isFirstTime, fetchEntries, userId]
+    [saveEntry, promptType, promptValue, posthog, isFirstTime, fetchEntries, userId, addTabPhotoMode]
   );
 
   const handlePhotoShuffle = useCallback(async () => {
@@ -245,13 +345,17 @@ export default function AddScreen() {
     }
   }, [getRandomAsset]);
 
+  const handlePhotoReplaceFromLibrary = useCallback(async () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const picked = await pickPhotoFromLibrary();
+    if (!picked) return;
+    setPhotoUri(picked.uri);
+    setPhotoDate(picked.creationTime);
+  }, []);
+
   const handleRequestPhotoAccess = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (permissionStatus === "denied") {
-      Linking.openSettings();
-      return;
-    }
-    const ok = await requestPermission();
+    const ok = await ensureFullPhotoAccess();
     if (ok) {
       const photo = await getRandomAsset();
       if (photo) {
@@ -260,17 +364,12 @@ export default function AddScreen() {
       }
     }
     await checkPermission();
-  }, [
-    permissionStatus,
-    requestPermission,
-    getRandomAsset,
-    checkPermission,
-  ]);
+  }, [ensureFullPhotoAccess, getRandomAsset, checkPermission]);
 
   const addPhotoPermissionBlocked =
     promptType === "photo" &&
     !photoUri &&
-    (permissionStatus === "denied" || permissionStatus === "undetermined");
+    !hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
 
   const handleReturnToStart = useCallback(() => {
     setTabBarHidden(false);
@@ -279,6 +378,7 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setAddTabPhotoMode(null);
   }, [setTabBarHidden]);
 
   const handleExitFlow = useCallback(() => {
@@ -288,10 +388,11 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setAddTabPhotoMode(null);
   }, [setTabBarHidden]);
 
   const afterSaveNode = useCallback(
-    (stats: AfterSaveStats) => {
+    (stats: AfterSaveStats, ctx: AfterSaveContext) => {
       const goCapsule = () => {
         setTabBarHidden(false);
         router.replace("/(tabs)/memories");
@@ -383,6 +484,9 @@ export default function AddScreen() {
                 style={{ marginTop: 12, marginBottom: 22 }}
               />
               <EllieMessage content="If not interested now, please continue with your today!" />
+              {ctx.savedEntryId ? (
+                <SlideToPinMoment entryId={ctx.savedEntryId} />
+              ) : null}
               <View style={{ gap: 10, marginTop: 12 }}>
                 {shareButton}
                 {doneButton}
@@ -391,6 +495,9 @@ export default function AddScreen() {
           ) : (
             <>
               <EllieMessage content="Great job logging more moments. Your Capsule is growing and we're connecting more dots for you. Where to next?" />
+              {ctx.savedEntryId ? (
+                <SlideToPinMoment entryId={ctx.savedEntryId} />
+              ) : null}
               <View style={{ gap: 10, marginTop: 12 }}>
                 {shareButton}
                 <Pressable
@@ -430,6 +537,7 @@ export default function AddScreen() {
   if (phase === "choose") {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        {fullPhotoAccessModal}
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 20, paddingTop: 24 }}
@@ -451,6 +559,7 @@ export default function AddScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+      {fullPhotoAccessModal}
       {/* X button to exit flow */}
       <View
         style={{
@@ -482,13 +591,16 @@ export default function AddScreen() {
         promptValue={promptValue}
         photoUri={photoUri}
         photoDate={photoDate}
-        isShufflingPhoto={isShuffling}
         onComplete={handleComplete}
         onPhotoShuffle={
           promptType === "photo" && !addPhotoPermissionBlocked
-            ? handlePhotoShuffle
+            ? addTabPhotoMode === "library"
+              ? handlePhotoReplaceFromLibrary
+              : handlePhotoShuffle
             : undefined
         }
+        photoControlVariant={addTabPhotoMode === "library" ? "change" : "shuffle"}
+        isShufflingPhoto={addTabPhotoMode === "library" ? false : isShuffling}
         onFlowStarted={handleFlowStarted}
         afterSaveNode={afterSaveNode}
         extraGuidance={
@@ -499,8 +611,12 @@ export default function AddScreen() {
         photoPermissionBlocked={addPhotoPermissionBlocked}
         onRequestPhotoAccess={addPhotoPermissionBlocked ? handleRequestPhotoAccess : undefined}
         photoAccessButtonLabel={
-          permissionStatus === "denied" ? "Open Settings" : "Grant photo access"
+          permissionStatus === "denied" || accessPrivileges === "limited"
+            ? "Open Settings"
+            : "Grant photo access"
         }
+        ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
+        analyticsSource="add_tab"
       />
 
       <ShareMomentModal

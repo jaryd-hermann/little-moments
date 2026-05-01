@@ -23,7 +23,12 @@ import {
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getStreakDisplayFromStores, type AfterSaveStats } from "@/hooks/useStreak";
+import {
+  getStreakDisplayFromStores,
+  type AfterSaveStats,
+  type AfterSaveContext,
+} from "@/hooks/useStreak";
+import type { Entry } from "@/store/entryStore";
 import { EllieMessage } from "./EllieMessage";
 import { MomentPreview } from "./MomentPreview";
 import { PromptCard } from "./PromptCard";
@@ -46,6 +51,21 @@ type FlowPhase =
 
 export type InputMethod = "speaking" | "typing";
 
+export interface MomentCaptureAnalytics {
+  source?: "activation" | "today" | "add_tab";
+  prompt_type: PromptType;
+  input_method: InputMethod | null;
+  first_share_elapsed_seconds: number | null;
+  final_save_elapsed_seconds: number | null;
+  first_share_chars: number;
+  first_share_words: number;
+  final_raw_chars: number;
+  final_raw_words: number;
+  final_body_chars: number;
+  final_body_words: number;
+  is_overtime_first_share: boolean;
+}
+
 interface EllieChatFlowProps {
   promptType: PromptType;
   promptValue: string;
@@ -53,15 +73,26 @@ interface EllieChatFlowProps {
   photoDate?: number;
   isShufflingPhoto?: boolean;
   onComplete: (
-    entry: { title: string; body: string; rawText: string; attachedPhotoUri?: string }
-  ) => void | Promise<void>;
+    entry: {
+      title: string;
+      body: string;
+      rawText: string;
+      attachedPhotoUri?: string;
+      analytics?: MomentCaptureAnalytics;
+    }
+  ) => void | Promise<void | Entry | null>;
   onPhotoShuffle?: () => void;
+  /** Photo prompt control: random shuffle vs re-open gallery (Add tab — choose photo). */
+  photoControlVariant?: "shuffle" | "change";
   welcomeMessages?: string[];
   promptInstruction?: string;
   extraGuidance?: string;
   firstReplyOverride?: string;
   /** Called after save completes and entries are updated — use for stats that must match the header. */
-  afterSaveNode?: (stats: AfterSaveStats) => React.ReactNode;
+  afterSaveNode?: (
+    stats: AfterSaveStats,
+    ctx: AfterSaveContext
+  ) => React.ReactNode;
   onFlowStarted?: (inputMethod: InputMethod) => void;
   headerNode?: React.ReactNode;
   onSkip?: () => void;
@@ -77,8 +108,11 @@ interface EllieChatFlowProps {
   photoPermissionBlocked?: boolean;
   onRequestPhotoAccess?: () => void;
   photoAccessButtonLabel?: string;
+  /** Gate gallery / system picker behind full-library explainer + permission (Add / Today / activation). */
+  ensureFullPhotoLibraryAccess?: () => Promise<boolean>;
   /** Activation: fixed delay before Ellie photo footer + CTAs (matches word_saved typing beat). */
   photoEllieTypingDelayMs?: number;
+  analyticsSource?: "activation" | "today" | "add_tab";
   /**
    * First message + typing indicator on mount; after `typingDurationMs`, remaining messages and the prompt card appear.
    * Do not pass `welcomeMessages` when using this (first message is only in `firstMessage`).
@@ -108,6 +142,12 @@ function formatTimer(remaining: number): string {
   return `${sign}${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
 const PREVIEW_INSTRUCTION =
   "Here's your moment. Tap anywhere in the card to make your own edits.";
 
@@ -119,6 +159,7 @@ export function EllieChatFlow({
   isShufflingPhoto,
   onComplete,
   onPhotoShuffle,
+  photoControlVariant = "shuffle",
   welcomeMessages,
   promptInstruction,
   extraGuidance,
@@ -138,6 +179,8 @@ export function EllieChatFlow({
   onRequestPhotoAccess,
   photoAccessButtonLabel,
   photoEllieTypingDelayMs,
+  analyticsSource,
+  ensureFullPhotoLibraryAccess,
 }: EllieChatFlowProps) {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -161,9 +204,19 @@ export function EllieChatFlow({
   const [goingDeeper, setGoingDeeper] = useState(false);
   const [deeperCount, setDeeperCount] = useState(0);
   const followUpAskedRef = useRef(false);
+  /** Message id of the live preview frozen while "Go Deeper" runs (revert on failure). */
+  const frozenPreviewForDeeperIdRef = useRef<string | null>(null);
 
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startedAtMsRef = useRef<number | null>(null);
+  const inputMethodRef = useRef<InputMethod | null>(null);
+  const firstShareMetricsRef = useRef<{
+    elapsedSeconds: number;
+    chars: number;
+    words: number;
+    isOvertime: boolean;
+  } | null>(null);
 
   const idCounter = useRef(0);
   const nextId = () => String(++idCounter.current);
@@ -275,6 +328,9 @@ export function EllieChatFlow({
     Keyboard.dismiss();
     stopTimer();
     setElapsed(0);
+    startedAtMsRef.current = null;
+    inputMethodRef.current = null;
+    firstShareMetricsRef.current = null;
     setPhase("prompt");
     setUserInput("");
     setRawText("");
@@ -303,6 +359,9 @@ export function EllieChatFlow({
 
   const handleStartTyping = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    inputMethodRef.current = "typing";
+    if (!startedAtMsRef.current) startedAtMsRef.current = Date.now();
+    firstShareMetricsRef.current = null;
     onFlowStarted?.("typing");
     setPhase("recording");
     startTimer();
@@ -311,6 +370,9 @@ export function EllieChatFlow({
 
   const handleStartSpeaking = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    inputMethodRef.current = "speaking";
+    if (!startedAtMsRef.current) startedAtMsRef.current = Date.now();
+    firstShareMetricsRef.current = null;
     onFlowStarted?.("speaking");
     startTimer();
     setPhase("mic");
@@ -340,8 +402,34 @@ export function EllieChatFlow({
     if (!text) {
       setPhase("prompt");
       setElapsed(0);
+      startedAtMsRef.current = null;
+      inputMethodRef.current = null;
+      firstShareMetricsRef.current = null;
       return;
     }
+
+    const elapsedSeconds = startedAtMsRef.current
+      ? Math.max(0, Math.round((Date.now() - startedAtMsRef.current) / 1000))
+      : elapsed;
+    const firstShareChars = text.length;
+    const firstShareWords = countWords(text);
+    const isOvertimeFirstShare = elapsedSeconds > DURATION_SECONDS;
+    firstShareMetricsRef.current = {
+      elapsedSeconds,
+      chars: firstShareChars,
+      words: firstShareWords,
+      isOvertime: isOvertimeFirstShare,
+    };
+    posthog.capture("moment_first_share_done", {
+      source: analyticsSource,
+      prompt_type: promptType,
+      input_method: inputMethodRef.current,
+      first_share_elapsed_seconds: elapsedSeconds,
+      first_share_chars: firstShareChars,
+      first_share_words: firstShareWords,
+      is_overtime_first_share: isOvertimeFirstShare,
+      deeper_count_at_first_share: deeperCount,
+    });
 
     // If a follow-up was already asked, go straight to assembly
     if (followUpAskedRef.current) {
@@ -404,7 +492,20 @@ export function EllieChatFlow({
       setMessages((prev) => prev.filter((m) => m.type !== "thinking"));
       showPreview("", text);
     }
-  }, [userInput, rawText, promptType, promptValue, stopTimer, scrollToEnd, firstReplyOverride, showPreview]);
+  }, [
+    userInput,
+    rawText,
+    promptType,
+    promptValue,
+    stopTimer,
+    scrollToEnd,
+    firstReplyOverride,
+    showPreview,
+    elapsed,
+    posthog,
+    analyticsSource,
+    deeperCount,
+  ]);
 
   const handleFollowUpAnswer = useCallback(async () => {
     const answer = userInput.trim();
@@ -451,8 +552,10 @@ export function EllieChatFlow({
     setDeeperCount((c) => c + 1);
 
     // Convert the current preview to a static read-only card
-    setMessages((prev) =>
-      prev.map((m) =>
+    setMessages((prev) => {
+      const previewEntry = prev.find((x) => x.type === "preview");
+      frozenPreviewForDeeperIdRef.current = previewEntry?.id ?? null;
+      return prev.map((m) =>
         m.type === "preview"
           ? {
               ...m,
@@ -496,8 +599,8 @@ export function EllieChatFlow({
               ),
             }
           : m
-      )
-    );
+      );
+    });
 
     setMessages((prev) => [...prev, { id: nextId(), type: "thinking" }]);
     setPhase("deeper_thinking");
@@ -510,6 +613,7 @@ export function EllieChatFlow({
         prompt_value: promptValue,
       });
 
+      frozenPreviewForDeeperIdRef.current = null;
       setMessages((prev) => [
         ...prev.filter((m) => m.type !== "thinking"),
         { id: nextId(), type: "ellie", content: question },
@@ -518,13 +622,24 @@ export function EllieChatFlow({
       setGoingDeeper(false);
       scrollToEnd();
     } catch {
+      const fid = frozenPreviewForDeeperIdRef.current;
+      frozenPreviewForDeeperIdRef.current = null;
       setGoingDeeper(false);
       setPhase("preview");
-      setMessages((prev) => [
-        ...prev.filter((m) => m.type !== "thinking"),
-        { id: nextId(), type: "preview" },
-      ]);
+      setMessages((prev) =>
+        prev
+          .filter((m) => m.type !== "thinking")
+          .map((m) =>
+            m.type === "custom" && m.id === fid
+              ? { id: m.id, type: "preview" as const }
+              : m
+          )
+      );
       scrollToEnd();
+      Alert.alert(
+        "Connection error",
+        "Could not load the next question. Check your connection and try again."
+      );
     }
   }, [allRawText, promptType, promptValue, scrollToEnd, colors, assembledTitle, assembledBody]);
 
@@ -555,6 +670,10 @@ export function EllieChatFlow({
       });
       showPreview(title, body);
     } catch {
+      Alert.alert(
+        "Connection error",
+        "Could not refresh your moment after that answer. Your last preview is unchanged."
+      );
       showPreview(assembledTitle, assembledBody);
     }
   }, [userInput, allRawText, promptType, promptValue, scrollToEnd, showPreview, assembledTitle, assembledBody]);
@@ -563,17 +682,50 @@ export function EllieChatFlow({
     async (title: string, body: string, attachedPhotoUri?: string) => {
       setSaving(true);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      let saveCtx: AfterSaveContext = { savedEntryId: null };
       try {
-        await Promise.resolve(
-          onComplete({ title, body, rawText: allRawText, attachedPhotoUri })
+        const finalSaveElapsedSeconds = startedAtMsRef.current
+          ? Math.max(0, Math.round((Date.now() - startedAtMsRef.current) / 1000))
+          : null;
+        const firstShare = firstShareMetricsRef.current;
+        const analytics: MomentCaptureAnalytics = {
+          source: analyticsSource,
+          prompt_type: promptType,
+          input_method: inputMethodRef.current,
+          first_share_elapsed_seconds: firstShare?.elapsedSeconds ?? null,
+          final_save_elapsed_seconds: finalSaveElapsedSeconds,
+          first_share_chars: firstShare?.chars ?? 0,
+          first_share_words: firstShare?.words ?? 0,
+          final_raw_chars: allRawText.length,
+          final_raw_words: countWords(allRawText),
+          final_body_chars: body.length,
+          final_body_words: countWords(body),
+          is_overtime_first_share: firstShare?.isOvertime ?? false,
+        };
+        const completed = await Promise.resolve(
+          onComplete({
+            title,
+            body,
+            rawText: allRawText,
+            attachedPhotoUri,
+            analytics,
+          })
         );
+        if (
+          completed &&
+          typeof completed === "object" &&
+          "id" in completed &&
+          typeof (completed as Entry).id === "string"
+        ) {
+          saveCtx = { savedEntryId: (completed as Entry).id };
+        }
       } catch {
         setSaving(false);
         return;
       }
 
       const stats = getStreakDisplayFromStores();
-      const saveFooter = afterSaveNode?.(stats);
+      const saveFooter = afterSaveNode?.(stats, saveCtx);
 
       // Convert the preview to a static read-only card (same pattern as Go Deeper)
       setMessages((prev) => {
@@ -642,7 +794,17 @@ export function EllieChatFlow({
       setSaving(false);
       scrollToEnd();
     },
-    [onComplete, allRawText, scrollToEnd, afterSaveNode, colors, assembledTitle, assembledBody]
+    [
+      onComplete,
+      allRawText,
+      scrollToEnd,
+      afterSaveNode,
+      colors,
+      assembledTitle,
+      assembledBody,
+      promptType,
+      analyticsSource,
+    ]
   );
 
   const handleMicTranscription = useCallback(
@@ -678,6 +840,7 @@ export function EllieChatFlow({
                 photoDate={photoDate}
                 isShuffling={isShufflingPhoto}
                 onShuffle={onPhotoShuffle}
+                photoControlVariant={photoControlVariant}
                 instruction={promptInstruction}
                 hideHelperText={hideHelperText}
               />
@@ -802,6 +965,7 @@ export function EllieChatFlow({
                   photoDate={photoDate}
                   isShuffling={isShufflingPhoto}
                   onShuffle={onPhotoShuffle}
+                  photoControlVariant={photoControlVariant}
                   instruction={promptInstruction}
                   hideHelperText={hideHelperText}
                   photoFooterNote={photoFooterNote}
@@ -825,6 +989,7 @@ export function EllieChatFlow({
                   onGoDeeper={deeperCount < 3 ? handleGoDeeper : undefined}
                   saving={saving}
                   goingDeeper={goingDeeper}
+                  ensureFullPhotoLibraryAccess={ensureFullPhotoLibraryAccess}
                 />
               );
             case "custom":

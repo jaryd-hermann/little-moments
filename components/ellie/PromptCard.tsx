@@ -16,6 +16,8 @@ interface PromptCardProps {
   photoDate?: number;
   isShuffling?: boolean;
   onShuffle?: () => void;
+  /** Photo prompt: shuffle (random roll) vs change (open gallery again). */
+  photoControlVariant?: "shuffle" | "change";
   instruction?: string;
   hideHelperText?: boolean;
   /** Extra copy below the photo prompt (e.g. activation shuffle hint). */
@@ -71,6 +73,7 @@ export function PromptCard({
   photoDate,
   isShuffling,
   onShuffle,
+  photoControlVariant = "shuffle",
   instruction,
   hideHelperText,
   photoFooterNote,
@@ -273,6 +276,9 @@ export function PromptCard({
           {showShuffleControl ? (
             <Pressable
               onPress={onShuffle}
+              accessibilityLabel={
+                photoControlVariant === "change" ? "Change photo" : "Shuffle to another photo"
+              }
               hitSlop={8}
               style={{
                 position: "absolute",
@@ -286,7 +292,11 @@ export function PromptCard({
                 justifyContent: "center",
               }}
             >
-              <Ionicons name="shuffle" size={20} color="#FFFFFF" />
+              <Ionicons
+                name={photoControlVariant === "change" ? "images-outline" : "shuffle"}
+                size={20}
+                color="#FFFFFF"
+              />
             </Pressable>
           ) : null}
         </View>

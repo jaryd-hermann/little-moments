@@ -139,7 +139,7 @@ ${contextBlock}
 Please provide your initial coaching analysis of today's moment. If there is past context, reference any patterns, progress, or recurring areas for growth — but keep the focus on today's story.`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userMessage }],
@@ -163,7 +163,7 @@ Please provide your initial coaching analysis of today's moment. If there is pas
       ];
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
         messages,

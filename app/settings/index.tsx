@@ -3,7 +3,9 @@ import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ACCENT_PALETTES, Colors } from "@/constants/Colors";
 import { useAuth } from "@/hooks/useAuth";
+import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import { useMarketingStories } from "@/hooks/useMarketingStories";
+import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useTheme } from "@/hooks/useTheme";
 import { shareInvite } from "@/lib/inviteShare";
@@ -14,6 +16,11 @@ import {
 } from "@/lib/marketingStories";
 import { requestNotificationPermissions } from "@/lib/notifications";
 import { syncPushRegistration } from "@/lib/pushRegistration";
+import {
+  DailyPromptReminderSchedule,
+  useReminderScheduleState,
+} from "@/components/settings/DailyPromptReminderSchedule";
+import type { ReminderSlot } from "@/lib/notificationTimeSync";
 import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
 import { uploadAvatar } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
@@ -63,6 +70,90 @@ const PROMO_GOOD_TIMES = require("@/assets/images/promo-good-times.png");
 /** Intrinsic size of promo-good-times.png (avoids letterboxing in a fixed-height box). */
 const PROMO_GOOD_TIMES_ASPECT = 1242 / 580;
 
+function SettingsDailyPromptTimeSection({
+  userId,
+  notificationEnabled,
+}: {
+  userId: string;
+  notificationEnabled: boolean;
+}) {
+  const { colors } = useTheme();
+  const { fetchProfile } = useAuth();
+  const notificationTime = useSettingsStore((s) => s.notificationTime);
+  const setNotificationTime = useSettingsStore((s) => s.setNotificationTime);
+  const { selectedSlot, times, selectSlot, changeTimeForSlot } = useReminderScheduleState({
+    hour: notificationTime.hour,
+    minute: notificationTime.minute,
+  });
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestRef = useRef({ times, selectedSlot });
+  latestRef.current = { times, selectedSlot };
+
+  const flushPersist = useCallback(async () => {
+    const { times: tm, selectedSlot: sl } = latestRef.current;
+    const t = tm[sl];
+    setNotificationTime(t.hour, t.minute);
+    await syncPushRegistration({
+      notificationsEnabled: notificationEnabled,
+      reminderHour: t.hour,
+      reminderMinute: t.minute,
+    });
+    await fetchProfile();
+  }, [
+    userId,
+    notificationEnabled,
+    setNotificationTime,
+    fetchProfile,
+  ]);
+
+  const schedulePersist = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      void flushPersist();
+    }, 400);
+  }, [flushPersist]);
+
+  const selectWrapped = useCallback(
+    (slot: ReminderSlot) => {
+      selectSlot(slot);
+      schedulePersist();
+    },
+    [selectSlot, schedulePersist]
+  );
+
+  const changeWrapped = useCallback(
+    (slot: ReminderSlot, h: number, m: number) => {
+      changeTimeForSlot(slot, h, m);
+      schedulePersist();
+    },
+    [changeTimeForSlot, schedulePersist]
+  );
+
+  return (
+    <View style={{ paddingTop: 4, paddingBottom: 4 }}>
+      <Text
+        style={{
+          fontFamily: "Roboto-Light",
+          fontSize: 13,
+          color: colors.textMuted,
+          lineHeight: 20,
+          marginBottom: 12,
+        }}
+      >
+        Daily new prompt — we&apos;ll notify you when your word, photo, or question is ready. Pick a default
+        time (change anytime).
+      </Text>
+      <DailyPromptReminderSchedule
+        selectedSlot={selectedSlot}
+        times={times}
+        onSelectSlot={selectWrapped}
+        onChangeTimeForSlot={changeWrapped}
+      />
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const { profile, signOut, deleteAccount, user, fetchProfile } = useAuth();
   const {
@@ -73,6 +164,12 @@ export default function SettingsScreen() {
   } = useSubscription();
   const posthog = usePostHog();
   const [showCustomerCenter, setShowCustomerCenter] = useState(false);
+  const { checkPermission, requestPermission } = useMediaLibrary();
+  const {
+    showPhotoAccessExplainerForTesting,
+    showLimitedPhotoAccessForTesting,
+    fullPhotoAccessModal,
+  } = useFullPhotoAccessExplainer({ checkPermission, requestPermission });
 
   useEffect(() => {
     posthog.capture("viewed_settings");
@@ -590,6 +687,17 @@ export default function SettingsScreen() {
               }}
             />
           </View>
+          {notificationEnabled && user ? (
+            <>
+              <SettingDivider colors={colors} />
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                <SettingsDailyPromptTimeSection
+                  userId={user.id}
+                  notificationEnabled={notificationEnabled}
+                />
+              </View>
+            </>
+          ) : null}
           <SettingDivider colors={colors} />
           <View
             style={{
@@ -704,6 +812,20 @@ export default function SettingsScreen() {
               <DummyNotificationsToggle colors={colors} />
               <SettingDivider colors={colors} />
               <DummyThreadToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <DummyPhotoAccessFlowTester
+                colors={colors}
+                onPress={() => {
+                  showPhotoAccessExplainerForTesting();
+                }}
+              />
+              <SettingDivider colors={colors} />
+              <DummyLimitedPhotoAccessTester
+                colors={colors}
+                onPress={() => {
+                  showLimitedPhotoAccessForTesting();
+                }}
+              />
             </View>
           </>
         )}
@@ -831,6 +953,7 @@ export default function SettingsScreen() {
         initialSlide={storyResumeSlideIndex}
         onClose={handleCloseStory}
       />
+      {fullPhotoAccessModal}
 
       <InfoTipModal
         visible={showICloudComingSoon}
@@ -1016,6 +1139,70 @@ function DummyThreadToggle({ colors }: { colors: ThemePalette }) {
         thumbColor="#FFFFFF"
       />
     </View>
+  );
+}
+
+function DummyPhotoAccessFlowTester({
+  colors,
+  onPress,
+}: {
+  colors: ThemePalette;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Test Photo Access Flow
+      </Text>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+function DummyLimitedPhotoAccessTester({
+  colors,
+  onPress,
+}: {
+  colors: ThemePalette;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Test limmited photo
+      </Text>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
   );
 }
 

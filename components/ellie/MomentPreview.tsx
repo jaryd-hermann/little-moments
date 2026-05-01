@@ -21,6 +21,8 @@ interface MomentPreviewProps {
   onGoDeeper?: () => void;
   saving?: boolean;
   goingDeeper?: boolean;
+  /** When set, gallery opens only after full photo-library access is confirmed (pre-permission explainer). */
+  ensureFullPhotoLibraryAccess?: () => Promise<boolean>;
 }
 
 export function MomentPreview({
@@ -31,6 +33,7 @@ export function MomentPreview({
   onGoDeeper,
   saving,
   goingDeeper,
+  ensureFullPhotoLibraryAccess,
 }: MomentPreviewProps) {
   const { colors, theme } = useTheme();
   const [title, setTitle] = useState(initialTitle);
@@ -39,6 +42,10 @@ export function MomentPreview({
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
 
   const openGallery = useCallback(async () => {
+    if (ensureFullPhotoLibraryAccess) {
+      const ok = await ensureFullPhotoLibraryAccess();
+      if (!ok) return;
+    }
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
@@ -55,7 +62,7 @@ export function MomentPreview({
       console.error("[MomentPreview] Gallery error:", err);
       Alert.alert("Error", "Could not open photo library.");
     }
-  }, []);
+  }, [ensureFullPhotoLibraryAccess]);
 
   const openCamera = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();

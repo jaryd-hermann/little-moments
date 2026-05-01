@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuthStore, type Profile } from "@/store/authStore";
 import { logOutRevenueCat } from "@/lib/revenuecat";
 import { cancelAllNotifications } from "@/lib/notifications";
+import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 
 export function useAuth() {
   const { user, profile, session, isLoading, setProfile, clearAuth } =
@@ -18,6 +19,7 @@ export function useAuth() {
       .single();
     if (data) {
       setProfile(data as Profile);
+      applyNotificationTimeFromProfile(data.notification_time);
     }
     return data as Profile | null;
   }, [user]);

@@ -1,4 +1,5 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
+import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 import { requireAuthUser } from "../_shared/requireAuthUser.ts";
 
 const anthropic = new Anthropic({
@@ -106,27 +107,22 @@ Respond with ONLY a JSON object (no markdown, no code fences):
 
     const needsJson = stage === "enhance" || stage === "revise";
 
+    // Claude Sonnet 4.6+ does not support assistant message prefill; conversation must end with user.
     const messages = [
       ...(conversation_history || []),
       { role: "user" as const, content: userMessage },
-      ...(needsJson
-        ? [{ role: "assistant" as const, content: "{" }]
-        : []),
     ];
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: systemPrompt,
       messages,
     });
 
-    const rawText =
-      response.content[0].type === "text"
-        ? response.content[0].text
-        : "";
+    const rawText = anthropicAssistantText(response.content);
 
-    const responseText = needsJson ? `{${rawText}` : rawText;
+    const responseText = needsJson ? stripCodeFences(rawText.trim()) : rawText;
 
     if (needsJson) {
       const parsed = tryParseJSON(responseText);
@@ -169,10 +165,13 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       );
     }
 
-    return new Response(
-      JSON.stringify({ message: responseText }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    const message =
+      responseText.trim() ||
+      "What is one detail from this moment — a place, a person, or something you were feeling — that still feels vivid when you think about it?";
+
+    return new Response(JSON.stringify({ message }), {
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (error) {
     return new Response(
       JSON.stringify({

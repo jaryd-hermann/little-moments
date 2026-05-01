@@ -10,12 +10,14 @@ interface SettingsStore {
   notificationTime: { hour: number; minute: number };
   streakAtRiskEnabled: boolean;
   storyProgress: Record<string, number>;
+  graphIntroSeen: boolean;
   setTheme: (theme: "light" | "dark") => void;
   setAccentColor: (color: AccentColor) => void;
   setNotificationEnabled: (val: boolean) => void;
   setNotificationTime: (hour: number, minute: number) => void;
   setStreakAtRiskEnabled: (val: boolean) => void;
   setStoryProgress: (storyIndex: string | number, slideReached: number) => void;
+  setGraphIntroSeen: (val: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -24,9 +26,10 @@ export const useSettingsStore = create<SettingsStore>()(
       theme: "dark",
       accentColor: "pink",
       notificationEnabled: true,
-      notificationTime: { hour: 18, minute: 0 },
+      notificationTime: { hour: 6, minute: 0 },
       streakAtRiskEnabled: true,
       storyProgress: {},
+      graphIntroSeen: false,
       setTheme: (theme) => set({ theme }),
       setAccentColor: (accentColor) => set({ accentColor }),
       setNotificationEnabled: (notificationEnabled) =>
@@ -42,6 +45,7 @@ export const useSettingsStore = create<SettingsStore>()(
           set({ storyProgress: { ...prev, [storyIndex]: slideReached } });
         }
       },
+      setGraphIntroSeen: (graphIntroSeen) => set({ graphIntroSeen }),
     }),
     {
       name: "little-moments-settings",

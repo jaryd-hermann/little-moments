@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable as RNPressable, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -21,8 +22,10 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 import type { Entry } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
-import { InfoTipModal } from "@/components/common/InfoTipModal";
+import { EntryPinToggle } from "@/components/common/EntryPinToggle";
+import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
 import { useTheme } from "@/hooks/useTheme";
+import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 
 function stripEntryHtml(html: string): string {
   return html
@@ -31,6 +34,15 @@ function stripEntryHtml(html: string): string {
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function hashInt(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
 const FOCAL_CARD_BG = "#FFFFEB";
@@ -216,8 +228,21 @@ function FocalEntryStack({ entry, selectedDate }: { entry: Entry; selectedDate: 
           borderColor: "rgba(0, 0, 0, 0.12)",
           backgroundColor: FOCAL_CARD_BG,
           padding: 20,
+          position: "relative",
         }}
       >
+        {entry.entry_type === "moment" ? (
+          <View
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 10,
+              zIndex: 10,
+            }}
+          >
+            <EntryPinToggle entryId={entry.id} />
+          </View>
+        ) : null}
         <View
           style={{
             flexDirection: "row",
@@ -296,18 +321,37 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [showFlipInfo, setShowFlipInfo] = useState(false);
   const dragY = useSharedValue(0);
+  const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
+  const togglePinnedOnly = useCapsuleFlipbookStore((s) => s.togglePinnedOnly);
+  const shuffleEnabled = useCapsuleFlipbookStore((s) => s.flipbookShuffleEnabled);
+  const shuffleSeed = useCapsuleFlipbookStore((s) => s.flipbookShuffleSeed);
+  const toggleFlipbookShuffle = useCapsuleFlipbookStore(
+    (s) => s.toggleFlipbookShuffle
+  );
 
-  const sorted = useMemo(
-    () =>
-      [...entries].sort((a, b) => {
+  const sorted = useMemo(() => {
+    let list = [...entries];
+    if (pinnedOnly) {
+      list = list.filter(
+        (e) => e.entry_type === "moment" && Boolean(e.is_pinned)
+      );
+    }
+    if (!shuffleEnabled) {
+      list.sort((a, b) => {
         const ta = a.entry_date ?? `${a.entry_year}-01-01`;
         const tb = b.entry_date ?? `${b.entry_year}-01-01`;
         return tb.localeCompare(ta);
-      }),
-    [entries]
-  );
+      });
+    } else {
+      list.sort((a, b) => {
+        const ha = hashInt(`${a.id}:${shuffleSeed}`);
+        const hb = hashInt(`${b.id}:${shuffleSeed}`);
+        return ha - hb;
+      });
+    }
+    return list;
+  }, [entries, pinnedOnly, shuffleEnabled, shuffleSeed]);
 
   useEffect(() => {
     setCurrentIndex((i) => Math.min(i, Math.max(0, sorted.length - 1)));
@@ -410,6 +454,77 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
     : new Date();
 
   if (sorted.length === 0) {
+    if (pinnedOnly && entries.length > 0) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.background,
+            paddingHorizontal: 28,
+          }}
+        >
+          <Text
+            style={{
+              fontFamily: "LibreBaskerville-Regular",
+              fontSize: 16,
+              color: colors.textSecondary,
+              textAlign: "center",
+              lineHeight: 24,
+            }}
+          >
+            No pinned moments yet. Pin a moment from Today, your Capsule, or right after you save one.
+          </Text>
+          <RNPressable
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              togglePinnedOnly();
+            }}
+            style={{
+              marginTop: 22,
+              borderRadius: 9999,
+              borderWidth: 1.5,
+              borderColor: colors.border,
+              paddingHorizontal: 22,
+              paddingVertical: 12,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 14,
+                color: colors.text,
+              }}
+            >
+              Show all moments
+            </Text>
+          </RNPressable>
+          <RNPressable
+            onPress={onExitPress}
+            style={{
+              marginTop: 16,
+              borderRadius: 9999,
+              backgroundColor: EXIT_CORAL,
+              borderWidth: 2,
+              borderColor: "#FFFFFF",
+              paddingHorizontal: 18,
+              paddingVertical: 10,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 14,
+                color: "#FFFFFF",
+              }}
+            >
+              Exit Flipbook
+            </Text>
+          </RNPressable>
+        </View>
+      );
+    }
     return (
       <View
         style={{
@@ -462,26 +577,76 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
       <View
         style={{
           position: "absolute",
+          left: 16,
           right: 16,
           top: insets.top + 8,
           zIndex: 200,
           elevation: 24,
           flexDirection: "row",
           alignItems: "center",
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
           gap: 10,
         }}
       >
         <RNPressable
-          onPress={() => setShowFlipInfo(true)}
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            togglePinnedOnly();
+          }}
           style={{
             borderRadius: 9999,
-            backgroundColor: "rgba(0,0,0,0.55)",
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.35)",
+            backgroundColor: pinnedOnly ? colors.primary : "#FFFFFF",
+            borderWidth: 1.5,
+            borderColor: pinnedOnly
+              ? "rgba(0,0,0,0.14)"
+              : "rgba(0,0,0,0.12)",
             paddingHorizontal: 12,
             paddingVertical: 8,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
           }}
         >
+          <ThumbtackIcon
+            size={17}
+            color="#000000"
+            weight={pinnedOnly ? "solid" : "regular"}
+          />
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 12,
+              color: "#1A1A1A",
+            }}
+          >
+            Pinned
+          </Text>
+        </RNPressable>
+        <RNPressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            toggleFlipbookShuffle();
+          }}
+          style={{
+            borderRadius: 9999,
+            backgroundColor: shuffleEnabled
+              ? "rgba(255,255,235,0.22)"
+              : "rgba(0,0,0,0.55)",
+            borderWidth: 1,
+            borderColor: shuffleEnabled
+              ? "rgba(255,255,235,0.65)"
+              : "rgba(255,255,255,0.35)",
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+          }}
+          accessibilityLabel="Shuffle flipbook order"
+          accessibilityHint="Tap again to return to chronological order"
+        >
+          <Ionicons name="dice-outline" size={17} color="#FFFFFF" />
           <Text
             style={{
               fontFamily: "Roboto-Medium",
@@ -489,7 +654,7 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
               color: "#FFFFFF",
             }}
           >
-            What&apos;s this?
+            Shuffle
           </Text>
         </RNPressable>
         <RNPressable
@@ -701,23 +866,6 @@ export function FlipbookMemories({ entries, onExitPress }: FlipbookMemoriesProps
         </View>
       </View>
 
-      <InfoTipModal
-        visible={showFlipInfo}
-        onClose={() => setShowFlipInfo(false)}
-        title="Flipbook"
-      >
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 15,
-            color: "#333333",
-            lineHeight: 22,
-          }}
-        >
-          Swipe the card up or down to stroll through your moments in time. Each stop is a surprise slice of your story. When one resonates, tap{" "}
-          <Text style={{ fontFamily: "Roboto-Medium" }}>View this moment</Text> to open it fully.
-        </Text>
-      </InfoTipModal>
     </View>
   );
 }

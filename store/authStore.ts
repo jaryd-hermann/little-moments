@@ -36,6 +36,8 @@ export interface Profile {
   story_coach_enabled?: boolean;
   activation_word_completed?: boolean;
   activation_photo_completed?: boolean;
+  /** Closing activation: yes | kind_of | no — did Ellie explain LM clearly */
+  activation_lm_understanding?: "yes" | "kind_of" | "no" | null;
   notification_timezone?: string | null;
   badge_push_state?: Record<string, boolean> | null;
   last_daily_push_local_date?: string | null;

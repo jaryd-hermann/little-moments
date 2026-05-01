@@ -46,6 +46,16 @@ type PurposeRow = {
   sort_order: number;
 };
 
+const CURRENT_RESONANCE_TAGS: ResonanceTag[] = [
+  "time",
+  "habit",
+  "presence",
+  "memory",
+];
+
+/** Only show the current onboarding cohort (excludes legacy rows from 0002). */
+const RESONANCE_OPTIONS_MIN_SORT_ORDER = 101;
+
 export default function ResonanceScreen() {
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
@@ -67,13 +77,15 @@ export default function ResonanceScreen() {
       const { data, error: qErr } = await supabase
         .from("purpose_options")
         .select("id, label, tag, sort_order")
+        .in("tag", CURRENT_RESONANCE_TAGS)
+        .gte("sort_order", RESONANCE_OPTIONS_MIN_SORT_ORDER)
         .order("sort_order", { ascending: true });
 
       if (!cancelled) {
         if (qErr || !data?.length) {
           setError(
             qErr?.message ??
-              "Could not load options. Apply the latest Supabase migration (0002)."
+              "Could not load options. Apply the latest Supabase migrations (including 0027)."
           );
           setOptions([]);
         } else {
