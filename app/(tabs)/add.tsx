@@ -16,12 +16,14 @@ import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import type { Entry } from "@/store/entryStore";
+import { useCaptureIntentStore } from "@/store/captureIntentStore";
 import { useTabBarStore } from "@/store/tabBarStore";
 import { useThreads } from "@/hooks/useThreads";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
 import { usePostHog } from "posthog-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -112,6 +114,17 @@ export default function AddScreen() {
       setLastSavedEntryId(null);
       setShareModalVisible(false);
       inputMethodRef.current = null;
+
+      // v3: if Capture home set an intent, auto-skip the choose step
+      // and pre-fill the photo prompt.
+      const intent = useCaptureIntentStore.getState().consumeIntent();
+      if (intent && intent.source === "capture_home" && intent.photoUri) {
+        setPromptType("photo");
+        setPromptValue("");
+        setPhotoUri(intent.photoUri);
+        setPhotoDate(intent.photoDate);
+        setPhase("flow");
+      }
     }, [setTabBarHidden])
   );
 
@@ -304,140 +317,205 @@ export default function AddScreen() {
   }, [setTabBarHidden]);
 
   const afterSaveNode = useCallback(
-    (stats: AfterSaveStats) => {
-      const goCapsule = () => {
-        setTabBarHidden(false);
-        router.replace("/(tabs)/memories");
-      };
-      const goThreads = () => {
-        setTabBarHidden(false);
-        router.push("/threads");
-      };
-      const goDone = () => {
+    (_stats: AfterSaveStats) => {
+      const goCaptureAnother = () => {
         setTabBarHidden(false);
         router.replace("/(tabs)/capture");
       };
+      const goDigDeeper = () => {
+        setTabBarHidden(false);
+        if (lastSavedEntryId) {
+          router.push(`/dig-deeper?entryId=${lastSavedEntryId}`);
+        } else {
+          router.push("/dig-deeper");
+        }
+      };
 
-      const totalDisplayed = stats.totalMoments;
-      const isFreeMilestone10 =
-        subscriptionStatus === "free" &&
-        totalDisplayed > 0 &&
-        totalDisplayed % 10 === 0;
-
-      const shareButton = (
-        <Pressable
-          onPress={() => setShareModalVisible(true)}
-          style={{
-            height: 48,
-            borderRadius: 9999,
-            backgroundColor: colors.primary,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-          }}
-        >
-          <Ionicons name="heart-outline" size={18} color="#1A1A1A" />
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 14,
-              color: "#1A1A1A",
-            }}
-          >
-            Share this moment with someone
-          </Text>
-        </Pressable>
-      );
-
-      const doneButton = (
-        <Pressable
-          onPress={goDone}
-          style={{
-            height: 48,
-            borderRadius: 9999,
-            backgroundColor: colors.surfaceSecondary,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-          }}
-        >
-          <Ionicons name="checkmark" size={18} color={colors.text} />
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 14,
-              color: colors.text,
-            }}
-          >
-            I'm done
-          </Text>
-        </Pressable>
-      );
+      const previewPhoto =
+        photoUri ??
+        savedEntry?.media?.[0]?.storage_url ??
+        undefined;
+      const previewTitle =
+        savedEntry?.title ??
+        (savedEntry?.body ? savedEntry.body.split("\n")[0].slice(0, 60) : "Moment saved");
+      const previewBody =
+        savedEntry?.ai_enhanced_body ??
+        savedEntry?.body ??
+        "";
 
       return (
-        <View>
-          <CongratsCard
-            headline="Moment saved!"
-            totalMoments={totalDisplayed}
-            streakCount={stats.streakCount}
-            threadsCount={totalConnections}
-            onPressMoments={goCapsule}
-            onPressThreads={goThreads}
-          />
-          {isFreeMilestone10 ? (
-            <>
-              <EllieMessage
-                content={`Another 10 moments logged. You're building a real memory archive${firstName ? `, ${firstName}` : ""}! Little Moments Premium might be for you — take a look.`}
+        <View
+          style={{
+            marginTop: 4,
+            borderRadius: 18,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+          }}
+        >
+          <View style={{ position: "relative", height: 380 }}>
+            {previewPhoto ? (
+              <Image
+                source={{ uri: previewPhoto }}
+                style={{ width: "100%", height: "100%" }}
+                contentFit="cover"
               />
-              <PremiumInlineCard
-                analyticsSource="add_chat_milestone"
-                style={{ marginTop: 12, marginBottom: 22 }}
-              />
-              <EllieMessage content="If not interested now, please continue with your today!" />
-              <View style={{ gap: 10, marginTop: 12 }}>
-                {shareButton}
-                {doneButton}
+            ) : (
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surfaceSecondary,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="bookmark" size={48} color={colors.textMuted} />
               </View>
-            </>
-          ) : (
-            <>
-              <EllieMessage content="Great job logging more moments. Your Capsule is growing and we're connecting more dots for you. Where to next?" />
-              <View style={{ gap: 10, marginTop: 12 }}>
-                {shareButton}
-                <Pressable
-                  onPress={() => void shareInvite()}
+            )}
+
+            <View
+              style={{
+                position: "absolute",
+                inset: 0,
+                backgroundColor: "rgba(0,0,0,0.35)",
+              }}
+            />
+
+            <Text
+              style={{
+                position: "absolute",
+                top: 14,
+                left: 16,
+                fontFamily: "Roboto-Regular",
+                fontSize: 11,
+                color: "#FFFFFF",
+                opacity: 0.85,
+                letterSpacing: 1.5,
+                textTransform: "uppercase",
+              }}
+            >
+              Saved
+            </Text>
+
+            <View
+              style={{
+                position: "absolute",
+                left: 18,
+                right: 18,
+                bottom: 18,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontWeight: "700",
+                  fontSize: 22,
+                  color: "#FFFFFF",
+                  marginBottom: 6,
+                  textShadowColor: "rgba(0,0,0,0.4)",
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 4,
+                }}
+                numberOfLines={2}
+              >
+                {previewTitle}
+              </Text>
+              {previewBody ? (
+                <Text
                   style={{
-                    height: 48,
-                    borderRadius: 9999,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
+                    fontFamily: "Roboto-Light",
+                    fontSize: 13,
+                    color: "rgba(255,255,255,0.92)",
+                    lineHeight: 19,
+                    textShadowColor: "rgba(0,0,0,0.4)",
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 4,
                   }}
+                  numberOfLines={3}
                 >
-                  <Ionicons name="send-outline" size={16} color={colors.textSecondary} />
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Regular",
-                      fontSize: 14,
-                      color: colors.textSecondary,
-                    }}
-                  >
-                    Suggest this app to someone
-                  </Text>
-                </Pressable>
-                {doneButton}
-              </View>
-            </>
-          )}
+                  {previewBody}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={{ padding: 16, gap: 10 }}>
+            <Pressable
+              onPress={goCaptureAnother}
+              style={{
+                height: 52,
+                borderRadius: 9999,
+                backgroundColor: colors.primary,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+              }}
+            >
+              <Ionicons name="refresh" size={18} color="#1A1A1A" />
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 14,
+                  color: "#1A1A1A",
+                  letterSpacing: 0.4,
+                  textTransform: "uppercase",
+                }}
+              >
+                Capture another
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={goDigDeeper}
+              style={{
+                height: 46,
+                borderRadius: 9999,
+                borderWidth: 1.5,
+                borderColor: colors.border,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+              }}
+            >
+              <Ionicons name="sparkles-outline" size={16} color={colors.text} />
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 13,
+                  color: colors.text,
+                  letterSpacing: 0.3,
+                }}
+              >
+                Dig deeper with Ellie
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setShareModalVisible(true)}
+              style={{
+                marginTop: 4,
+                alignItems: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 12,
+                  color: colors.textSecondary,
+                  textDecorationLine: "underline",
+                }}
+              >
+                Share this moment
+              </Text>
+            </Pressable>
+          </View>
         </View>
       );
     },
-    [colors, firstName, subscriptionStatus, setTabBarHidden, totalConnections]
+    [colors, photoUri, savedEntry, lastSavedEntryId, setTabBarHidden]
   );
 
   if (phase === "choose") {

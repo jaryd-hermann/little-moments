@@ -1,3 +1,4 @@
+import { useCaptureIntentStore } from "@/store/captureIntentStore";
 import { useEntries } from "@/hooks/useEntries";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
@@ -117,13 +118,26 @@ export default function CaptureScreen() {
     await loadNextPhoto();
   }, [hasPermission, photoLoading, photo, posthog, loadNextPhoto]);
 
+  const setCaptureIntent = useCaptureIntentStore((s) => s.setIntent);
+
   const handleVoice = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
     posthog.capture("capture_voice_tapped", {
       has_photo: !!photo,
+      ...(photo
+        ? {
+            photo_age_days: photoAgeDays(photo.creationTime),
+            photo_is_throwback: photoAgeDays(photo.creationTime) > THROWBACK_DAYS,
+          }
+        : {}),
+    });
+    setCaptureIntent({
+      source: "capture_home",
+      photoUri: photo?.uri,
+      photoDate: photo?.creationTime,
     });
     router.push("/(tabs)/add");
-  }, [posthog, photo]);
+  }, [posthog, photo, setCaptureIntent]);
 
   const handleType = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
