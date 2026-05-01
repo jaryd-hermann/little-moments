@@ -8,14 +8,14 @@ export function routeAfterAuth(profile: Profile | null) {
   }
 
   if (profile.onboarding_completed) {
-    router.replace("/(tabs)/today");
+    router.replace("/(tabs)/capture");
     return;
   }
 
   const phase = profile.onboarding_phase ?? "resonance";
 
   if (phase === "done") {
-    router.replace("/(tabs)/today");
+    router.replace("/(tabs)/capture");
     return;
   }
 

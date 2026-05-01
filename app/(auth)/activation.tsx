@@ -338,7 +338,7 @@ export default function ActivationScreen() {
         .single();
       if (fresh) setProfile(fresh as Profile);
     }
-    router.replace("/(tabs)/today");
+    router.replace("/(tabs)/capture");
   }, [user, setProfile]);
 
   // ── Word flow ──

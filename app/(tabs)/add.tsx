@@ -315,7 +315,7 @@ export default function AddScreen() {
       };
       const goDone = () => {
         setTabBarHidden(false);
-        router.replace("/(tabs)/today");
+        router.replace("/(tabs)/capture");
       };
 
       const totalDisplayed = stats.totalMoments;

@@ -1,4 +1,4 @@
-import { View, Pressable, Text, Image } from "react-native";
+import { View, Pressable, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
@@ -6,25 +6,28 @@ import * as Haptics from "expo-haptics";
 import { useTheme } from "@/hooks/useTheme";
 import { useTabBarStore } from "@/store/tabBarStore";
 
-const TAB_COMPOSE_PLUS = require("@/assets/images/tab-compose-plus.png");
-
 const TAB_CONFIG: Record<
   string,
   { label: string; icon: string; iconFocused: string }
 > = {
-  today: {
-    label: "Today",
-    icon: "create-outline",
-    iconFocused: "create",
+  capture: {
+    label: "Capture",
+    icon: "camera-outline",
+    iconFocused: "camera",
   },
   memories: {
     label: "Capsule",
     icon: "book-outline",
     iconFocused: "book",
   },
+  brain: {
+    label: "Brain",
+    icon: "git-network-outline",
+    iconFocused: "git-network",
+  },
 };
 
-const VISIBLE_TABS = ["today", "add", "memories"];
+const VISIBLE_TABS = ["capture", "memories", "brain"];
 
 export function CustomTabBar({
   state,
@@ -34,12 +37,10 @@ export function CustomTabBar({
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const tabBarHidden = useTabBarStore((s) => s.hidden);
-  const triggerAddReset = useTabBarStore((s) => s.triggerAddReset);
 
   if (tabBarHidden) return null;
 
   const visibleRoutes = state.routes.filter((r) => VISIBLE_TABS.includes(r.name));
-  const centerName = "add";
 
   return (
     <View
@@ -67,43 +68,6 @@ export function CustomTabBar({
         {visibleRoutes.map((route) => {
           const globalIndex = state.routes.findIndex((r) => r.key === route.key);
           const isFocused = state.index === globalIndex;
-          const isCenter = route.name === centerName;
-
-          if (isCenter) {
-            return (
-              <View
-                key={route.key}
-                style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
-              >
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-                    if (isFocused) {
-                      triggerAddReset();
-                    } else {
-                      navigation.navigate(route.name);
-                    }
-                  }}
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 9999,
-                    backgroundColor: colors.primary,
-                    borderWidth: 2,
-                    borderColor: theme === "dark" ? "#FFFFFF" : "#1A1A1A",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Image
-                    source={TAB_COMPOSE_PLUS}
-                    style={{ width: 26, height: 26 }}
-                    resizeMode="contain"
-                  />
-                </Pressable>
-              </View>
-            );
-          }
 
           const config = TAB_CONFIG[route.name];
           if (!config) return null;

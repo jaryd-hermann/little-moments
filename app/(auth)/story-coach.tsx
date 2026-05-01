@@ -48,7 +48,7 @@ export default function StoryCoachOnboardingScreen() {
       .single();
     if (fresh) setProfile(fresh as Profile);
 
-    router.replace("/(tabs)/today");
+    router.replace("/(tabs)/capture");
   };
 
   return (

@@ -18,23 +18,31 @@ export default function TabLayout() {
         screenOptions={{ headerShown: false }}
       >
         <Tabs.Screen
+          name="capture"
+          options={{ title: "Capture" }}
+        />
+        <Tabs.Screen
+          name="memories"
+          options={{ title: "Capsule" }}
+        />
+        <Tabs.Screen
+          name="brain"
+          options={{ title: "Brain" }}
+        />
+        {/* Hidden routes — still navigable programmatically, but not shown in the tab bar */}
+        <Tabs.Screen
           name="today"
-          options={{ title: "Today" }}
+          options={{ href: null }}
         />
         <Tabs.Screen
           name="add"
-          options={{ title: "" }}
+          options={{ href: null }}
           listeners={{
             tabPress: (e) => {
               e.preventDefault();
             },
           }}
         />
-        <Tabs.Screen
-          name="memories"
-          options={{ title: "Capsule" }}
-        />
-        {/* Hidden tabs — kept for backward compat but not shown */}
         <Tabs.Screen
           name="crash-burn"
           options={{ href: null }}

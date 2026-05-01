@@ -185,7 +185,7 @@ export default function MemoriesScreen() {
             showAvatar
           />
           <Pressable
-            onPress={() => router.replace("/(tabs)/today")}
+            onPress={() => router.replace("/(tabs)/capture")}
             style={{
               marginTop: 20,
               height: 52,

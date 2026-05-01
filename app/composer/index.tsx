@@ -476,7 +476,7 @@ export default function ComposerScreen() {
 
         useDraftStore.getState().clearDraft(dateKey);
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-        router.dismissTo("/(tabs)/today");
+        router.dismissTo("/(tabs)/capture");
         return;
       }
 
@@ -555,7 +555,7 @@ export default function ComposerScreen() {
 
       useDraftStore.getState().clearDraft(dateKey);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-      router.dismissTo("/(tabs)/today");
+      router.dismissTo("/(tabs)/capture");
       if (celebrationNth != null) {
         setTimeout(() => {
           useMomentCelebrationStore.getState().show(celebrationNth);
