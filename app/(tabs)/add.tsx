@@ -1,16 +1,12 @@
 import { ChoiceCards } from "@/components/ellie/ChoiceCards";
-import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow, type InputMethod } from "@/components/ellie/EllieChatFlow";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { CRASH_BURN_WORDS } from "@/constants/words";
-import { useAuth } from "@/hooks/useAuth";
 import { useEntries } from "@/hooks/useEntries";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { type AfterSaveStats } from "@/hooks/useStreak";
 import { useTheme } from "@/hooks/useTheme";
-import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
-import { shareInvite } from "@/lib/inviteShare";
 import type { PromptType } from "@/lib/momentAssist";
 import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
@@ -18,7 +14,6 @@ import { useAuthStore } from "@/store/authStore";
 import type { Entry } from "@/store/entryStore";
 import { useCaptureIntentStore } from "@/store/captureIntentStore";
 import { useTabBarStore } from "@/store/tabBarStore";
-import { useThreads } from "@/hooks/useThreads";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
@@ -57,7 +52,6 @@ function photoAnalyticsProps(photoDate: number | undefined) {
 export default function AddScreen() {
   const { colors } = useTheme();
   const posthog = usePostHog();
-  const { profile } = useAuth();
   const { entries, saveEntry, fetchEntries } = useEntries();
   const {
     getRandomAsset,
@@ -65,18 +59,9 @@ export default function AddScreen() {
     checkPermission,
     permissionStatus,
   } = useMediaLibrary();
-  const { totalConnections } = useThreads();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const addResetTrigger = useTabBarStore((s) => s.addResetTrigger);
   const userId = useAuthStore((s) => s.user?.id ?? null);
-  const subscriptionStatus = useAuthStore((s) => s.profile?.subscription_status);
-
-  const hasRealName =
-    !!profile?.display_name?.trim() &&
-    profile.display_name.trim() !== profile.email;
-  const firstName = hasRealName
-    ? profile!.display_name!.trim().split(/\s+/)[0]
-    : null;
 
   const [phase, setPhase] = useState<AddPhase>("choose");
   const [promptType, setPromptType] = useState<PromptType>("word");
