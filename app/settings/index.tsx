@@ -1,4 +1,5 @@
 import { InfoTipModal } from "@/components/common/InfoTipModal";
+import { NotificationTimePicker } from "@/components/settings/NotificationTimePicker";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ACCENT_PALETTES, Colors } from "@/constants/Colors";
@@ -54,7 +55,7 @@ try {
 type ThemePalette = (typeof Colors)["light"];
 
 /** Set true to show theme / accent UI again. */
-const SHOW_APPEARANCE_SETTINGS = false;
+const SHOW_APPEARANCE_SETTINGS = true;
 
 const GOOD_TIMES_APP_STORE_URL =
   "https://apps.apple.com/us/app/good-times-one-group-question/id6755366013";
@@ -139,6 +140,9 @@ export default function SettingsScreen() {
   const notificationTime = useSettingsStore(
     (s) => s.notificationTime
   );
+  const setNotificationTime = useSettingsStore(
+    (s) => s.setNotificationTime
+  );
   const streakAtRiskEnabled = useSettingsStore(
     (s) => s.streakAtRiskEnabled
   );
@@ -208,6 +212,21 @@ export default function SettingsScreen() {
       reminderMinute: notificationTime.minute,
     });
   };
+
+  const handleNotificationTimeChange = useCallback(
+    async (hour: number, minute: number) => {
+      setNotificationTime(hour, minute);
+      if (notificationEnabled) {
+        await syncPushRegistration({
+          notificationsEnabled: true,
+          reminderHour: hour,
+          reminderMinute: minute,
+        });
+      }
+      posthog.capture("notification_time_changed", { hour, minute });
+    },
+    [setNotificationTime, notificationEnabled, posthog]
+  );
 
   const handleThemeSwitch = (dark: boolean) => {
     const newTheme = dark ? "dark" : "light";
@@ -588,6 +607,30 @@ export default function SettingsScreen() {
                 shadowOpacity: 0.3,
                 shadowRadius: 1,
               }}
+            />
+          </View>
+          <SettingDivider colors={colors} />
+          <View
+            style={{
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Roboto-Regular",
+                fontSize: 15,
+                color: colors.text,
+                marginBottom: 12,
+              }}
+            >
+              Reminder Time
+            </Text>
+            <NotificationTimePicker
+              value={notificationTime}
+              onChange={handleNotificationTimeChange}
+              colors={colors}
+              disabled={!notificationEnabled}
             />
           </View>
           <SettingDivider colors={colors} />
