@@ -39,7 +39,7 @@ export default function MemoriesScreen() {
   const { entries, fetchEntries } = useEntries();
   const { totalMoments } = useStreak();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useState<ViewMode>("flipbook");
   const [searchQuery, setSearchQuery] = useState("");
   const [capsuleFilter, setCapsuleFilter] = useState<CapsuleFilter>("all");
   const { totalConnections, threads, fetchAll: fetchThreadData } = useThreads();
