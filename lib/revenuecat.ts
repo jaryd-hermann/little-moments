@@ -6,6 +6,7 @@ import Purchases, {
 } from "react-native-purchases";
 import Constants from "expo-constants";
 import { Linking, Platform } from "react-native";
+import { captureException } from "./errors";
 
 /**
  * Store setup (App Store Connect + RevenueCat dashboard):
@@ -33,6 +34,9 @@ export function configureRevenueCat(appUserID?: string) {
       appUserID: appUserID ?? undefined,
     });
   } catch (e) {
+    // RevenueCat config failing means no in-app purchases work AT ALL —
+    // we want to know about this in PostHog, not just swallow it.
+    captureException(e, { where: "configureRevenueCat" });
     console.warn("RevenueCat: configuration failed", e);
   }
 }
@@ -41,6 +45,7 @@ export async function identifyUser(userId: string) {
   try {
     await Purchases.logIn(userId);
   } catch (e) {
+    captureException(e, { where: "identifyUser", user_id: userId });
     console.warn("RevenueCat: Failed to identify user", e);
   }
 }

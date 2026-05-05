@@ -1,6 +1,7 @@
 /**
  * Shared helpers for the cron-chapters edge function.
- * Prompt construction, JSON schema validation, image-slide layout resolution.
+ * Weekly chapter prompt construction, JSON schema validation,
+ * image-slide layout resolution, and week labelling.
  */
 
 export type ChapterSlide = {
@@ -24,14 +25,42 @@ export function monthName(month: number): string {
   return MONTH_NAMES[(month - 1) % 12] ?? `Month ${month}`;
 }
 
+const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"];
+
+/**
+ * Compute the week-of-month for a Monday-start week, returning the ordinal label
+ * "Nth week of <Month>" — matches the Capsule list grouping headers.
+ *
+ * `weekStartIso` should be the YYYY-MM-DD string of the Monday that opens the week.
+ */
+export function weekOfMonthLabel(weekStartIso: string): string {
+  const d = new Date(`${weekStartIso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "this week";
+  // Anchor to UTC to avoid TZ drift; the date is already a calendar Monday.
+  const month = d.getUTCMonth();
+  const year = d.getUTCFullYear();
+
+  // First Monday of that month.
+  const first = new Date(Date.UTC(year, month, 1));
+  const dow = first.getUTCDay(); // 0=Sun..6=Sat
+  // Days to add to reach Monday (Mon=1). If first is Mon already, 0.
+  const offset = ((1 - dow) + 7) % 7;
+  const firstMonday = new Date(Date.UTC(year, month, 1 + offset));
+  const diffDays = Math.round(
+    (d.getTime() - firstMonday.getTime()) / (1000 * 60 * 60 * 24)
+  );
+  const weekNum = Math.max(1, Math.floor(diffDays / 7) + 1);
+  const ord = ORDINALS[weekNum] ?? `${weekNum}th`;
+  return `${ord} week of ${monthName(month + 1)}`;
+}
+
 export function buildChapterPrompt(
   chapterNumber: number,
-  month: number,
-  year: number,
+  weekLabel: string,
+  rangeLabel: string,
   momentCount: number,
   entries: { title: string | null; body: string; entry_date: string | null }[],
 ): string {
-  const name = monthName(month);
   const entriesText = entries
     .map((e, i) => {
       const title = e.title ? ` — ${e.title}` : "";
@@ -40,23 +69,23 @@ export function buildChapterPrompt(
     })
     .join("\n\n---\n\n");
 
-  return `You are a warm, thoughtful memory guide helping someone reflect on their month.
+  return `You are a warm, thoughtful memory guide helping someone reflect on their week.
 
-Below are ${momentCount} personal journal entries ("moments") written during ${name} ${year}. This is Chapter ${chapterNumber} of their life story.
+Below are ${momentCount} personal journal entries ("moments") written during the ${weekLabel} (${rangeLabel}). This is Chapter ${chapterNumber} of their life story.
 
 INSTRUCTIONS:
-- Write exactly 8 short reflection slides, each a single paragraph (2-4 sentences).
+- Write exactly 5 short reflection slides, each a single paragraph (2-4 sentences).
 - Mirror the user's own voice, vocabulary, and emotional register. If they write casually, be casual. If they write poetically, match that.
 - Reference specific details, feelings, people, and events from their entries. Do not invent facts.
 - The tone should feel like a personal letter to the writer — warm, honest, sometimes gently humorous.
-- Capture the arc of the month: what themes emerged, what small moments stood out, what feelings recurred.
+- Capture the arc of the week: what themes emerged, what small moments stood out, what feelings recurred.
 - Use simple markdown for emphasis: wrap key phrases in *asterisks* for italic emphasis (sparingly, 0-2 per slide).
 - Do NOT use emoji.
-- Do NOT use generic platitudes. Be specific to this person's month.
+- Do NOT use generic platitudes. Be specific to this person's week.
 
 OUTPUT FORMAT:
-Return a JSON array of exactly 8 objects. Each object has one key: "body" (string).
-Example: [{"body":"Your month started with..."}, ...]
+Return a JSON array of exactly 5 objects. Each object has one key: "body" (string).
+Example: [{"body":"Your week started with..."}, ...]
 
 Do not include any text outside the JSON array.
 
@@ -106,9 +135,13 @@ export function resolveImageSlide(
     }
   }
 
-  const capped = deduped.slice(0, MAX_COLLAGE_IMAGES);
-  const count = capped.length;
+  const count = Math.min(deduped.length, MAX_COLLAGE_IMAGES);
+  if (count < 1) return null;
+  const capped = deduped.slice(0, count);
 
+  // Layouts are defined in components/today/ChapterImageSlide.tsx — we have
+  // dedicated 1/2/3/4 layouts; counts ≥5 fall through to the alternating
+  // two-column v5 layout which handles arbitrary lengths.
   let layout: ImageSlideLayout;
   if (count === 1) layout = "v1";
   else if (count === 2) layout = "v2";

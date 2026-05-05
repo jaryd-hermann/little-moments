@@ -25,6 +25,7 @@ import { MicRecorder } from "@/components/composer/MicRecorder";
 import { callDigDeeper } from "@/lib/anthropic";
 import { setDigDeeperPendingResult } from "@/lib/digDeeperReturn";
 import { useTheme } from "@/hooks/useTheme";
+import { useEntries } from "@/hooks/useEntries";
 
 interface Message {
   role: "user" | "assistant";
@@ -39,8 +40,8 @@ type Stage =
   | "enhanced"
   | "revising";
 
-/** Number of agent question rounds before enhancement. Exactly 3 dots. */
-const CONVERSATION_ROUNDS = 3;
+/** Number of agent question rounds before enhancement. One question, then preview. */
+const CONVERSATION_ROUNDS = 1;
 
 /**
  * Strip conversational preamble/postamble wrapping the actual story.
@@ -87,8 +88,8 @@ const REPLY_FIELD_WIDTH_SUBTRACT = 40 + 28;
 
 const APP_ICON = require("@/assets/images/white-icon.png");
 
-const ASSISTANT_INTRO =
-  "I'll help you dig a bit deeper and turn this into a storyworthy moment.";
+/** Soft closer rendered in violet italic via AIMessageBubble's `_..._` markup. */
+const INITIAL_TRAILER = "_Any of this is interesting._";
 
 export default function DigDeeperScreen() {
   const { colors } = useTheme();
@@ -99,7 +100,10 @@ export default function DigDeeperScreen() {
     title?: string;
     body?: string;
     isCrashAndBurn?: string;
+    entryId?: string;
+    photoUri?: string;
   }>();
+  const { editEntry } = useEntries();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState("");
@@ -150,7 +154,7 @@ export default function DigDeeperScreen() {
 
       const aiMessage: Message = {
         role: "assistant",
-        content: `${ASSISTANT_INTRO}\n\n${response.message}`,
+        content: `${response.message.trim()}\n\n${INITIAL_TRAILER}`,
       };
       setMessages([aiMessage]);
       conversationHistory.current = [aiMessage];
@@ -222,7 +226,25 @@ export default function DigDeeperScreen() {
     }
   };
 
-  const handleAccept = () => {
+  const handleAccept = async () => {
+    // If invoked with an entryId, update that entry directly (post-save Dig Deeper flow).
+    if (params.entryId) {
+      try {
+        await editEntry(params.entryId, {
+          title: enhancedTitle || params.title || "",
+          body: enhancedBody,
+          ai_conversation: { messages: conversationHistory.current },
+          original_body: params.body ?? null,
+          ai_enhanced_body: enhancedBody,
+          is_ai_enhanced: true,
+        });
+      } catch {
+        Alert.alert("Update failed", "Could not save changes. Please try again.");
+        return;
+      }
+      router.back();
+      return;
+    }
     setDigDeeperPendingResult({
       enhancedBody,
       enhancedTitle,
@@ -233,11 +255,10 @@ export default function DigDeeperScreen() {
     router.back();
   };
 
-  const handleAskChanges = () => {
+  const handleAskChanges = async () => {
     setPrevEnhancedBody(enhancedBody);
     setEnhancedBody("");
     setRevisionStartIdx(messages.length);
-    setRevisionRound(0);
 
     const enhancedContextMessage: Message = {
       role: "assistant",
@@ -247,6 +268,49 @@ export default function DigDeeperScreen() {
       ...conversationHistory.current,
       enhancedContextMessage,
     ];
+
+    // Post-save Dig Deeper (entryId): single-question loop. Fetch a fresh question
+    // from Ellie and skip ahead so the next send goes straight to revise.
+    if (params.entryId) {
+      setRevisionRound(1);
+      setStage("revising");
+      setUserInput("");
+      setIsLoading(true);
+      try {
+        const response = await callDigDeeper({
+          stage: "follow_up",
+          title: enhancedTitle || params.title || "",
+          body: enhancedBody,
+          is_crash_and_burn: params.isCrashAndBurn === "true",
+          conversation_history: conversationHistory.current,
+          round: 1,
+        });
+        const aiMessage: Message = {
+          role: "assistant",
+          content: response.message,
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+        conversationHistory.current = [
+          ...conversationHistory.current,
+          aiMessage,
+        ];
+      } catch {
+        const fallback: Message = {
+          role: "assistant",
+          content: "What else feels worth saying about this moment?",
+        };
+        setMessages((prev) => [...prev, fallback]);
+        conversationHistory.current = [
+          ...conversationHistory.current,
+          fallback,
+        ];
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    setRevisionRound(0);
 
     const promptMessage: Message = {
       role: "assistant",
@@ -391,55 +455,83 @@ export default function DigDeeperScreen() {
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            borderBottomWidth: 1,
-            borderBottomColor: colors.border,
             paddingHorizontal: 20,
             paddingVertical: 12,
           }}
         >
-          <View style={{ width: 24 }} />
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Image
-              source={APP_ICON}
-              style={{ width: 26, height: 26, borderRadius: 6 }}
-            />
+          <Pressable onPress={() => router.back()} hitSlop={10}>
             <Text
               style={{
-                fontFamily: "LibreBaskerville-Bold",
-                fontSize: 18,
-                color: colors.text,
+                fontFamily: "Roboto-Regular",
+                fontSize: 14,
+                color: colors.textSecondary,
               }}
             >
-              Dig Deeper
+              ← Back
             </Text>
-          </View>
-          <Pressable onPress={() => router.back()} hitSlop={8}>
-            <Ionicons name="close" size={24} color={colors.icon} />
+          </Pressable>
+          <Text
+            style={{
+              fontFamily: "PMGothicLudington-Text110",
+              fontSize: 22,
+              color: colors.text,
+            }}
+          >
+            Dig Deeper
+          </Text>
+          <Pressable onPress={() => router.back()} hitSlop={10}>
+            <Text
+              style={{
+                fontFamily: "Roboto-Regular",
+                fontSize: 14,
+                color: colors.textSecondary,
+              }}
+            >
+              Done
+            </Text>
           </Pressable>
         </View>
 
-        {stage !== "enhanced" && stage !== "revising" && round > 0 && round <= CONVERSATION_ROUNDS && (
+        {/* Moment context card — shows what we're digging into */}
+        {(params.title || params.body) && (
           <View
             style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-              paddingVertical: 8,
+              marginHorizontal: 20,
+              marginTop: 4,
+              marginBottom: 8,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.surface,
             }}
           >
-            {Array.from({ length: CONVERSATION_ROUNDS }, (_, i) => (
-              <View
-                key={i}
+            {params.title ? (
+              <Text
                 style={{
-                  width: i + 1 <= round ? 20 : 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor:
-                    i + 1 <= round ? colors.primary : colors.border,
+                  fontFamily: "LibreBaskerville-Bold",
+                  fontSize: 15,
+                  color: colors.text,
+                  marginBottom: 4,
                 }}
-              />
-            ))}
+                numberOfLines={1}
+              >
+                {params.title}
+              </Text>
+            ) : null}
+            {params.body ? (
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 13,
+                  color: colors.textSecondary,
+                }}
+                numberOfLines={1}
+              >
+                {(params.body ?? "").trim()}
+              </Text>
+            ) : null}
           </View>
         )}
 
@@ -488,9 +580,13 @@ export default function DigDeeperScreen() {
           {stage === "enhanced" && enhancedBody && (
             <EnhancedCard
               enhancedBody={enhancedBody}
-              enhancedTitle={enhancedTitle}
+              enhancedTitle={enhancedTitle || params.title}
               onAccept={handleAccept}
               onAskChanges={handleAskChanges}
+              acceptLabel={params.entryId ? "UPDATE MOMENT" : undefined}
+              askChangesLabel={params.entryId ? "Go deeper" : undefined}
+              photoUri={params.photoUri || undefined}
+              hideEyebrow={Boolean(params.entryId)}
             />
           )}
         </ScrollView>

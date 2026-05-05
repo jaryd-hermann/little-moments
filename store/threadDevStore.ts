@@ -24,6 +24,7 @@ export function makeDummyThread(): Thread {
     confidence: 0.88,
     dismissed: false,
     created_at: new Date().toISOString(),
+    viewed_at: null,
     entry_a: {
       id: "dev-entry-a",
       title: "The East-Facing Window",

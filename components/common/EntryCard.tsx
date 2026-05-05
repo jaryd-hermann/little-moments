@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import type { Entry } from "@/store/entryStore";
 import { format } from "date-fns";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
+import { useTheme } from "@/hooks/useTheme";
 
 interface EntryCardProps {
   entry: Entry;
@@ -10,6 +11,7 @@ interface EntryCardProps {
 }
 
 export function EntryCard({ entry, compact }: EntryCardProps) {
+  const { colors } = useTheme();
   const dateStr = entry.entry_date
     ? format(new Date(entry.entry_date), "MMM d")
     : entry.entry_month
@@ -27,8 +29,8 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
       style={{
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: "rgba(255, 255, 255, 0.1)",
-        backgroundColor: "#0A0A0A",
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
         padding: compact ? 12 : 16,
       }}
     >
@@ -37,7 +39,7 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
           style={{
             fontFamily: "LibreBaskerville-Bold",
             fontSize: compact ? 15 : 18,
-            color: "#FFFFFF",
+            color: colors.text,
           }}
           numberOfLines={1}
         >
@@ -49,7 +51,7 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
         style={{
           fontFamily: "Roboto-Light",
           fontSize: compact ? 13 : 14,
-          color: "rgba(255, 255, 255, 0.7)",
+          color: colors.textSecondary,
           marginTop: 4,
           lineHeight: compact ? 18 : 22,
         }}
@@ -68,7 +70,7 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
                 width: compact ? 32 : 48,
                 height: compact ? 32 : 48,
                 borderRadius: 8,
-                backgroundColor: "#1A1A1A",
+                backgroundColor: colors.surfaceSecondary,
               }}
             />
           ))}
@@ -79,7 +81,7 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
         style={{
           fontFamily: "Roboto-Light",
           fontSize: 11,
-          color: "rgba(255, 255, 255, 0.4)",
+          color: colors.textMuted,
           marginTop: 8,
           textAlign: "right",
         }}

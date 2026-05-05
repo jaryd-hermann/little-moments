@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 import { View, Text, SectionList, Pressable } from "react-native";
-import { format } from "date-fns";
+import {
+  format,
+  isSameWeek,
+  startOfWeek,
+  subWeeks,
+  getWeekOfMonth,
+} from "date-fns";
 import {
   MemorySearchBar,
   MEMORIES_SEARCH_ROW_HEIGHT,
@@ -14,7 +20,6 @@ import type { CapsuleFilter } from "./CapsuleStatBar";
 import { useTheme } from "@/hooks/useTheme";
 import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
 
-type Grouping = "day" | "month" | "year";
 type SortOrder = "newest" | "oldest";
 
 type ListItem =
@@ -26,28 +31,60 @@ interface ListViewMemoriesProps {
   searchQuery: string;
   onChangeQuery: (q: string) => void;
   onOpenChapter?: (chapterId: string) => void;
+  /**
+   * Reports whether a given chapter is paywalled-locked for the current
+   * user. The parent owns the lock state (it has `useChapters.isChapterLocked`)
+   * and the actual paywall routing in `onOpenChapter` — the list just uses
+   * this to render the lock icon next to chapter rows.
+   */
+  isChapterLockedById?: (chapterId: string) => boolean;
+  /**
+   * Reports whether a given thread is paywalled-locked for the current user.
+   * Without this the list would render thread cards fully openable even
+   * when they sit past the free-tier cap (the Connect tab flipbook applies
+   * this gate but the list view previously did not, letting users bypass
+   * the paywall by tapping into Capsule). When a thread is locked, the
+   * card shows the same lock overlay as Connect and routes through the
+   * `paywall` flag-aware entry on tap.
+   */
+  isThreadLocked?: (thread: Thread) => boolean;
   capsuleFilter?: CapsuleFilter;
   threads?: Thread[];
+  showSearch?: boolean;
 }
-
-const GROUPING_OPTIONS: { value: Grouping; label: string }[] = [
-  { value: "day", label: "By Day" },
-  { value: "month", label: "By Month" },
-  { value: "year", label: "By Year" },
-];
 
 const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
   { value: "newest", label: "Newest" },
   { value: "oldest", label: "Oldest" },
 ];
 
+const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"];
+
+/** Monday-start ISO week. Returns a stable group label and a sort key (epoch ms). */
+function weekGroup(date: Date, today: Date): { label: string; sortKey: number } {
+  const sortKey = startOfWeek(date, { weekStartsOn: 1 }).getTime();
+  if (isSameWeek(date, today, { weekStartsOn: 1 })) {
+    return { label: "THIS WEEK", sortKey };
+  }
+  if (isSameWeek(date, subWeeks(today, 1), { weekStartsOn: 1 })) {
+    return { label: "LAST WEEK", sortKey };
+  }
+  const weekOfMonth = getWeekOfMonth(date, { weekStartsOn: 1 });
+  const ordinal = ORDINALS[weekOfMonth] ?? `${weekOfMonth}th`;
+  const monthName = format(date, "MMMM").toUpperCase();
+  return { label: `${ordinal.toUpperCase()} WEEK OF ${monthName}`, sortKey };
+}
+
 export function ListViewMemories({
   entries,
   searchQuery,
   onChangeQuery,
   onOpenChapter,
+  isChapterLockedById,
+  isThreadLocked,
   capsuleFilter = "all",
   threads = [],
+  showSearch = false,
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
   const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
@@ -56,9 +93,7 @@ export function ListViewMemories({
     () => threadOrdinalByIdMap(threads),
     [threads]
   );
-  const [grouping, setGrouping] = useState<Grouping>("day");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
-  const [showDropdown, setShowDropdown] = useState(false);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const filteredByType = useMemo(() => {
@@ -77,6 +112,7 @@ export function ListViewMemories({
   }, [entries, capsuleFilter, pinnedOnly]);
 
   const sections = useMemo(() => {
+    const today = new Date();
     const sorted = [...filteredByType].sort((a, b) => {
       const da = a.entry_date ?? "";
       const db = b.entry_date ?? "";
@@ -85,257 +121,125 @@ export function ListViewMemories({
         : da.localeCompare(db);
     });
 
-    if (grouping === "day") {
-      const entryOnlyGrouped = new Map<string, Entry[]>();
-      for (const entry of sorted) {
-        const date = entry.entry_date ? new Date(entry.entry_date) : null;
-        const key =
-          date != null && !Number.isNaN(date.getTime())
-            ? format(date, "EEEE, MMMM d, yyyy")
-            : `${entry.entry_year}`;
-        if (!entryOnlyGrouped.has(key)) entryOnlyGrouped.set(key, []);
-        entryOnlyGrouped.get(key)!.push(entry);
+    // Group entries by their Monday-start week.
+    // IMPORTANT: parse `entry_date` as a *local* calendar date (append
+    // `T00:00:00`). `new Date("YYYY-MM-DD")` is parsed as UTC midnight per
+    // the JS spec, which in any non-UTC timezone shifts the entry to the
+    // previous calendar day — and a chapter dated Monday Apr 27 would land
+    // in the prior Monday-start week, causing two headers ("LAST WEEK" +
+    // "4TH WEEK OF APRIL") for the same calendar week.
+    const entryGroups = new Map<string, { sortKey: number; entries: Entry[] }>();
+    for (const entry of sorted) {
+      const date = entry.entry_date
+        ? new Date(`${entry.entry_date}T00:00:00`)
+        : null;
+      if (!date || Number.isNaN(date.getTime())) continue;
+      const { label, sortKey } = weekGroup(date, today);
+      let bucket = entryGroups.get(label);
+      if (!bucket) {
+        bucket = { sortKey, entries: [] };
+        entryGroups.set(label, bucket);
       }
+      bucket.entries.push(entry);
+    }
 
-      const threadsByDayKey = new Map<string, Thread[]>();
-      for (const t of threads) {
-        if (t.dismissed) continue;
-        const created = new Date(t.created_at);
-        if (Number.isNaN(created.getTime())) continue;
-        const key = format(created, "EEEE, MMMM d, yyyy");
-        if (!threadsByDayKey.has(key)) threadsByDayKey.set(key, []);
-        threadsByDayKey.get(key)!.push(t);
+    // Group threads by the same week buckets.
+    const threadGroups = new Map<string, Thread[]>();
+    for (const t of threads) {
+      if (t.dismissed) continue;
+      const created = new Date(t.created_at);
+      if (Number.isNaN(created.getTime())) continue;
+      const { label } = weekGroup(created, today);
+      if (!threadGroups.has(label)) threadGroups.set(label, []);
+      threadGroups.get(label)!.push(t);
+    }
+    for (const [label, arr] of threadGroups) {
+      const seen = new Set<string>();
+      const deduped: Thread[] = [];
+      for (const t of arr) {
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        deduped.push(t);
       }
-      for (const [k, arr] of threadsByDayKey) {
-        const seen = new Set<string>();
-        const deduped: Thread[] = [];
-        for (const t of arr) {
-          if (seen.has(t.id)) continue;
-          seen.add(t.id);
-          deduped.push(t);
-        }
-        deduped.sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() -
-            new Date(a.created_at).getTime()
-        );
-        threadsByDayKey.set(k, deduped);
+      deduped.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() -
+          new Date(a.created_at).getTime()
+      );
+      threadGroups.set(label, deduped);
+    }
+
+    const allLabels = new Set([
+      ...entryGroups.keys(),
+      ...threadGroups.keys(),
+    ]);
+
+    const labelSortKey = (label: string): number => {
+      const eg = entryGroups.get(label);
+      if (eg) return eg.sortKey;
+      const tg = threadGroups.get(label);
+      if (tg?.[0]) {
+        return startOfWeek(new Date(tg[0].created_at), { weekStartsOn: 1 }).getTime();
       }
+      return 0;
+    };
 
-      const allKeys = new Set([
-        ...entryOnlyGrouped.keys(),
-        ...threadsByDayKey.keys(),
-      ]);
-
-      const getRepTime = (key: string): number => {
-        const ents = entryOnlyGrouped.get(key);
-        if (ents?.length) {
-          const d = ents[0].entry_date;
-          return d ? new Date(d).getTime() : 0;
-        }
-        const ths = threadsByDayKey.get(key);
-        if (ths?.length) {
-          return new Date(ths[0].created_at).getTime();
-        }
-        return 0;
-      };
-
-      const sortedKeys = [...allKeys].sort((a, b) => {
-        const ta = getRepTime(a);
-        const tb = getRepTime(b);
+    return [...allLabels]
+      .sort((a, b) => {
+        const ta = labelSortKey(a);
+        const tb = labelSortKey(b);
         return sortOrder === "newest" ? tb - ta : ta - tb;
-      });
-
-      return sortedKeys.map((title) => {
-        const threadItems: ListItem[] = (threadsByDayKey.get(title) ?? []).map(
+      })
+      .map((label) => {
+        // Within each week, the chapter card always renders last — even
+        // when the chosen sort would otherwise put it first (e.g. "oldest"
+        // sort surfaces the Monday-dated chapter ahead of the rest of the
+        // week's moments). Threads first, then moments in their sorted
+        // order, then any chapter rows.
+        const groupEntries = entryGroups.get(label)?.entries ?? [];
+        const moments = groupEntries.filter((e) => e.entry_type !== "chapter");
+        const chaptersInWeek = groupEntries.filter(
+          (e) => e.entry_type === "chapter"
+        );
+        const entryItems: ListItem[] = [
+          ...moments.map((entry) => ({ type: "entry" as const, entry })),
+          ...chaptersInWeek.map((entry) => ({ type: "entry" as const, entry })),
+        ];
+        const threadItems: ListItem[] = (threadGroups.get(label) ?? []).map(
           (thread) => ({ type: "thread", thread })
         );
-        const entryItems: ListItem[] = (entryOnlyGrouped.get(title) ?? []).map(
-          (entry) => ({ type: "entry", entry })
-        );
-        const data = [...threadItems, ...entryItems];
         return {
-          title,
+          title: label,
           count: entryItems.length,
-          data,
+          data: [...threadItems, ...entryItems],
         };
       });
-    }
-
-    const grouped = new Map<string, ListItem[]>();
-    for (const entry of sorted) {
-      let key: string;
-      const date = entry.entry_date ? new Date(entry.entry_date) : null;
-
-      if (grouping === "year") {
-        key = `${entry.entry_year}`;
-      } else {
-        key = date
-          ? format(date, "MMMM yyyy")
-          : `${entry.entry_year}`;
-      }
-
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push({ type: "entry", entry });
-    }
-
-    return Array.from(grouped.entries()).map(([title, data]) => ({
-      title,
-      count: data.filter((d) => d.type === "entry").length,
-      data,
-    }));
-  }, [filteredByType, grouping, sortOrder, threads]);
-
-  const currentLabel =
-    GROUPING_OPTIONS.find((o) => o.value === grouping)?.label ?? "By Day";
+  }, [filteredByType, sortOrder, threads]);
 
   const currentSortLabel =
     SORT_OPTIONS.find((o) => o.value === sortOrder)?.label ?? "Newest";
 
-  const renderMonthCard = (section: { title: string; count: number }) => (
-    <Pressable
-      style={{
-        backgroundColor: colors.surface,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: colors.border,
-        padding: 24,
-        minHeight: 120,
-        justifyContent: "center",
-        alignItems: "center",
-        marginTop: 24,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: "LibreBaskerville-Bold",
-          fontSize: 18,
-          color: colors.text,
-        }}
-      >
-        {section.title}
-      </Text>
-      <Text
-        style={{
-          fontFamily: "Roboto-Light",
-          fontSize: 13,
-          color: colors.textMuted,
-          marginTop: 6,
-        }}
-      >
-        {section.count} little moment{section.count !== 1 ? "s" : ""}
-      </Text>
-    </Pressable>
-  );
-
   return (
     <View className="flex-1">
-      {/* Search bar + grouping dropdown inline */}
-      <View
-        style={{
-          width: "100%",
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 12,
-        }}
-      >
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <MemorySearchBar
-            query={searchQuery}
-            onChangeQuery={onChangeQuery}
-          />
-        </View>
-        <View style={{ flexDirection: "row", gap: 6, flexShrink: 0 }}>
-          <View style={{ position: "relative" }}>
-            <Pressable
-              onPress={() => {
-                setShowDropdown(!showDropdown);
-                setShowSortDropdown(false);
-              }}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                height: MEMORIES_SEARCH_ROW_HEIGHT,
-                minHeight: MEMORIES_SEARCH_ROW_HEIGHT,
-                paddingHorizontal: 10,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-                gap: 4,
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Regular",
-                  fontSize: 12,
-                  color: colors.text,
-                }}
-                numberOfLines={1}
-              >
-                {currentLabel}
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 10 }}>
-                {showDropdown ? "▲" : "▼"}
-              </Text>
-            </Pressable>
-            {showDropdown && (
-              <View
-                style={{
-                  position: "absolute",
-                  top: 44,
-                  right: 0,
-                  zIndex: 100,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: colors.surfaceSecondary,
-                  overflow: "hidden",
-                  minWidth: 128,
-                }}
-              >
-                {GROUPING_OPTIONS.map((opt) => (
-                  <Pressable
-                    key={opt.value}
-                    onPress={() => {
-                      setGrouping(opt.value);
-                      setShowDropdown(false);
-                    }}
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 12,
-                      backgroundColor:
-                        grouping === opt.value
-                          ? colors.primaryLight + "28"
-                          : "transparent",
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Regular",
-                        fontSize: 13,
-                        color:
-                          grouping === opt.value
-                            ? colors.primary
-                            : colors.text,
-                      }}
-                    >
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
+      {showSearch && (
+        <View
+          style={{
+            width: "100%",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <MemorySearchBar
+              query={searchQuery}
+              onChangeQuery={onChangeQuery}
+            />
           </View>
-
-          <View style={{ position: "relative" }}>
+          <View style={{ position: "relative", flexShrink: 0 }}>
             <Pressable
-              onPress={() => {
-                setShowSortDropdown(!showSortDropdown);
-                setShowDropdown(false);
-              }}
+              onPress={() => setShowSortDropdown((v) => !v)}
               style={{
                 flexDirection: "row",
                 alignItems: "center",
@@ -413,82 +317,58 @@ export function ListViewMemories({
             )}
           </View>
         </View>
-      </View>
+      )}
 
-      {grouping === "month" || grouping === "year" ? (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) =>
-            item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
-          }
-          renderItem={() => null}
-          renderSectionHeader={({ section }) =>
-            renderMonthCard(section)
-          }
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          stickySectionHeadersEnabled={false}
-        />
-      ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={(item) =>
-            item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
-          }
-          renderItem={({ item }) => {
-            if (item.type === "thread") {
-              return (
-                <View style={{ marginBottom: 12 }}>
-                  <ThreadCard
-                    thread={item.thread}
-                    ordinalRank={
-                      threadOrdinals.get(item.thread.id) ?? 1
-                    }
-                  />
-                </View>
-              );
-            }
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) =>
+          item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
+        }
+        renderItem={({ item }) => {
+          if (item.type === "thread") {
             return (
               <View style={{ marginBottom: 12 }}>
-                <EntryRow entry={item.entry} onOpenChapter={onOpenChapter} />
+                <ThreadCard
+                  thread={item.thread}
+                  locked={isThreadLocked?.(item.thread) ?? false}
+                  ordinalRank={threadOrdinals.get(item.thread.id) ?? 1}
+                />
               </View>
             );
-          }}
-          renderSectionHeader={({ section }) => (
-            <View
+          }
+          const isChapterEntry = item.entry.entry_type === "chapter";
+          const chapterLocked =
+            isChapterEntry && item.entry.chapter_id
+              ? (isChapterLockedById?.(item.entry.chapter_id) ?? false)
+              : false;
+          return (
+            <View style={{ marginBottom: 12 }}>
+              <EntryRow
+                entry={item.entry}
+                onOpenChapter={onOpenChapter}
+                chapterLocked={chapterLocked}
+              />
+            </View>
+          );
+        }}
+        renderSectionHeader={({ section }) => (
+          <View style={{ paddingTop: 18, paddingBottom: 10 }}>
+            <Text
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                paddingTop: 28,
-                paddingBottom: 16,
+                fontFamily: "Roboto-Medium",
+                fontSize: 11,
+                color: colors.textMuted,
+                letterSpacing: 1.4,
               }}
             >
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 18,
-                  color: colors.text,
-                }}
-              >
-                {section.title}
-              </Text>
-              <Text
-                style={{
-                  fontFamily: "Roboto-Light",
-                  fontSize: 12,
-                  color: colors.textMuted,
-                }}
-              >
-                {section.count} moment{section.count !== 1 ? "s" : ""}
-              </Text>
-            </View>
-          )}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          stickySectionHeadersEnabled={false}
-        />
-      )}
+              {section.title}
+            </Text>
+          </View>
+        )}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
+        stickySectionHeadersEnabled={false}
+      />
     </View>
   );
 }

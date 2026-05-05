@@ -2,7 +2,7 @@ import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import type { ChapterRecord } from "@/lib/chapters";
-import { chapterCardTitle, chapterMonthName } from "@/lib/chapters";
+import { chapterCardTitle, chapterWeekLabel, chapterMonthName } from "@/lib/chapters";
 
 const CARD_BG = "#024F46";
 const CARD_BORDER = "#FFFFEB";
@@ -77,7 +77,13 @@ export function ChapterCard({ chapter, onPress }: ChapterCardProps) {
               lineHeight: 19,
             }}
           >
-            {chapter.moment_count} moments woven into your {chapterMonthName(chapter.ref_month)} story.
+            {chapter.moment_count} moments woven into your{" "}
+            {chapter.ref_week_start_date
+              ? chapterWeekLabel(chapter)
+              : chapter.ref_month != null
+                ? `${chapterMonthName(chapter.ref_month)} story`
+                : "story"}
+            .
           </Text>
         </View>
         <View style={{ marginLeft: 12 }}>

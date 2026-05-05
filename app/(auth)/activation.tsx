@@ -1,230 +1,143 @@
-import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
-import { ActivationClosingChat } from "@/components/ellie/ActivationClosingChat";
-import { CongratsCard } from "@/components/ellie/CongratsCard";
 import { EllieChatFlow } from "@/components/ellie/EllieChatFlow";
-import { EllieMessage } from "@/components/ellie/EllieMessage";
-import { MeetEllieCard } from "@/components/ellie/MeetEllieCard";
-import {
-  DailyPromptReminderSchedule,
-  useReminderScheduleState,
-} from "@/components/settings/DailyPromptReminderSchedule";
+import type {
+  InputMethod,
+  MomentCaptureAnalytics,
+} from "@/components/ellie/EllieChatFlow";
 import { getDailyWord } from "@/constants/words";
-import { useAuth } from "@/hooks/useAuth";
 import { useEntries } from "@/hooks/useEntries";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
-import { useMediaLibrary } from "@/hooks/useMediaLibrary";
+import { useMediaLibrary, type PickedPhoto } from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
-import { requestNotificationPermissions } from "@/lib/notifications";
-import { syncPushRegistration } from "@/lib/pushRegistration";
+import { onboardingEventProps } from "@/lib/onboardingEvents";
+import { setActivationPhotoUri } from "@/lib/onboardingHandoff";
+import {
+  categorizePhotoBucket,
+  photoAgeDays,
+  photoYear,
+  type PhotoBucket,
+} from "@/lib/photoBucket";
 import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
-import { useSettingsStore } from "@/store/settingsStore";
-import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
-import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import type { InputMethod } from "@/components/ellie/EllieChatFlow";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-type ActivationPhase =
-  | "word_flow"
-  | "word_saved"
-  | "photo_permission"
-  | "photo_flow"
-  | "photo_saved"
-  | "notifications"
-  | "notification_reminder_time"
-  | "closing_chat"
-  | "wrapup";
-
-const CTA_LAVENDER = "#f0d7ff";
-const NOTIFICATION_HERO = require("@/assets/images/notification.png");
-const ACTIVATION_PREVIEW_INSTRUCTION = `Here's a preview of your moment. Tap anywhere in the card to edit it, or tap the photo icon to add a pic to the moment, or tap "Go Deeper" and I'll help pull out more details for this moment.
+const ACTIVATION_PREVIEW_INSTRUCTION = `Here's a preview of your moment. Tap anywhere in the card to edit it.
 
 If you're happy, tap "Add Moment" to save it!`;
-const ACTIVATION_WORD_WELCOME_FIRST =
-  "Welcome! Let's capture your first memory together — it only takes two minutes.";
-const ACTIVATION_WORD_WELCOME_REST =
-  "Read the word below and let it take you somewhere. What memory or association does this unlock?\n\nThere's no right or wrong! Just speak about an associated memory for max 2 minutes.";
-const WORD_SAVED_PHOTO_OFFER_TYPING_MS = 5000;
-
-function ActivationNotificationReminderInner({
-  userId,
-  onDone,
-}: {
-  userId: string | undefined;
-  onDone: () => void;
-}) {
-  const posthog = usePostHog();
-  const { selectedSlot, times, selectSlot, changeTimeForSlot } = useReminderScheduleState();
-  const setNotificationTime = useSettingsStore((s) => s.setNotificationTime);
-  const [busy, setBusy] = useState(false);
-
-  const onContinue = async () => {
-    const t = times[selectedSlot];
-    setBusy(true);
-    try {
-      setNotificationTime(t.hour, t.minute);
-      if (userId) {
-        await syncPushRegistration({
-          notificationsEnabled: true,
-          reminderHour: t.hour,
-          reminderMinute: t.minute,
-        });
-      }
-      posthog.capture("activation_daily_reminder_time_set", { slot: selectedSlot });
-    } finally {
-      setBusy(false);
-      onDone();
-    }
-  };
-
-  return (
-    <>
-      <EllieMessage
-        content="When do you want to get your daily reminder to share a moment?"
-        showAvatar
-      />
-      <DailyPromptReminderSchedule
-        selectedSlot={selectedSlot}
-        times={times}
-        onSelectSlot={selectSlot}
-        onChangeTimeForSlot={changeTimeForSlot}
-        continueLabel="Continue"
-        onContinue={() => void onContinue()}
-        continueDisabled={busy}
-      />
-    </>
-  );
-}
 
 export default function ActivationScreen() {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const posthog = usePostHog();
-  const { profile } = useAuth();
   const setProfile = useAuthStore((s) => s.setProfile);
   const user = useAuthStore((s) => s.user);
   const { saveEntry, fetchEntries } = useEntries();
-  const setNotificationEnabled = useSettingsStore((s) => s.setNotificationEnabled);
-  const {
-    checkPermission,
-    requestPermission,
-    getRandomAsset,
-  } = useMediaLibrary();
-  const { ensureFullPhotoAccess, fullPhotoAccessModal } = useFullPhotoAccessExplainer({
-    checkPermission,
-    requestPermission,
-  });
+  const { checkPermission, requestPermission, getRandomAsset } =
+    useMediaLibrary();
+  const { ensureFullPhotoAccess, fullPhotoAccessModal } =
+    useFullPhotoAccessExplainer({ checkPermission, requestPermission });
 
-  const [phase, setPhase] = useState<ActivationPhase>("word_flow");
+  const params = useLocalSearchParams<{ prompt_type?: string }>();
+  const promptType: "photo" | "word" = params.prompt_type === "word" ? "word" : "photo";
+
+  const word = useMemo(() => getDailyWord(), []);
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
-  const [momentCount, setMomentCount] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
-  const completedPhotoRef = useRef(false);
-  const notificationsEnabledRef = useRef(false);
-  /** Sync with latest photoUri for race-safe checks (concurrent getRandomAsset completions). */
-  const photoUriRef = useRef<string | undefined>(undefined);
-  const photoLoadGenerationRef = useRef(0);
+  const [photoBucket, setPhotoBucket] = useState<PhotoBucket | undefined>();
+  const [shuffleCount, setShuffleCount] = useState(0);
+  const [isShufflingPhoto, setIsShufflingPhoto] = useState(false);
+
+  const startedAtRef = useRef<number>(Date.now());
+  const inputMethodRef = useRef<InputMethod | null>(null);
 
   useEffect(() => {
-    photoUriRef.current = photoUri;
-  }, [photoUri]);
+    posthog.capture(
+      "viewed_activation",
+      onboardingEventProps(4, { prompt_type: promptType })
+    );
+  }, [promptType]);
 
-  useEffect(() => {
-    posthog.capture("started_activation");
-  }, []);
-
-  const [wordSavedPhotoOfferVisible, setWordSavedPhotoOfferVisible] = useState(false);
-
-  const word = getDailyWord();
-
-  const scrollToEnd = useCallback(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
-  }, []);
-
-  useEffect(() => {
-    if (phase === "notification_reminder_time") {
-      scrollToEnd();
-    }
-  }, [phase, scrollToEnd]);
-
-  useEffect(() => {
-    if (phase !== "word_saved") {
-      setWordSavedPhotoOfferVisible(false);
-      return;
-    }
-    setWordSavedPhotoOfferVisible(false);
-    const t = setTimeout(() => {
-      setWordSavedPhotoOfferVisible(true);
-      scrollToEnd();
-    }, WORD_SAVED_PHOTO_OFFER_TYPING_MS);
-    return () => clearTimeout(t);
-  }, [phase, scrollToEnd]);
-
-  const handleWordComplete = useCallback(
-    async (entry: {
-      title: string;
-      body: string;
-      rawText: string;
-      analytics?: any;
-    }) => {
-      const today = format(new Date(), "yyyy-MM-dd");
-      await saveEntry({
-        title: entry.title,
-        body: entry.body,
-        entry_type: "moment",
-        entry_date: today,
-        entry_month: new Date().getMonth() + 1,
-        entry_year: new Date().getFullYear(),
-        date_precision: "exact",
-        word_of_day: word,
-        ai_conversation: null,
-        ai_enhanced_body: null,
-        original_body: entry.rawText,
-        is_ai_enhanced: true,
-        streak_day_number: 1,
-        chapter_id: null,
-      });
-
-      if (user) {
-        await supabase
-          .from("profiles")
-          .update({ activation_word_completed: true })
-          .eq("id", user.id);
-      }
-
-      setMomentCount(1);
-      posthog.capture("activation_word_saved", {
-        prompt_type: "word",
-        ...entry.analytics,
-      });
-      setPhase("word_saved");
+  const applyPickedPhoto = useCallback(
+    (photo: PickedPhoto, reason: "initial" | "shuffle") => {
+      setPhotoUri(photo.asset.uri);
+      setPhotoDate(photo.asset.creationTime);
+      setPhotoBucket(photo.bucket);
+      posthog.capture(
+        "photo_shown",
+        onboardingEventProps(4, {
+          surface: "activation",
+          reason,
+          photo_bucket: photo.bucket,
+          photo_age_days: photoAgeDays(photo.asset.creationTime),
+          photo_year: photoYear(photo.asset.creationTime),
+          selection_path: photo.selectionPath,
+          shuffles_so_far: shuffleCount,
+        })
+      );
     },
-    [saveEntry, word, user, posthog]
+    [posthog, shuffleCount]
   );
 
-  const handlePhotoComplete = useCallback(
+  // Photo path: load a random photo on mount.
+  useEffect(() => {
+    if (promptType !== "photo") return;
+    let cancelled = false;
+    void (async () => {
+      const ok = await checkPermission();
+      if (!ok || cancelled) return;
+      const photo = await getRandomAsset();
+      if (cancelled || !photo) return;
+      applyPickedPhoto(photo, "initial");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [promptType, checkPermission, getRandomAsset, applyPickedPhoto]);
+
+  const handlePhotoShuffle = useCallback(async () => {
+    setIsShufflingPhoto(true);
+    setShuffleCount((c) => c + 1);
+    posthog.capture(
+      "photo_shuffled",
+      onboardingEventProps(4, {
+        surface: "activation",
+        from_photo_bucket: photoBucket ?? null,
+        from_photo_age_days: photoDate != null ? photoAgeDays(photoDate) : null,
+        shuffles_so_far: shuffleCount + 1,
+      })
+    );
+    try {
+      const photo = await getRandomAsset();
+      if (photo) {
+        applyPickedPhoto(photo, "shuffle");
+      }
+    } finally {
+      setIsShufflingPhoto(false);
+    }
+  }, [getRandomAsset, posthog, photoBucket, photoDate, shuffleCount, applyPickedPhoto]);
+
+  const handleComplete = useCallback(
     async (entry: {
       title: string;
       body: string;
       rawText: string;
       attachedPhotoUri?: string;
-      analytics?: any;
+      attachedPhotoTakenAtMs?: number;
+      analytics?: MomentCaptureAnalytics;
     }) => {
       const today = format(new Date(), "yyyy-MM-dd");
+      const photoBucketAtSave = entry.attachedPhotoTakenAtMs
+        ? categorizePhotoBucket(entry.attachedPhotoTakenAtMs)
+        : null;
+      const photoAgeDaysAtSave =
+        entry.attachedPhotoTakenAtMs != null
+          ? photoAgeDays(entry.attachedPhotoTakenAtMs)
+          : null;
       const saved = await saveEntry({
         title: entry.title,
         body: entry.body,
@@ -233,479 +146,162 @@ export default function ActivationScreen() {
         entry_month: new Date().getMonth() + 1,
         entry_year: new Date().getFullYear(),
         date_precision: "exact",
-        word_of_day: null,
+        word_of_day: promptType === "word" ? word : null,
         ai_conversation: null,
         ai_enhanced_body: null,
         original_body: entry.rawText,
         is_ai_enhanced: true,
         streak_day_number: 1,
         chapter_id: null,
+        photo_bucket_at_save: photoBucketAtSave,
+        photo_age_days_at_save: photoAgeDaysAtSave,
       });
 
       if (entry.attachedPhotoUri && user?.id && saved?.id) {
+        // Stash the local URI so the notifications-prompt screen can attach
+        // it to the first-moment celebration push. The entry's `media` row
+        // after upload only has the remote `storage_url`, which iOS
+        // notification attachments won't accept.
+        setActivationPhotoUri(entry.attachedPhotoUri);
+        const entryId = saved.id;
+        const takenAtIso = entry.attachedPhotoTakenAtMs
+          ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
+          : null;
         try {
           const { publicUrl, storagePath } = await uploadEntryMedia(
             user.id,
-            saved.id,
+            entryId,
             entry.attachedPhotoUri,
             "image"
           );
           await supabase.from("entry_media").insert({
-            entry_id: saved.id,
+            entry_id: entryId,
             user_id: user.id,
             storage_path: storagePath,
             storage_url: publicUrl,
             media_type: "image",
             display_order: 0,
+            taken_at: takenAtIso,
           });
         } catch (err) {
           console.error("[Activation] Failed to upload media:", err);
         }
       }
 
-      await fetchEntries();
+      await fetchEntries(saved?.id);
 
       if (user) {
         await supabase
           .from("profiles")
-          .update({ activation_photo_completed: true })
+          .update({
+            ...(promptType === "word"
+              ? { activation_word_completed: true }
+              : { activation_photo_completed: true }),
+            onboarding_phase: "reveal",
+          })
           .eq("id", user.id);
+        const { data: fresh } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
+        if (fresh) setProfile(fresh as Profile);
       }
 
-      setMomentCount(2);
-      completedPhotoRef.current = true;
-      posthog.capture("activation_photo_saved", {
-        prompt_type: "photo",
-        ...entry.analytics,
+      const msToSave = Math.max(0, Date.now() - startedAtRef.current);
+      posthog.capture(
+        "activation_saved",
+        onboardingEventProps(4, {
+          prompt_type: promptType,
+          input_method: inputMethodRef.current,
+          ms_to_save: msToSave,
+          ...entry.analytics,
+        })
+      );
+
+      router.replace({
+        pathname: "/(auth)/reveal",
+        params: saved?.id ? { entryId: saved.id } : undefined,
       });
-      setPhase("photo_saved");
+
+      return saved ?? null;
     },
-    [saveEntry, fetchEntries, user, posthog]
+    [saveEntry, fetchEntries, promptType, word, user, posthog, setProfile]
   );
 
-  const handleRequestPhotoAccess = useCallback(async () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const alreadyGranted = await checkPermission();
-
-    const loadPhotoAndNavigate = async (navigate: boolean) => {
-      const generation = ++photoLoadGenerationRef.current;
-      if (navigate) {
-        setPhase("photo_flow");
-      }
-      console.log("[Activation] loadPhoto: fetching random asset...");
-      const photo = await getRandomAsset();
-      console.log("[Activation] loadPhoto: got photo:", photo?.uri?.substring(0, 60) ?? "null");
-      if (photo?.uri) {
-        photoUriRef.current = photo.uri;
-        setPhotoUri(photo.uri);
-        setPhotoDate(photo.creationTime);
-        if (!navigate) setPhase("photo_flow");
-        return;
-      }
-      // Never leave photo_flow for a late/stale empty result — user already entered this step.
-      // (Concurrent getRandomAsset calls used to fire setPhase("notifications") after a photo loaded.)
-      if (!photoUriRef.current && generation === photoLoadGenerationRef.current) {
-        setPhase((prev) => (prev === "photo_flow" ? prev : "notifications"));
-      }
-    };
-
-    if (alreadyGranted) {
-      await loadPhotoAndNavigate(true);
-      return;
-    }
-
-    const granted = await ensureFullPhotoAccess();
-    if (granted) {
-      await loadPhotoAndNavigate(true);
-    } else {
-      setPhase("notifications");
-    }
-  }, [checkPermission, ensureFullPhotoAccess, getRandomAsset]);
-
-  const handlePhotoShuffle = useCallback(async () => {
-    const photo = await getRandomAsset();
-    if (photo?.uri) {
-      photoUriRef.current = photo.uri;
-      setPhotoUri(photo.uri);
-      setPhotoDate(photo.creationTime);
-    }
-  }, [getRandomAsset]);
-
-  const handleNotification = useCallback(async (enable: boolean) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    let granted = false;
-    if (enable) {
-      granted = await requestNotificationPermissions();
-    }
-    notificationsEnabledRef.current = granted;
-    posthog.capture(granted ? "activation_notifications_allowed" : "activation_notifications_skipped");
-    setNotificationEnabled(granted);
-
+  const handleSkipOnboarding = useCallback(async () => {
+    posthog.capture(
+      "activation_skipped",
+      onboardingEventProps(4, { prompt_type: promptType })
+    );
     if (user) {
-      await supabase
+      const { data } = await supabase
         .from("profiles")
-        .update({ notification_enabled: granted })
-        .eq("id", user.id);
-    }
-    if (granted) {
-      setPhase("notification_reminder_time");
-    } else {
-      setPhase("closing_chat");
-    }
-    scrollToEnd();
-  }, [user, posthog, setNotificationEnabled, scrollToEnd]);
-
-  const handleFinish = useCallback(async () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    posthog.capture("activation_completed", {
-      completed_photo: completedPhotoRef.current,
-      notifications_enabled: notificationsEnabledRef.current,
-    });
-    if (user) {
-      await supabase
-        .from("profiles")
-        .update({
-          onboarding_phase: "done",
-          onboarding_completed: true,
-          story_coach_enabled: true,
-        })
-        .eq("id", user.id);
-
-      const { data: fresh } = await supabase
-        .from("profiles")
-        .select("*")
+        .update({ onboarding_phase: "done" })
         .eq("id", user.id)
+        .select()
         .single();
-      if (fresh) setProfile(fresh as Profile);
+      if (data) setProfile(data as Profile);
     }
     router.replace("/(tabs)/today");
-  }, [user, setProfile]);
-
-  // ── Word flow ──
-  if (phase === "word_flow") {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        {fullPhotoAccessModal}
-        <EllieChatFlow
-          promptType="word"
-          promptValue={word}
-          onComplete={handleWordComplete}
-          headerNode={<MeetEllieCard />}
-          stagedWelcomeReveal={{
-            firstMessage: ACTIVATION_WORD_WELCOME_FIRST,
-            followingMessages: [ACTIVATION_WORD_WELCOME_REST],
-            typingDurationMs: 5000,
-          }}
-          firstReplyOverride="Nice — Ellie pulled out a detail from what you shared. She does this to help you capture more of the moment. Here's a follow-up:"
-          onFlowStarted={(inputMethod) => {
-            posthog.capture("activation_initiated", { input_method: inputMethod });
-          }}
-          onSkip={handleFinish}
-          hideTimerHint
-          hideHelperText
-          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
-          analyticsSource="activation"
-          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  // ── Photo flow ──
-  if (phase === "photo_flow") {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        {fullPhotoAccessModal}
-        <EllieChatFlow
-          promptType="photo"
-          promptValue=""
-          photoUri={photoUri}
-          photoDate={photoDate}
-          onComplete={handlePhotoComplete}
-          onPhotoShuffle={handlePhotoShuffle}
-          onSkip={handleFinish}
-          timerHintOverride="You'll have 2 minutes again. When you're ready..."
-          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
-          photoFooterNote="p.s If you want a different photo, tap shuffle."
-          photoEllieTypingDelayMs={WORD_SAVED_PHOTO_OFFER_TYPING_MS}
-          analyticsSource="activation"
-          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  // ── Closing chat (after notifications) ──
-  if (phase === "closing_chat") {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        {fullPhotoAccessModal}
-        <ActivationClosingChat
-          momentCount={momentCount}
-          userId={user?.id}
-          onFinish={handleFinish}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  // ── Interstitial phases ──
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      {fullPhotoAccessModal}
-      <ScrollView
-        ref={scrollRef}
-        contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
-      >
-        {/* ── After word saved ── */}
-        {phase === "word_saved" && (
-          <>
-            <CongratsCard
-              headline="Your first memory is saved!"
-              totalMoments={1}
-              streakCount={1}
-              badge={{ label: "Story Starter earned", icon: "ribbon" }}
-            />
-            <EllieMessage
-              content={"Over time, we'll turn these into beautiful chapters and send them to you — a real record of your life.\n\nEvery day you'll get a starting point — a word like you just did, a random photo from your camera roll, or a simple prompt."}
-              showAvatar
-            />
-            {!wordSavedPhotoOfferVisible ? (
-              <View style={{ marginTop: 8, marginLeft: 38 }}>
-                <ThinkingDots />
-              </View>
-            ) : (
-              <>
-                <View
-                  style={{
-                    marginTop: 4,
-                    marginBottom: 16,
-                    borderRadius: 16,
-                    borderWidth: 2,
-                    borderColor: "#F0D7FF",
-                    padding: 20,
-                    gap: 14,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Regular",
-                      fontSize: 15,
-                      lineHeight: 24,
-                      color: colors.text,
-                    }}
-                  >
-                    Let's try one more — <Text style={{ fontFamily: "Roboto-Bold" }}>this time with a photo.</Text>{"\n\n"}We'll show you a photo you took. You'll have two minutes max to talk about it.
-                  </Text>
-                  <Pressable
-                    onPress={handleRequestPhotoAccess}
-                    style={{
-                      height: 52,
-                      borderRadius: 9999,
-                      backgroundColor: CTA_LAVENDER,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text style={ctaTextStyle}>Make first photo moment</Text>
-                  </Pressable>
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Light",
-                      fontSize: 13,
-                      color: colors.textMuted,
-                      textAlign: "center",
-                    }}
-                  >
-                    We <Text style={{ fontFamily: "Roboto-Bold", fontStyle: "italic" }}>never</Text> access and store all your device photos.
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={() => {
-                    posthog.capture("activation_photo_skipped");
-                    setPhase("notifications");
-                  }}
-                  style={{ height: 44, alignItems: "center", justifyContent: "center" }}
-                >
-                  <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: colors.textMuted }}>
-                    Skip for now
-                  </Text>
-                </Pressable>
-              </>
-            )}
-          </>
-        )}
-
-        {/* ── After photo saved ── */}
-        {phase === "photo_saved" && (
-          <>
-            <CongratsCard
-              headline="Photo memory saved!"
-              totalMoments={2}
-              streakCount={1}
-              badge={{ label: "Photo Journalist earned", icon: "camera" }}
-            />
-            <EllieMessage
-              content="Two memories captured already! Want a daily nudge so you don't forget tomorrow?"
-              showAvatar
-            />
-
-            <NotificationCard
-              colors={colors}
-              onAllow={() => handleNotification(true)}
-              onSkip={() => handleNotification(false)}
-            />
-          </>
-        )}
-
-        {/* ── Notifications (skipped photo path) ── */}
-        {phase === "notifications" && (
-          <>
-            <EllieMessage
-              content="Want a daily nudge so you don't forget to capture? A word, a photo, or a prompt — delivered right to you. You can always turn it off later."
-              showAvatar
-            />
-            <NotificationCard
-              colors={colors}
-              onAllow={() => handleNotification(true)}
-              onSkip={() => handleNotification(false)}
-            />
-          </>
-        )}
-
-        {phase === "notification_reminder_time" && (
-          <ActivationNotificationReminderInner
-            userId={user?.id}
-            onDone={() => {
-              setPhase("closing_chat");
-              scrollToEnd();
-            }}
-          />
-        )}
-
-        {/* ── Wrapup (fallback) ── */}
-        {phase === "wrapup" && (
-          <>
-            <EllieMessage
-              content="You've captured your first memory. Come back tomorrow for your next starting point."
-              showAvatar
-            />
-            <Pressable
-              onPress={handleFinish}
-              style={{
-                height: 52,
-                borderRadius: 9999,
-                backgroundColor: CTA_LAVENDER,
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 12,
-              }}
-            >
-              <Text style={ctaTextStyle}>Explore the app</Text>
-            </Pressable>
-          </>
-        )}
-      </ScrollView>
-    </SafeAreaView>
-  );
-}
-
-const ctaTextStyle = {
-  fontFamily: "Roboto-Medium" as const,
-  fontSize: 15,
-  color: "#1A1A1A",
-  letterSpacing: 0.5,
-  textTransform: "uppercase" as const,
-};
-
-function NotificationCard({
-  onAllow,
-  onSkip,
-}: {
-  colors?: any;
-  onAllow: () => void;
-  onSkip: () => void;
-}) {
-  const INK = "#000000";
-  const MUTED = "rgba(0, 0, 0, 0.45)";
+  }, [posthog, promptType, user, setProfile]);
 
   return (
-    <View
-      style={{
-        marginBottom: 16,
-        borderRadius: 16,
-        borderWidth: 2,
-        borderColor: "#F0D7FF",
-        backgroundColor: "#FFFFFF",
-        padding: 24,
-        alignItems: "center",
-        gap: 16,
-      }}
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      edges={["top"]}
     >
-      <Image
-        source={NOTIFICATION_HERO}
-        style={{ width: 200, height: 200 }}
-        resizeMode="contain"
-      />
-
-      <Text
+      {fullPhotoAccessModal}
+      <View
         style={{
-          fontFamily: "LibreBaskerville-Bold",
-          fontSize: 22,
-          color: INK,
-          textAlign: "center",
+          paddingHorizontal: 20,
+          paddingTop: 2,
+          paddingBottom: 8,
         }}
       >
-        Get a daily reminder
-      </Text>
-
-      <View style={{ gap: 14, width: "100%" }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <Ionicons name="time-outline" size={20} color={MUTED} />
-          <Text style={{ flex: 1, fontFamily: "Roboto-Regular", fontSize: 14, lineHeight: 20, color: INK }}>
-            Gentle nudges from Ellie
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <Ionicons name="book-outline" size={20} color={MUTED} />
-          <Text style={{ flex: 1, fontFamily: "Roboto-Regular", fontSize: 14, lineHeight: 20, color: INK }}>
-            Never miss new Chapters and Threads
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <Ionicons name="refresh-outline" size={20} color={MUTED} />
-          <Text style={{ flex: 1, fontFamily: "Roboto-Regular", fontSize: 14, lineHeight: 20, color: INK }}>
-            Stay in the loop with new features
-          </Text>
-        </View>
+        <Text
+          style={{
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: 26,
+            color: colors.text,
+          }}
+        >
+          Capture your first moment
+        </Text>
       </View>
-
-      <Pressable
-        onPress={onAllow}
-        style={{
-          width: "100%",
-          height: 52,
-          borderRadius: 9999,
-          backgroundColor: CTA_LAVENDER,
-          borderWidth: 2,
-          borderColor: INK,
-          alignItems: "center",
-          justifyContent: "center",
-          marginTop: 4,
+      <EllieChatFlow
+        promptType={promptType}
+        promptValue={promptType === "word" ? word : ""}
+        photoUri={photoUri}
+        photoDate={photoDate}
+        photoBucket={photoBucket}
+        shufflesBeforeSave={shuffleCount}
+        isShufflingPhoto={isShufflingPhoto}
+        onComplete={handleComplete}
+        onPhotoShuffle={promptType === "photo" ? handlePhotoShuffle : undefined}
+        photoFooterNote={
+          promptType === "photo"
+            ? "p.s if you want a different photo, tap shuffle."
+            : undefined
+        }
+        previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+        analyticsSource="activation"
+        ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
+        onFlowStarted={(inputMethod) => {
+          inputMethodRef.current = inputMethod;
+          posthog.capture(
+            "activation_initiated",
+            onboardingEventProps(4, {
+              input_method: inputMethod,
+              prompt_type: promptType,
+            })
+          );
         }}
-      >
-        <Text style={{ fontFamily: "Roboto-Medium", fontSize: 15, color: INK }}>
-          Enable notifications
-        </Text>
-      </Pressable>
-
-      <Pressable onPress={onSkip} style={{ paddingVertical: 4 }}>
-        <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: MUTED, textAlign: "center" }}>
-          Not now
-        </Text>
-      </Pressable>
-    </View>
+        onSkip={handleSkipOnboarding}
+        skipLabel="Skip this"
+        skipPreview
+        hideHelperText
+      />
+    </SafeAreaView>
   );
 }

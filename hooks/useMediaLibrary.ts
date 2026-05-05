@@ -2,6 +2,12 @@ import { useState, useCallback, useRef } from "react";
 import { Dimensions, PixelRatio, Platform } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
+import {
+  PHOTO_BUCKET_CYCLE,
+  PHOTO_BUCKET_RECENT_MAX_MS,
+  PHOTO_BUCKET_OLDER_MAX_MS,
+  type PhotoBucket,
+} from "@/lib/photoBucket";
 
 /** iOS 14+ returns `limited`; TS enum in expo-modules-core omits it. */
 export function hasPhotoLibraryAccess(
@@ -42,6 +48,16 @@ export interface MediaAsset {
   mediaType: "photo" | "video";
   width: number;
   height: number;
+}
+
+export type PhotoSelectionPath = "buffer" | "index" | "query_fallback";
+
+export interface PickedPhoto {
+  asset: MediaAsset;
+  /** Recency bucket the photo was picked from. */
+  bucket: PhotoBucket;
+  /** Where the picker found the photo — useful for telemetry sanity checks. */
+  selectionPath: PhotoSelectionPath;
 }
 
 function mapExpoAsset(a: MediaLibrary.Asset): MediaAsset {
@@ -125,6 +141,25 @@ function isCameraPhoto(
   return true;
 }
 
+/* ── Bucket cycle ──────────────────────────────────────────────────────── */
+
+let _bucketCycleIdx = 0;
+function nextBucket(): PhotoBucket {
+  const b = PHOTO_BUCKET_CYCLE[_bucketCycleIdx];
+  _bucketCycleIdx = (_bucketCycleIdx + 1) % PHOTO_BUCKET_CYCLE.length;
+  return b;
+}
+
+/**
+ * Fallback order when the requested bucket is empty. Tries the other two
+ * buckets in priority order so the user never sees an empty state.
+ */
+const BUCKET_FALLBACK_ORDER: Record<PhotoBucket, PhotoBucket[]> = {
+  recent: ["older", "throwback"],
+  older: ["recent", "throwback"],
+  throwback: ["older", "recent"],
+};
+
 /* ── Photo queries ─────────────────────────────────────────────────────── */
 
 const REWIND_PHOTO_QUERY: Pick<
@@ -135,12 +170,25 @@ const REWIND_PHOTO_QUERY: Pick<
   sortBy: [MediaLibrary.SortBy.creationTime],
 };
 
-const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
-let _nextPickRecent = Math.random() < 0.5;
+function bucketTimeFilter(bucket: PhotoBucket): Partial<MediaLibrary.AssetsOptions> {
+  const now = Date.now();
+  switch (bucket) {
+    case "recent":
+      return { createdAfter: now - PHOTO_BUCKET_RECENT_MAX_MS };
+    case "older":
+      return {
+        createdAfter: now - PHOTO_BUCKET_OLDER_MAX_MS,
+        createdBefore: now - PHOTO_BUCKET_RECENT_MAX_MS,
+      };
+    case "throwback":
+      return { createdBefore: now - PHOTO_BUCKET_OLDER_MAX_MS };
+  }
+}
 
 async function pickRandomAssetFromBucket(
-  timeFilter: Partial<MediaLibrary.AssetsOptions>
+  bucket: PhotoBucket
 ): Promise<MediaLibrary.Asset | null> {
+  const timeFilter = bucketTimeFilter(bucket);
   const pageSize = 400;
   const first = await MediaLibrary.getAssetsAsync({
     ...REWIND_PHOTO_QUERY,
@@ -180,36 +228,47 @@ async function pickRandomAssetFromBucket(
   return first.assets[first.assets.length - 1];
 }
 
-async function pickRandomAssetRaw(): Promise<MediaLibrary.Asset | null> {
-  const pickRecent = _nextPickRecent;
-  _nextPickRecent = !_nextPickRecent;
-
-  const sixMonthsAgo = Date.now() - SIX_MONTHS_MS;
-  const primary = pickRecent
-    ? { createdAfter: sixMonthsAgo }
-    : { createdBefore: sixMonthsAgo };
-  const fallback = pickRecent
-    ? { createdBefore: sixMonthsAgo }
-    : { createdAfter: sixMonthsAgo };
-
-  return (
-    (await pickRandomAssetFromBucket(primary)) ??
-    (await pickRandomAssetFromBucket(fallback))
-  );
+async function pickRandomFromBucketWithFallback(
+  desired: PhotoBucket
+): Promise<{ asset: MediaLibrary.Asset; bucket: PhotoBucket } | null> {
+  const order: PhotoBucket[] = [desired, ...BUCKET_FALLBACK_ORDER[desired]];
+  for (const bucket of order) {
+    const asset = await pickRandomAssetFromBucket(bucket);
+    if (asset) return { asset, bucket };
+  }
+  return null;
 }
 
 /**
- * Picks a uniformly random camera photo from the library,
- * skipping screenshots and images from messaging apps.
+ * Picks a uniformly random camera photo from the library, skipping screenshots
+ * and images from messaging apps. Internally cycles through recency buckets
+ * (3:1:1 recent:older:throwback) but returns the legacy `MediaAsset` shape so
+ * existing callers (e.g. the Rewind tab) keep working.
  */
 export async function pickRandomPhotoFromLibrary(): Promise<MediaAsset | null> {
+  const picked = await pickRandomPhotoWithBucket();
+  return picked?.asset ?? null;
+}
+
+/**
+ * Same as `pickRandomPhotoFromLibrary` but also returns which bucket the
+ * photo came from. Use this on capture surfaces that emit `photo_shown`.
+ */
+export async function pickRandomPhotoWithBucket(): Promise<PickedPhoto | null> {
   const excludedIds = await loadExcludedAssetIds();
   const maxAttempts = 12;
 
   for (let i = 0; i < maxAttempts; i++) {
-    const raw = await pickRandomAssetRaw();
-    if (!raw) return null;
-    if (isCameraPhoto(raw, excludedIds)) return mapExpoAsset(raw);
+    const desired = nextBucket();
+    const result = await pickRandomFromBucketWithFallback(desired);
+    if (!result) return null;
+    if (isCameraPhoto(result.asset, excludedIds)) {
+      return {
+        asset: mapExpoAsset(result.asset),
+        bucket: result.bucket,
+        selectionPath: "query_fallback",
+      };
+    }
   }
   return null;
 }
@@ -238,6 +297,7 @@ export function mergePhotoIntoSortedDesc(
 interface PhotoIndex {
   recent: MediaAsset[];
   older: MediaAsset[];
+  throwback: MediaAsset[];
 }
 
 let _photoIndex: PhotoIndex | null = null;
@@ -249,9 +309,12 @@ async function buildPhotoIndex(): Promise<PhotoIndex> {
 
   _photoIndexPromise = (async () => {
     const excludedIds = await loadExcludedAssetIds();
-    const sixMonthsAgo = Date.now() - SIX_MONTHS_MS;
+    const now = Date.now();
+    const recentEdge = now - PHOTO_BUCKET_RECENT_MAX_MS;
+    const olderEdge = now - PHOTO_BUCKET_OLDER_MAX_MS;
     const recent: MediaAsset[] = [];
     const older: MediaAsset[] = [];
+    const throwback: MediaAsset[] = [];
 
     let cursor: string | undefined;
     let hasMore = true;
@@ -268,10 +331,12 @@ async function buildPhotoIndex(): Promise<PhotoIndex> {
       for (const a of page.assets) {
         if (!isCameraPhoto(a, excludedIds)) continue;
         const mapped = mapExpoAsset(a);
-        if (a.creationTime >= sixMonthsAgo) {
+        if (a.creationTime >= recentEdge) {
           recent.push(mapped);
-        } else {
+        } else if (a.creationTime >= olderEdge) {
           older.push(mapped);
+        } else {
+          throwback.push(mapped);
         }
       }
 
@@ -280,9 +345,9 @@ async function buildPhotoIndex(): Promise<PhotoIndex> {
     }
 
     console.log(
-      `[useMediaLibrary] photo index built: ${recent.length} recent, ${older.length} older`
+      `[useMediaLibrary] photo index built: ${recent.length} recent, ${older.length} older, ${throwback.length} throwback`
     );
-    _photoIndex = { recent, older };
+    _photoIndex = { recent, older, throwback };
     _photoIndexPromise = null;
     return _photoIndex;
   })();
@@ -290,16 +355,20 @@ async function buildPhotoIndex(): Promise<PhotoIndex> {
   return _photoIndexPromise;
 }
 
-function pickFromIndex(index: PhotoIndex): MediaAsset | null {
-  const pickRecent = _nextPickRecent;
-  _nextPickRecent = !_nextPickRecent;
-
-  const primary = pickRecent ? index.recent : index.older;
-  const fallback = pickRecent ? index.older : index.recent;
-  const source = primary.length > 0 ? primary : fallback;
-
-  if (source.length === 0) return null;
-  return source[Math.floor(Math.random() * source.length)];
+function pickFromIndex(
+  index: PhotoIndex
+): { asset: MediaAsset; bucket: PhotoBucket } | null {
+  const desired = nextBucket();
+  const order: PhotoBucket[] = [desired, ...BUCKET_FALLBACK_ORDER[desired]];
+  for (const bucket of order) {
+    const list = index[bucket];
+    if (list.length === 0) continue;
+    return {
+      asset: list[Math.floor(Math.random() * list.length)],
+      bucket,
+    };
+  }
+  return null;
 }
 
 /* ── URI resolution (ph:// → file://) ──────────────────────────────────── */
@@ -327,7 +396,7 @@ async function resolveToFileUri(asset: MediaAsset): Promise<MediaAsset> {
 /* ── Pre-buffer (resolve photos ahead of time for instant shuffle) ────── */
 
 const BUFFER_TARGET = 3;
-const _preBuffer: MediaAsset[] = [];
+const _preBuffer: PickedPhoto[] = [];
 let _isPreBuffering = false;
 
 async function fillPreBuffer(): Promise<void> {
@@ -336,12 +405,28 @@ async function fillPreBuffer(): Promise<void> {
 
   try {
     while (_preBuffer.length < BUFFER_TARGET) {
-      const raw = _photoIndex
-        ? pickFromIndex(_photoIndex)
-        : await pickRandomPhotoFromLibrary();
-      if (!raw) break;
-      const resolved = await resolveToFileUri(raw);
-      _preBuffer.push(resolved);
+      let next: PickedPhoto | null = null;
+      if (_photoIndex) {
+        const fromIdx = pickFromIndex(_photoIndex);
+        if (fromIdx) {
+          const resolved = await resolveToFileUri(fromIdx.asset);
+          next = {
+            asset: resolved,
+            bucket: fromIdx.bucket,
+            selectionPath: "index",
+          };
+        }
+      }
+      if (!next) {
+        const fallback = await pickRandomPhotoWithBucket();
+        if (!fallback) break;
+        const resolved = await resolveToFileUri(fallback.asset);
+        next = {
+          ...fallback,
+          asset: resolved,
+        };
+      }
+      _preBuffer.push(next);
     }
   } finally {
     _isPreBuffering = false;
@@ -470,36 +555,52 @@ export function useMediaLibrary() {
     []
   );
 
-  const getRandomAsset = useCallback(async (): Promise<MediaAsset | null> => {
+  const getRandomAsset = useCallback(async (): Promise<PickedPhoto | null> => {
     // Instant: serve from pre-buffer
     if (_preBuffer.length > 0) {
-      const asset = _preBuffer.shift()!;
-      console.log("[useMediaLibrary] served from buffer:", asset.id);
+      const picked = _preBuffer.shift()!;
+      console.log(
+        `[useMediaLibrary] served from buffer (bucket=${picked.bucket}):`,
+        picked.asset.id
+      );
       void fillPreBuffer();
-      return asset;
+      return picked;
     }
 
     // Fast: pick from in-memory index, then resolve URI
     if (_photoIndex) {
-      const raw = pickFromIndex(_photoIndex);
-      if (raw) {
-        console.log("[useMediaLibrary] picked from index:", raw.id);
-        const resolved = await resolveToFileUri(raw);
+      const fromIdx = pickFromIndex(_photoIndex);
+      if (fromIdx) {
+        console.log(
+          `[useMediaLibrary] picked from index (bucket=${fromIdx.bucket}):`,
+          fromIdx.asset.id
+        );
+        const resolved = await resolveToFileUri(fromIdx.asset);
         void fillPreBuffer();
-        return resolved;
+        return {
+          asset: resolved,
+          bucket: fromIdx.bucket,
+          selectionPath: "index",
+        };
       }
     }
 
-    // Fallback: original query-based approach
-    const raw = await _timeout(pickRandomPhotoFromLibrary(), 8000);
-    if (!raw) {
+    // Fallback: original query-based approach (cycles through buckets too)
+    const picked = await _timeout(pickRandomPhotoWithBucket(), 8000);
+    if (!picked) {
       console.log("[useMediaLibrary] pickRandomPhoto returned null");
       return null;
     }
-    console.log("[useMediaLibrary] picked via query fallback:", raw.id);
-    const resolved = await resolveToFileUri(raw);
+    console.log(
+      `[useMediaLibrary] picked via query fallback (bucket=${picked.bucket}):`,
+      picked.asset.id
+    );
+    const resolved = await resolveToFileUri(picked.asset);
     void fillPreBuffer();
-    return resolved;
+    return {
+      ...picked,
+      asset: resolved,
+    };
   }, []);
 
   return {

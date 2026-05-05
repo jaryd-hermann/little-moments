@@ -29,7 +29,10 @@ interface MicRecorderProps {
   onTranscription: (text: string) => void;
   fullscreen?: boolean;
   onCancel?: () => void;
+  /** Total recording window in seconds; defaults to 120 (2 min). The timer below the waveform counts down from this. */
+  durationSeconds?: number;
 }
+
 
 function WaveformBars({
   isActive,
@@ -111,6 +114,7 @@ export function MicRecorder({
   onTranscription,
   fullscreen,
   onCancel,
+  durationSeconds = 120,
 }: MicRecorderProps) {
   const { colors, theme } = useTheme();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -118,6 +122,16 @@ export function MicRecorder({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [duration, setDuration] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const remainingSeconds = durationSeconds - duration;
+  const isOvertime = remainingSeconds < 0;
+  const formatRemaining = (secs: number) => {
+    const abs = Math.abs(secs);
+    const m = Math.floor(abs / 60);
+    const s = abs % 60;
+    const sign = secs < 0 ? "-" : "";
+    return `${sign}${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   const startRecording = async () => {
     try {
@@ -235,23 +249,23 @@ export function MicRecorder({
             </Pressable>
 
             {isRecording && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <View
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
+                    width: 12,
+                    height: 12,
+                    borderRadius: 6,
                     backgroundColor: "#EF4444",
                   }}
                 />
                 <Text
                   style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 15,
-                    color: colors.text,
+                    fontFamily: "LibreBaskerville-Bold",
+                    fontSize: 32,
+                    color: isOvertime ? "#EF4444" : colors.text,
                   }}
                 >
-                  {formatDuration(duration)}
+                  {formatRemaining(remainingSeconds)}
                 </Text>
               </View>
             )}
@@ -263,11 +277,9 @@ export function MicRecorder({
                 width: 44,
                 height: 44,
                 borderRadius: 22,
-                backgroundColor: isRecording
-                  ? theme === "dark"
-                    ? "#FFFFFF"
-                    : "#1A1A1A"
-                  : colors.surfaceSecondary,
+                backgroundColor: isRecording ? colors.primary : colors.surfaceSecondary,
+                borderWidth: 1.5,
+                borderColor: isRecording ? colors.text : "transparent",
                 alignItems: "center",
                 justifyContent: "center",
                 opacity: isRecording ? 1 : 0.4,
@@ -276,13 +288,7 @@ export function MicRecorder({
               <Ionicons
                 name="checkmark"
                 size={24}
-                color={
-                  isRecording
-                    ? theme === "dark"
-                      ? "#000000"
-                      : "#FFFFFF"
-                    : colors.textMuted
-                }
+                color={isRecording ? colors.text : colors.textMuted}
               />
             </Pressable>
           </View>
@@ -312,21 +318,20 @@ export function MicRecorder({
           </View>
 
           {/* Bottom hint */}
-          <View style={{ paddingBottom: 40, alignItems: "center" }}>
-            <Text
-              style={{
-                fontFamily: "Roboto-Light",
-                fontSize: 13,
-                color: colors.textMuted,
-              }}
-            >
-              {isRecording
-                ? "Tap ✓ when done"
-                : isTranscribing
-                  ? ""
-                  : "Starting microphone..."}
-            </Text>
-          </View>
+          {!isRecording && !isTranscribing && (
+            <View style={{ paddingBottom: 40, paddingHorizontal: 32, alignItems: "center" }}>
+              <Text
+                style={{
+                  fontFamily: "Roboto-Light",
+                  fontSize: 13,
+                  color: colors.textMuted,
+                  textAlign: "center",
+                }}
+              >
+                Starting microphone...
+              </Text>
+            </View>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -383,23 +388,23 @@ export function MicRecorder({
             </Pressable>
 
             {isRecording && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <View
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
+                    width: 12,
+                    height: 12,
+                    borderRadius: 6,
                     backgroundColor: "#EF4444",
                   }}
                 />
                 <Text
                   style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 15,
-                    color: colors.text,
+                    fontFamily: "LibreBaskerville-Bold",
+                    fontSize: 32,
+                    color: isOvertime ? "#EF4444" : colors.text,
                   }}
                 >
-                  {formatDuration(duration)}
+                  {formatRemaining(remainingSeconds)}
                 </Text>
               </View>
             )}
@@ -411,11 +416,9 @@ export function MicRecorder({
                 width: 44,
                 height: 44,
                 borderRadius: 22,
-                backgroundColor: isRecording
-                  ? theme === "dark"
-                    ? "#FFFFFF"
-                    : "#1A1A1A"
-                  : colors.surfaceSecondary,
+                backgroundColor: isRecording ? colors.primary : colors.surfaceSecondary,
+                borderWidth: 1.5,
+                borderColor: isRecording ? colors.text : "transparent",
                 alignItems: "center",
                 justifyContent: "center",
                 opacity: isRecording ? 1 : 0.4,
@@ -424,28 +427,24 @@ export function MicRecorder({
               <Ionicons
                 name="checkmark"
                 size={24}
-                color={
-                  isRecording
-                    ? theme === "dark"
-                      ? "#000000"
-                      : "#FFFFFF"
-                    : colors.textMuted
-                }
+                color={isRecording ? colors.text : colors.textMuted}
               />
             </Pressable>
           </View>
 
-          <Text
-            style={{
-              fontFamily: "Roboto-Light",
-              fontSize: 13,
-              color: colors.textMuted,
-              textAlign: "center",
-              marginTop: 12,
-            }}
-          >
-            {isRecording ? "Tap ✓ when done" : "Starting microphone..."}
-          </Text>
+          {!isRecording && (
+            <Text
+              style={{
+                fontFamily: "Roboto-Light",
+                fontSize: 13,
+                color: colors.textMuted,
+                textAlign: "center",
+                marginTop: 14,
+              }}
+            >
+              Starting microphone...
+            </Text>
+          )}
         </>
       )}
     </View>

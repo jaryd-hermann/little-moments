@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { useTheme } from "@/hooks/useTheme";
 import type { PromptType } from "@/lib/momentAssist";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
+import { PhotoAccessNudgeCard } from "@/components/common/PhotoAccessNudgeCard";
 
 const APP_ICON = require("@/assets/images/white-icon.png");
 
@@ -22,10 +23,12 @@ interface PromptCardProps {
   hideHelperText?: boolean;
   /** Extra copy below the photo prompt (e.g. activation shuffle hint). */
   photoFooterNote?: string;
-  /** No library access: show gate instead of loading spinner. */
+  /** No library access: show the PhotoAccessNudgeCard nudge instead of the photo. */
   photoPermissionBlocked?: boolean;
   onRequestPhotoAccess?: () => void;
   photoAccessButtonLabel?: string;
+  /** Optional: invoked when user taps "start with a word instead" inside the photo nudge. */
+  onPhotoAccessWordFallback?: () => void;
   /** Notifies parent to show Start speaking/typing: after `photoEllieTypingDelayMs` from mount (activation), or when URI is set (other flows). */
   onPhotoViewportReady?: () => void;
   /**
@@ -80,6 +83,7 @@ export function PromptCard({
   photoPermissionBlocked,
   onRequestPhotoAccess,
   photoAccessButtonLabel,
+  onPhotoAccessWordFallback,
   onPhotoViewportReady,
   photoEllieTypingDelayMs,
 }: PromptCardProps) {
@@ -148,49 +152,14 @@ export function PromptCard({
           }}
         >
           {photoPermissionBlocked ? (
-            <Pressable
-              onPress={onRequestPhotoAccess}
-              style={{
-                width: "100%",
-                aspectRatio: 1,
-                alignItems: "center",
-                justifyContent: "center",
-                paddingHorizontal: 24,
-                backgroundColor: "rgba(0,0,0,0.05)",
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Regular",
-                  fontSize: 15,
-                  lineHeight: 24,
-                  color: colors.text,
-                  textAlign: "center",
-                  marginBottom: 16,
-                }}
-              >
-                To see your photo of the day, tap to grant permission.
-              </Text>
-              <View
-                style={{
-                  borderRadius: 9999,
-                  backgroundColor: colors.primary,
-                  paddingHorizontal: 24,
-                  paddingVertical: 14,
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 15,
-                    color: "#1A1A1A",
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  {photoAccessButtonLabel ?? "Grant photo access"}
-                </Text>
-              </View>
-            </Pressable>
+            <View style={{ width: "100%", aspectRatio: 1 }}>
+              <PhotoAccessNudgeCard
+                variant="compact"
+                primaryLabel={photoAccessButtonLabel ?? "CONTINUE"}
+                onPrimaryPress={() => onRequestPhotoAccess?.()}
+                onWordFallbackPress={onPhotoAccessWordFallback}
+              />
+            </View>
           ) : photoUri ? (
             <View>
               <PhotoImage uri={photoUri} />
@@ -306,7 +275,7 @@ export function PromptCard({
           </View>
         ) : null}
         {showQuestionRow ? (
-          <View style={{ flexDirection: "row", alignItems: "flex-start", marginTop: 10, paddingRight: 32 }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", marginTop: 14, paddingRight: 32 }}>
             <RNImage
               source={APP_ICON}
               style={{ width: 28, height: 28, borderRadius: 8, marginRight: 10, marginTop: 2 }}
@@ -320,7 +289,7 @@ export function PromptCard({
                 color: colors.text,
               }}
             >
-              What was happening here? Where does this photo take you or what does it remind you of?
+              What was this moment?
               {photoFooterNote ? (
                 <>
                   {"\n\n"}

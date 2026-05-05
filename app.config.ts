@@ -49,7 +49,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
   slug: "little-moments",
-  version: "1.0.0",
+  version: "2.0.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "littlemoments",
@@ -58,7 +58,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: IOS_BUNDLE_ID,
-    buildNumber: "1",
+    // `buildNumber` (CFBundleVersion) is managed by EAS — see
+    // `appVersionSource: "remote"` + `autoIncrement: true` in eas.json.
+    // EAS auto-bumps it on every production build so we never have to
+    // remember to. Keep this field out of the config so the two sources
+    // can't drift.
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSPhotoLibraryUsageDescription:
@@ -85,7 +89,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
-    versionCode: 1,
+    // `versionCode` is managed by EAS (same remote/autoIncrement contract
+    // documented above on the iOS side). Omitted here on purpose.
   },
   web: {
     output: "single" as const,
@@ -142,7 +147,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   experiments: {
     typedRoutes: true,
   },
-  runtimeVersion: "1.0.0",
+  // Runtime version follows the marketing version automatically — bump
+  // `version` above and `runtimeVersion` follows. This keeps OTA EAS Updates
+  // pinned to a single native binary so we can never accidentally ship JS
+  // that doesn't match what's compiled in.
+  runtimeVersion: { policy: "appVersion" },
   extra: {
     router: {},
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,

@@ -1,16 +1,21 @@
-import { View, Text } from "react-native";
+import { View, Text, Image } from "react-native";
 import type { ReactNode } from "react";
 import { useTheme } from "@/hooks/useTheme";
 
+const APP_ICON = require("@/assets/images/white-icon.png");
+
 /**
- * Converts basic markdown bold (**text**) into rich Text nodes.
- * Everything else is passed through as plain text.
+ * Converts basic markdown into rich Text nodes:
+ *   **text**  -> bold
+ *   _text_    -> bold + accent color (theme: green in light, violet in dark)
+ * Everything else passes through as plain text.
  */
 function renderRichText(
   raw: string,
-  baseStyle: { fontFamily: string; fontSize: number; lineHeight: number; color: string }
+  baseStyle: { fontFamily: string; fontSize: number; lineHeight: number; color: string },
+  underscoreAccentColor: string
 ): ReactNode {
-  const parts = raw.split(/(\*\*[^*]+\*\*)/g);
+  const parts = raw.split(/(\*\*[^*]+\*\*|_[^_]+_)/g);
   if (parts.length === 1) return raw;
 
   return parts.map((part, i) => {
@@ -18,6 +23,20 @@ function renderRichText(
       return (
         <Text key={i} style={{ ...baseStyle, fontFamily: "Roboto-Bold" }}>
           {part.slice(2, -2)}
+        </Text>
+      );
+    }
+    if (part.startsWith("_") && part.endsWith("_")) {
+      return (
+        <Text
+          key={i}
+          style={{
+            ...baseStyle,
+            fontFamily: "Roboto-Bold",
+            color: underscoreAccentColor,
+          }}
+        >
+          {part.slice(1, -1)}
         </Text>
       );
     }
@@ -36,6 +55,9 @@ export function AIMessageBubble({
 }: AIMessageBubbleProps) {
   const { colors, theme } = useTheme();
   const isAI = role === "assistant";
+  /** `_..._` trailers (e.g. "Any of this is interesting") — green ink in light, brand violet in dark. */
+  const underscoreAccent =
+    theme === "light" ? "#024F46" : colors.primary;
 
   if (isAI) {
     const baseStyle = {
@@ -45,9 +67,21 @@ export function AIMessageBubble({
       color: colors.text,
     };
     return (
-      <View style={{ marginBottom: 18, alignSelf: "stretch", paddingRight: 8 }}>
-        <Text style={baseStyle}>
-          {renderRichText(content, baseStyle)}
+      <View
+        style={{
+          marginBottom: 18,
+          flexDirection: "row",
+          alignItems: "flex-start",
+          gap: 10,
+          paddingRight: 8,
+        }}
+      >
+        <Image
+          source={APP_ICON}
+          style={{ width: 24, height: 24, borderRadius: 6, marginTop: 2 }}
+        />
+        <Text style={[baseStyle, { flex: 1 }]}>
+          {renderRichText(content, baseStyle, underscoreAccent)}
         </Text>
       </View>
     );

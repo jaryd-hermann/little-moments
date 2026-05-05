@@ -6,7 +6,7 @@ export interface Profile {
   email: string | null;
   display_name: string | null;
   avatar_url: string | null;
-  color_theme: "light" | "dark";
+  color_theme: "light" | "dark" | "system";
   notification_enabled: boolean;
   notification_time: string;
   streak_at_risk_enabled: boolean;
@@ -19,16 +19,20 @@ export interface Profile {
   total_moments: number;
   onboarding_completed: boolean;
   onboarding_phase?:
+    // photo-focus v3 phases
+    | "photo_permission"
+    | "activation"
+    | "reveal"
+    | "notifications"
+    | "done"
+    // legacy v2 phases (still valid in DB until in-flight users finish)
     | "resonance"
     | "follow_up"
     | "slides"
     | "donation"
     | "trial"
-    | "notifications"
     | "story_coach"
     | "personalized"
-    | "activation"
-    | "done"
     | null;
   resonance_option_ids?: string[] | null;
   donation_cause_id?: string | null;
@@ -39,7 +43,6 @@ export interface Profile {
   /** Closing activation: yes | kind_of | no — did Ellie explain LM clearly */
   activation_lm_understanding?: "yes" | "kind_of" | "no" | null;
   notification_timezone?: string | null;
-  badge_push_state?: Record<string, boolean> | null;
   last_daily_push_local_date?: string | null;
   last_streak_risk_push_local_date?: string | null;
   created_at: string;

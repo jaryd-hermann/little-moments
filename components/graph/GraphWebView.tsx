@@ -103,6 +103,8 @@ export const GraphWebView = forwardRef<GraphWebViewHandle, GraphWebViewProps>(
     ref
   ) {
   const { theme, colors } = useTheme();
+  /** Light graph canvas — warm paper tone (matches product spec); dark uses app black. */
+  const graphSurfaceBg = theme === "light" ? "#E8DDD0" : colors.background;
   const userId = useAuthStore((s) => s.user?.id ?? null);
   const [d3Source, setD3Source] = useState<string | null>(null);
   const [cachedPositions, setCachedPositions] = useState<
@@ -311,14 +313,14 @@ export const GraphWebView = forwardRef<GraphWebViewHandle, GraphWebViewProps>(
 
   if (!html) {
     return (
-      <View style={[styles.loading, { backgroundColor: colors.background }]}>
+      <View style={[styles.loading, { backgroundColor: graphSurfaceBg }]}>
         <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: graphSurfaceBg }]}>
       <WebView
         ref={webViewRef}
         originWhitelist={["*"]}
@@ -332,7 +334,7 @@ export const GraphWebView = forwardRef<GraphWebViewHandle, GraphWebViewProps>(
         overScrollMode="never"
         androidLayerType="hardware"
         setSupportMultipleWindows={false}
-        style={{ backgroundColor: colors.background }}
+        style={{ backgroundColor: graphSurfaceBg }}
         allowsBackForwardNavigationGestures={false}
       />
     </View>

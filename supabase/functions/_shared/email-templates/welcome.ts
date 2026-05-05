@@ -1,6 +1,15 @@
 import { greetingFirstName } from "./format.ts";
 import { emailLayout, ctaButton } from "./layout.ts";
 
+/**
+ * Welcome email — fired by `send-welcome-email` Edge Function on
+ * profile insert (DB trigger from migration 0012). This is the FIRST
+ * thing every new user receives.
+ *
+ * The `causeTitle` parameter is unused in the current photo-focus
+ * onboarding (donation flow was removed) but kept on the signature so
+ * existing callers — and the preview script — don't break.
+ */
 export function welcomeEmail(opts: {
   displayName?: string | null;
   causeTitle?: string | null;
@@ -8,29 +17,34 @@ export function welcomeEmail(opts: {
   const who = greetingFirstName(opts.displayName);
 
   return {
-    subject: "Most people can't remember last Tuesday — Little Moments fixes that",
+    subject: "Welcome to Little Moments",
     html: emailLayout({
-      preheader:
-        "One daily starting point. Two minutes. A lifetime of little moments.",
+      preheader: "60 seconds. One photo. One moment a day.",
       body: `
         <p style="margin:0 0 16px;">Hey ${who},</p>
         <p style="margin:0 0 16px;">
-          Glad you're here. Life moves fast — without a nudge, whole days blur. Most of us can't pin down what made last Tuesday different. This app is the nudge.
+          Glad you're here. The whole thing comes down to one habit:
+          <strong>one moment a day, 60 seconds</strong>.
         </p>
         <p style="margin:0 0 16px;">
-          <strong>How it works:</strong> every day you get a starting point — a <strong>random word</strong>, a <strong>photo from your camera roll</strong>, or a <strong>simple question</strong>. It's a trigger to get your mind reaching for something real.
+          Each day, the app picks a <strong>photo you already took</strong> and hands it back
+          to you. Tap the mic, talk it out — or jot a line if you'd rather. Don't aim for
+          poetic. Aim for honest. The little stuff (the offhand thing your kid said, the way
+          the light hit at lunch) is what your future self will be glad you grabbed.
         </p>
         <p style="margin:0 0 16px;">
-          Give yourself about <strong>two minutes</strong>: talk, type, or add a line. No grades — just capture. Ellie helps with one quick follow-up when it helps. Speak, write, add. That's the habit.
+          Over time, those daily 60 seconds become an archive of your actual life —
+          searchable, full of texture, weirdly emotional to look back on.
         </p>
         <p style="margin:0 0 16px;">
-          Over time, those moments become a searchable archive — a lifetime of little things you would have forgotten.
+          Today's photo is waiting. Two minutes is all it takes.
         </p>
-        <p style="margin:0 0 16px;">
-          Open the app when you're ready and log your next moment.
-        </p>
-        ${ctaButton("Open Little Moments")}
+        ${ctaButton("Capture today's moment")}
         <p style="margin:20px 0 0;">Talk soon,<br/>Jaryd</p>
+        <p style="margin:16px 0 0;color:rgba(0,0,0,0.65);font-size:15px;line-height:24px;">
+          <em>P.S. The bar really is this low. One moment, 60 seconds. Streaks take care of
+          themselves.</em>
+        </p>
       `,
     }),
   };

@@ -57,7 +57,7 @@ export function CapsuleStatBar({
             <Pressable
               onPress={() => {
                 if (item.filter === "threads") {
-                  router.push("/threads");
+                  router.push("/(tabs)/brain");
                   return;
                 }
                 onFilterChange(

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { PhotoBucket } from "@/lib/photoBucket";
 
 export interface Entry {
   id: string;
@@ -18,6 +19,10 @@ export interface Entry {
   streak_day_number: number | null;
   chapter_id: string | null;
   is_pinned: boolean;
+  /** Recency bucket of the photo behind this moment (null if no photo). */
+  photo_bucket_at_save?: PhotoBucket | null;
+  /** Days between photo capture and save time (null if no photo). */
+  photo_age_days_at_save?: number | null;
   created_at: string;
   updated_at: string;
   media?: EntryMedia[];
@@ -32,6 +37,8 @@ export interface EntryMedia {
   media_type: "image" | "video";
   display_order: number;
   created_at: string;
+  /** Original capture time of the photo (EXIF / MediaLibrary creationTime). */
+  taken_at?: string | null;
 }
 
 interface EntryStore {

@@ -28,8 +28,11 @@ import type { Profile } from "@/store/authStore";
 import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
+import { applyThemeFromProfile } from "@/lib/themeSync";
+import { onboardingEventProps } from "@/lib/onboardingEvents";
 
-const WORDMARK = require("@/assets/images/wordmark-little-moments.png");
+const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
+const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
 
 const BENEFIT_SLIDES = [
   {
@@ -58,13 +61,13 @@ export default function SignInScreen() {
   const setProfile = useAuthStore((s) => s.setProfile);
   const setUser = useAuthStore((s) => s.setUser);
   const setSession = useAuthStore((s) => s.setSession);
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const signUpMethodRef = useRef<"apple" | "google" | "email">("email");
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    posthog.capture("viewed_sign_in");
+    posthog.capture("viewed_sign_in", onboardingEventProps(2));
   }, []);
   const scrollRef = useRef<ScrollView>(null);
   const [activeSlide, setActiveSlide] = useState(0);
@@ -118,15 +121,17 @@ export default function SignInScreen() {
     setProfile(profile);
     if (profile) {
       applyNotificationTimeFromProfile(profile.notification_time);
+      applyThemeFromProfile(profile.color_theme, profile);
     }
 
     if (
       profile?.created_at &&
       Date.now() - new Date(profile.created_at).getTime() < 60_000
     ) {
-      posthog.capture("created_account", {
-        method: signUpMethodRef.current,
-      });
+      posthog.capture(
+        "created_account",
+        onboardingEventProps(2, { method: signUpMethodRef.current })
+      );
     }
 
     routeAfterAuth(profile);
@@ -162,34 +167,38 @@ export default function SignInScreen() {
           }}
         >
           <Image
-            source={WORDMARK}
-            style={{ width: 300, height: 72 }}
+            source={
+              theme === "dark" ? WORDMARK_LIGHT_ON_DARK : WORDMARK_DARK_ON_LIGHT
+            }
+            style={{ width: 220, height: 52 }}
             resizeMode="contain"
             accessibilityLabel="Little Moments"
           />
           <Text
             style={{
-              fontFamily: "LibreBaskerville-Regular",
-              fontSize: 16,
-              color: colors.textSecondary,
+              marginTop: 24,
               textAlign: "center",
-              lineHeight: 24,
-              marginTop: 12,
-              paddingHorizontal: 16,
+              fontFamily: "Roboto-Regular",
+              fontSize: 17,
+              lineHeight: 26,
+              color: colors.text,
+              paddingHorizontal: 8,
             }}
           >
-            Your 2-minute daily journalling habit without any blank pages.
-            {"\n"}
+            Sign in and{" "}
+            <Text style={{ fontFamily: "Roboto-Bold" }}>
+              see what your first photo is
+            </Text>
+            . We&apos;ll help you{" "}
             <Text
               style={{
-                fontFamily: "LibreBaskerville-Italic",
-                fontSize: 16,
-                lineHeight: 24,
-                color: "#FFA946",
+                fontFamily: "Roboto-Bold",
+                color: theme === "dark" ? colors.primary : "#024F46",
               }}
             >
-              This one sticks.
+              capture it in under 60s
             </Text>
+            .
           </Text>
         </View>
         {/* Benefit carousel commented out

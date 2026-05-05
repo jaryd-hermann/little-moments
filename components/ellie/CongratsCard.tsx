@@ -5,7 +5,6 @@ interface CongratsCardProps {
   headline: string;
   totalMoments: number;
   streakCount: number;
-  badge?: { label: string; icon: string };
   /** When provided (including `0`), shows a third column for threads. */
   threadsCount?: number;
   onPressMoments?: () => void;
@@ -20,7 +19,6 @@ export function CongratsCard({
   headline,
   totalMoments,
   streakCount,
-  badge,
   threadsCount,
   onPressMoments,
   onPressThreads,
@@ -167,35 +165,6 @@ export function CongratsCard({
           )
         ) : null}
       </View>
-
-      {badge && (
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            paddingTop: 8,
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.15)",
-          }}
-        >
-          <Ionicons
-            name={badge.icon as keyof typeof Ionicons.glyphMap}
-            size={20}
-            color="#F0D7FF"
-          />
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 14,
-              color: "#F0D7FF",
-            }}
-          >
-            {badge.label}
-          </Text>
-        </View>
-      )}
     </View>
   );
 }

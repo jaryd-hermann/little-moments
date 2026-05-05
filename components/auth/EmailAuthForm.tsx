@@ -8,13 +8,16 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { PostHogMaskView } from "posthog-react-native";
 import { supabase } from "@/lib/supabase";
+import { useTheme } from "@/hooks/useTheme";
 
 interface Props {
   onSuccess: () => void;
 }
 
 export function EmailAuthForm({ onSuccess }: Props) {
+  const { colors } = useTheme();
   const [isSignUp, setIsSignUp] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -127,18 +130,18 @@ export function EmailAuthForm({ onSuccess }: Props) {
   const inputStyle = {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.1)",
-    backgroundColor: "#0A0A0A",
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontFamily: "Roboto-Regular",
     fontSize: 15,
-    color: "#FFFFFF",
+    color: colors.text,
   } as const;
 
   const focusedBorder = {
     borderWidth: 2,
-    borderColor: "#F0D7FF",
+    borderColor: colors.primary,
   } as const;
 
   return (
@@ -152,10 +155,15 @@ export function EmailAuthForm({ onSuccess }: Props) {
         onFocus={() => setFocusedField("email")}
         onBlur={() => setFocusedField(null)}
         style={{ ...inputStyle, marginBottom: 12, ...(focusedField === "email" && focusedBorder) }}
-        placeholderTextColor="rgba(255, 255, 255, 0.3)"
+        placeholderTextColor={colors.textMuted}
       />
 
-      <View style={{ marginBottom: 12 }}>
+      {/* PostHogMaskView masks this subtree in session replays so passwords
+          never make it into recordings, even though `maskAllTextInputs` is
+          off globally. The eye toggle stays inside the masked region too —
+          a wide-open frame after tapping it would otherwise leak the
+          password as plaintext-rendered <Text>. */}
+      <PostHogMaskView style={{ marginBottom: 12 }}>
         <TextInput
           placeholder="Password"
           value={password}
@@ -164,7 +172,7 @@ export function EmailAuthForm({ onSuccess }: Props) {
           onFocus={() => setFocusedField("password")}
           onBlur={() => setFocusedField(null)}
           style={{ ...inputStyle, paddingRight: 48, ...(focusedField === "password" && focusedBorder) }}
-          placeholderTextColor="rgba(255, 255, 255, 0.3)"
+          placeholderTextColor={colors.textMuted}
         />
         <Pressable
           onPress={() => setShowPassword((v) => !v)}
@@ -180,13 +188,13 @@ export function EmailAuthForm({ onSuccess }: Props) {
           <Ionicons
             name={showPassword ? "eye-off-outline" : "eye-outline"}
             size={20}
-            color="rgba(255, 255, 255, 0.4)"
+            color={colors.textMuted}
           />
         </Pressable>
-      </View>
+      </PostHogMaskView>
 
       {isSignUp && (
-        <View style={{ marginBottom: 12 }}>
+        <PostHogMaskView style={{ marginBottom: 12 }}>
           <TextInput
             placeholder="Confirm Password"
             value={confirmPassword}
@@ -195,7 +203,7 @@ export function EmailAuthForm({ onSuccess }: Props) {
             onFocus={() => setFocusedField("confirm")}
             onBlur={() => setFocusedField(null)}
             style={{ ...inputStyle, paddingRight: 48, ...(focusedField === "confirm" && focusedBorder) }}
-            placeholderTextColor="rgba(255, 255, 255, 0.3)"
+            placeholderTextColor={colors.textMuted}
           />
           <Pressable
             onPress={() => setShowConfirm((v) => !v)}
@@ -211,10 +219,10 @@ export function EmailAuthForm({ onSuccess }: Props) {
             <Ionicons
               name={showConfirm ? "eye-off-outline" : "eye-outline"}
               size={20}
-              color="rgba(255, 255, 255, 0.4)"
+              color={colors.textMuted}
             />
           </Pressable>
-        </View>
+        </PostHogMaskView>
       )}
 
       {error ? (
@@ -236,20 +244,20 @@ export function EmailAuthForm({ onSuccess }: Props) {
         style={{
           height: 52,
           borderRadius: 9999,
-          backgroundColor: "#FFFFFF",
+          backgroundColor: colors.text,
           alignItems: "center",
           justifyContent: "center",
           opacity: loading ? 0.6 : 1,
         }}
       >
         {loading ? (
-          <ActivityIndicator color="#000000" />
+          <ActivityIndicator color={colors.background} />
         ) : (
           <Text
             style={{
               fontFamily: "Roboto-Medium",
               fontSize: 15,
-              color: "#000000",
+              color: colors.background,
               letterSpacing: 0.8,
               textTransform: "uppercase",
             }}
@@ -271,7 +279,7 @@ export function EmailAuthForm({ onSuccess }: Props) {
           style={{
             fontFamily: "Roboto-Light",
             fontSize: 13,
-            color: "rgba(255, 255, 255, 0.5)",
+            color: colors.textMuted,
             textAlign: "center",
           }}
         >

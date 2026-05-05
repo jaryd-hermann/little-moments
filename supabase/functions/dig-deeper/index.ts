@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     let userMessage = "";
 
     if (stage === "initial") {
-      userMessage = `The user has written this moment:\n\nTitle: ${title}\n\nBody: ${body}\n\nBriefly reflect on what you notice in this moment (1-2 sentences), then ask 2-3 short, specific follow-up questions that will help you pull out the sensory details, feelings, and the real transformation underneath. Make the questions easy to answer — the kind you'd ask a friend over coffee.`;
+      userMessage = `The user has written this moment:\n\nTitle: ${title}\n\nBody: ${body}\n\nWrite ONLY this — no preamble, no warm-up, no commentary about the writing or the title:\n\nLine 1 (literal): "A few things I'm curious about:"\nThen a blank line.\nThen exactly THREE bullet questions, each on its own line starting with "• ", with a BLANK LINE between each bullet so they read with breathing room. Each question must be one sentence — specific to THIS moment, asking about sensory details, the moment of internal shift, or feelings underneath. Do not number them. Do not add any other lines. Output exactly: opener, blank line, bullet, blank line, bullet, blank line, bullet.`;
     } else if (stage === "follow_up") {
       userMessage = `The user answered your questions: "${user_answers}"\n\nGreat — you're getting closer to the real moment. Based on what they've shared, ask 2-3 MORE follow-up questions that dig even deeper. Focus on:\n- Specific sensory details (what did it look/sound/feel like?)\n- The exact moment of internal shift\n- What they were thinking or feeling right before vs. after\n- Small physical details that make the scene vivid\n\nKeep it warm and conversational. Don't repeat questions they've already answered.`;
     } else if (stage === "enhance") {
@@ -83,13 +83,13 @@ CRITICAL RULES:
 - Match the user's own vocabulary and tone
 - Keep it 150–250 words
 - Stay true to the small, honest moment — don't over-dramatize
-- The story should read like a personal journal entry or memoir excerpt
+- Break the story into 2–3 paragraphs. Use a real blank line (\\n\\n) between paragraphs so it reads like prose, not one wall of text.
 
 Original entry title: ${title}
 Original entry body: ${body}
 
-Respond with ONLY a JSON object (no markdown, no code fences):
-{"message": "one brief sentence about the enhancement", "enhanced_body": "the full enhanced story in first person"}`;
+Respond with ONLY a JSON object (no markdown, no code fences). The "enhanced_body" string MUST contain literal \\n\\n sequences between paragraphs.
+{"message": "one brief sentence about the enhancement", "enhanced_body": "the full enhanced story in first person, with \\n\\n paragraph breaks"}`;
     } else if (stage === "revise") {
       userMessage = `IMPORTANT — STOP CONVERSING. Produce a revised story only.
 
@@ -100,9 +100,10 @@ CRITICAL RULES:
 - Do NOT address the user — no "you", "your", or speaking TO them
 - Do NOT include any conversational commentary, coaching, or questions
 - Apply the requested changes while keeping their voice intact
+- Break the story into 2–3 paragraphs separated by blank lines (\\n\\n).
 
-Respond with ONLY a JSON object (no markdown, no code fences):
-{"message": "brief acknowledgment of the change", "enhanced_body": "the revised story in first person"}`;
+Respond with ONLY a JSON object (no markdown, no code fences). The "enhanced_body" string MUST contain literal \\n\\n sequences between paragraphs.
+{"message": "brief acknowledgment of the change", "enhanced_body": "the revised story in first person, with \\n\\n paragraph breaks"}`;
     }
 
     const needsJson = stage === "enhance" || stage === "revise";

@@ -1,17 +1,25 @@
 import { MicRecorder } from "@/components/composer/MicRecorder";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 import { useTheme } from "@/hooks/useTheme";
+import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import {
     callMomentAssemble,
     callMomentFollowUp,
     type PromptType,
 } from "@/lib/momentAssist";
+import {
+  categorizePhotoBucket,
+  photoAgeDays,
+  photoYear,
+  type PhotoBucket,
+} from "@/lib/photoBucket";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { usePostHog } from "posthog-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     Keyboard,
     KeyboardAvoidingView,
@@ -64,6 +72,14 @@ export interface MomentCaptureAnalytics {
   final_body_chars: number;
   final_body_words: number;
   is_overtime_first_share: boolean;
+  /** Recency bucket of the photo behind the moment (null for word/freetext). */
+  photo_bucket: PhotoBucket | null;
+  /** Days between photo capture and save time (null for word/freetext). */
+  photo_age_days: number | null;
+  /** Year the photo was originally taken (null for word/freetext). */
+  photo_year: number | null;
+  /** Number of times the user shuffled before committing this moment. */
+  shuffles_before_save: number;
 }
 
 interface EllieChatFlowProps {
@@ -71,6 +87,15 @@ interface EllieChatFlowProps {
   promptValue: string;
   photoUri?: string;
   photoDate?: number;
+  /**
+   * Recency bucket of the currently displayed photo. If omitted but
+   * `photoDate` is present, the bucket is computed from `photoDate` at save
+   * time. Pass it explicitly when the parent already has the bucket from the
+   * picker so analytics stays consistent.
+   */
+  photoBucket?: PhotoBucket;
+  /** Number of times the user has shuffled photos before the current one. */
+  shufflesBeforeSave?: number;
   isShufflingPhoto?: boolean;
   onComplete: (
     entry: {
@@ -78,6 +103,7 @@ interface EllieChatFlowProps {
       body: string;
       rawText: string;
       attachedPhotoUri?: string;
+      attachedPhotoTakenAtMs?: number;
       analytics?: MomentCaptureAnalytics;
     }
   ) => void | Promise<void | Entry | null>;
@@ -96,6 +122,8 @@ interface EllieChatFlowProps {
   onFlowStarted?: (inputMethod: InputMethod) => void;
   headerNode?: React.ReactNode;
   onSkip?: () => void;
+  /** Label for the bottom-of-flow skip link. Default: "Skip for now". */
+  skipLabel?: string;
   hideTimerHint?: boolean;
   timerHintOverride?: string;
   /** Replaces the default preview-phase instruction above the moment card. */
@@ -108,6 +136,8 @@ interface EllieChatFlowProps {
   photoPermissionBlocked?: boolean;
   onRequestPhotoAccess?: () => void;
   photoAccessButtonLabel?: string;
+  /** Forwarded to PromptCard's photo nudge: tap-link "start with a word instead". */
+  onPhotoAccessWordFallback?: () => void;
   /** Gate gallery / system picker behind full-library explainer + permission (Add / Today / activation). */
   ensureFullPhotoLibraryAccess?: () => Promise<boolean>;
   /** Activation: fixed delay before Ellie photo footer + CTAs (matches word_saved typing beat). */
@@ -122,6 +152,10 @@ interface EllieChatFlowProps {
     followingMessages: string[];
     typingDurationMs?: number;
   };
+  /** When set, shows a "More ways" pill below the CTAs that invokes this handler. */
+  onMoreWaysPress?: () => void;
+  /** When true, "Send" assembles the moment and saves immediately — no follow-up question, no preview. */
+  skipPreview?: boolean;
 }
 
 interface ChatItem {
@@ -156,6 +190,8 @@ export function EllieChatFlow({
   promptValue,
   photoUri,
   photoDate,
+  photoBucket,
+  shufflesBeforeSave = 0,
   isShufflingPhoto,
   onComplete,
   onPhotoShuffle,
@@ -168,6 +204,7 @@ export function EllieChatFlow({
   onFlowStarted,
   headerNode,
   onSkip,
+  skipLabel = "Skip for now",
   hideTimerHint,
   timerHintOverride,
   previewInstructionOverride,
@@ -178,11 +215,14 @@ export function EllieChatFlow({
   photoPermissionBlocked,
   onRequestPhotoAccess,
   photoAccessButtonLabel,
+  onPhotoAccessWordFallback,
   photoEllieTypingDelayMs,
   analyticsSource,
   ensureFullPhotoLibraryAccess,
+  onMoreWaysPress,
+  skipPreview,
 }: EllieChatFlowProps) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
@@ -431,6 +471,84 @@ export function EllieChatFlow({
       deeper_count_at_first_share: deeperCount,
     });
 
+    // Skip-preview flow: assemble immediately and save, no follow-up, no preview.
+    if (skipPreview) {
+      setRawText(text);
+      setAllRawText(text);
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), type: "user", content: text },
+        { id: nextId(), type: "thinking" },
+      ]);
+      setPhase("thinking2");
+      setUserInput("");
+      scrollToEnd();
+      setSaving(true);
+
+      let title = "";
+      let body = text;
+      try {
+        const assembled = await callMomentAssemble({
+          raw_text: text,
+          prompt_type: promptType,
+          prompt_value: promptValue,
+          follow_up_answer: null,
+        });
+        title = assembled.title;
+        body = assembled.body;
+      } catch {
+        // Network/AI failure: save raw text as-is.
+        title = "";
+        body = text;
+      }
+
+      const finalSaveElapsedSeconds = startedAtMsRef.current
+        ? Math.max(0, Math.round((Date.now() - startedAtMsRef.current) / 1000))
+        : null;
+      const photoBucketResolved =
+        photoDate != null
+          ? photoBucket ?? categorizePhotoBucket(photoDate)
+          : null;
+      const analytics: MomentCaptureAnalytics = {
+        source: analyticsSource,
+        prompt_type: promptType,
+        input_method: inputMethodRef.current,
+        first_share_elapsed_seconds: elapsedSeconds,
+        final_save_elapsed_seconds: finalSaveElapsedSeconds,
+        first_share_chars: firstShareChars,
+        first_share_words: firstShareWords,
+        final_raw_chars: text.length,
+        final_raw_words: countWords(text),
+        final_body_chars: body.length,
+        final_body_words: countWords(body),
+        is_overtime_first_share: isOvertimeFirstShare,
+        photo_bucket: photoBucketResolved,
+        photo_age_days: photoDate != null ? photoAgeDays(photoDate) : null,
+        photo_year: photoDate != null ? photoYear(photoDate) : null,
+        shuffles_before_save: shufflesBeforeSave,
+      };
+
+      try {
+        await Promise.resolve(
+          onComplete({
+            title,
+            body,
+            rawText: text,
+            attachedPhotoUri: photoUri,
+            attachedPhotoTakenAtMs: photoDate,
+            analytics,
+          })
+        );
+      } catch {
+        // onComplete failed — leave the user on the recording phase to retry.
+        setSaving(false);
+        setPhase("recording");
+        return;
+      }
+      // Parent (e.g. Today) will re-render on the new entry; this component will unmount.
+      return;
+    }
+
     // If a follow-up was already asked, go straight to assembly
     if (followUpAskedRef.current) {
       setAllRawText((prev) => `${prev}\n\n${text}`);
@@ -505,6 +623,12 @@ export function EllieChatFlow({
     posthog,
     analyticsSource,
     deeperCount,
+    skipPreview,
+    onComplete,
+    photoUri,
+    photoDate,
+    photoBucket,
+    shufflesBeforeSave,
   ]);
 
   const handleFollowUpAnswer = useCallback(async () => {
@@ -679,7 +803,13 @@ export function EllieChatFlow({
   }, [userInput, allRawText, promptType, promptValue, scrollToEnd, showPreview, assembledTitle, assembledBody]);
 
   const handleSave = useCallback(
-    async (title: string, body: string, attachedPhotoUri?: string) => {
+    async (
+      title: string,
+      body: string,
+      attachedPhotoUri?: string,
+      /** Override creation time when the user replaces the photo in MomentPreview. */
+      attachedPhotoTakenAtMsOverride?: number
+    ) => {
       setSaving(true);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       let saveCtx: AfterSaveContext = { savedEntryId: null };
@@ -688,6 +818,17 @@ export function EllieChatFlow({
           ? Math.max(0, Math.round((Date.now() - startedAtMsRef.current) / 1000))
           : null;
         const firstShare = firstShareMetricsRef.current;
+        // The user can swap the photo from inside MomentPreview; trust the
+        // override (it carries the replacement's creationTime) over the
+        // parent's photoDate prop, which still points at the prompt asset.
+        const effectivePhotoDate =
+          attachedPhotoTakenAtMsOverride ?? photoDate;
+        const photoBucketResolved =
+          effectivePhotoDate != null
+            ? attachedPhotoTakenAtMsOverride != null
+              ? categorizePhotoBucket(effectivePhotoDate)
+              : photoBucket ?? categorizePhotoBucket(effectivePhotoDate)
+            : null;
         const analytics: MomentCaptureAnalytics = {
           source: analyticsSource,
           prompt_type: promptType,
@@ -701,6 +842,12 @@ export function EllieChatFlow({
           final_body_chars: body.length,
           final_body_words: countWords(body),
           is_overtime_first_share: firstShare?.isOvertime ?? false,
+          photo_bucket: photoBucketResolved,
+          photo_age_days:
+            effectivePhotoDate != null ? photoAgeDays(effectivePhotoDate) : null,
+          photo_year:
+            effectivePhotoDate != null ? photoYear(effectivePhotoDate) : null,
+          shuffles_before_save: shufflesBeforeSave,
         };
         const completed = await Promise.resolve(
           onComplete({
@@ -708,6 +855,7 @@ export function EllieChatFlow({
             body,
             rawText: allRawText,
             attachedPhotoUri,
+            attachedPhotoTakenAtMs: effectivePhotoDate,
             analytics,
           })
         );
@@ -804,6 +952,9 @@ export function EllieChatFlow({
       assembledBody,
       promptType,
       analyticsSource,
+      photoDate,
+      photoBucket,
+      shufflesBeforeSave,
     ]
   );
 
@@ -819,6 +970,35 @@ export function EllieChatFlow({
 
   const remaining = DURATION_SECONDS - elapsed;
   const isOvertime = remaining < 0;
+
+  // Skip-preview saves run in the background. Show a centered spinner so the
+  // user gets immediate "we're saving" feedback instead of a perceived black
+  // flash while the entry insert + media upload finish (parent re-renders to
+  // the post-save view the moment the new entry lands in the store).
+  if (skipPreview && phase === "thinking2") {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 14,
+        }}
+      >
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 14,
+            color: colors.textMuted,
+          }}
+        >
+          Saving your moment…
+        </Text>
+      </View>
+    );
+  }
 
   // Half-sheet mic overlay
   if (phase === "mic") {
@@ -848,61 +1028,6 @@ export function EllieChatFlow({
             return null;
           })}
 
-          {/* Timer visible above the mic sheet */}
-          {onAbortFlow ? (
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 8,
-                marginBottom: 16,
-                paddingHorizontal: 4,
-              }}
-            >
-              <View style={{ width: 40 }} />
-              <Text
-                style={{
-                  flex: 1,
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 36,
-                  color: isOvertime ? "#EF4444" : colors.text,
-                  textAlign: "center",
-                }}
-              >
-                {formatTimer(remaining)}
-              </Text>
-              <View style={{ width: 40, alignItems: "center", justifyContent: "center" }}>
-                <Pressable
-                  onPress={handleAbortFlow}
-                  hitSlop={12}
-                  accessibilityLabel="Exit moment capture"
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: colors.surfaceSecondary,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons name="close" size={20} color={colors.icon} />
-                </Pressable>
-              </View>
-            </View>
-          ) : (
-            <View style={{ alignItems: "center", marginTop: 8, marginBottom: 16 }}>
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 36,
-                  color: isOvertime ? "#EF4444" : colors.text,
-                  textAlign: "center",
-                }}
-              >
-                {formatTimer(remaining)}
-              </Text>
-            </View>
-          )}
         </ScrollView>
 
         {/* Half-sheet mic recorder */}
@@ -922,6 +1047,7 @@ export function EllieChatFlow({
               handleMicTranscription(text);
             }}
             onCancel={() => setPhase("recording")}
+            durationSeconds={DURATION_SECONDS}
           />
         </View>
       </View>
@@ -972,6 +1098,7 @@ export function EllieChatFlow({
                   photoPermissionBlocked={photoPermissionBlocked}
                   onRequestPhotoAccess={onRequestPhotoAccess}
                   photoAccessButtonLabel={photoAccessButtonLabel}
+                  onPhotoAccessWordFallback={onPhotoAccessWordFallback}
                   onPhotoViewportReady={handlePhotoViewportReady}
                   photoEllieTypingDelayMs={photoEllieTypingDelayMs}
                 />
@@ -985,6 +1112,7 @@ export function EllieChatFlow({
                   title={assembledTitle}
                   body={assembledBody}
                   photoUri={promptType === "photo" ? photoUri : undefined}
+                  photoDate={promptType === "photo" ? photoDate : undefined}
                   onSave={handleSave}
                   onGoDeeper={deeperCount < 3 ? handleGoDeeper : undefined}
                   saving={saving}
@@ -1003,82 +1131,116 @@ export function EllieChatFlow({
         {phase === "prompt" &&
           welcomeStageReady &&
           (promptType !== "photo" || photoFirstViewportReady) && (
-          <View style={{ gap: 10, marginTop: 8 }}>
-            {!hideTimerHint && (
-              <View style={{ alignItems: "center", marginBottom: 4 }}>
+            <View style={{ gap: 10, marginTop: 8 }}>
+              {!hideTimerHint && (
+                <View style={{ alignItems: "center", marginBottom: 4 }}>
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Light",
+                      fontSize: 13,
+                      color: colors.textMuted,
+                    }}
+                  >
+                    {timerHintOverride ?? "You'll have 2 minutes to share"}
+                  </Text>
+                </View>
+              )}
+              <Pressable
+                onPress={handleStartSpeaking}
+                style={{
+                  height: 56,
+                  borderRadius: 9999,
+                  backgroundColor: colors.primary,
+                  borderWidth: 2,
+                  borderColor: PINK_CTA_BORDER,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                  ...bevelShadow(theme),
+                }}
+              >
+                <Ionicons name="mic" size={20} color={PINK_CTA_INK} />
                 <Text
                   style={{
-                    fontFamily: "Roboto-Light",
-                    fontSize: 13,
-                    color: colors.textMuted,
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 15,
+                    color: PINK_CTA_INK,
+                    letterSpacing: 0.8,
+                    textTransform: "uppercase",
                   }}
                 >
-                  {timerHintOverride ?? "You'll have 2 minutes to share"}
-                </Text>
-              </View>
-            )}
-            <Pressable
-              onPress={handleStartSpeaking}
-              style={{
-                height: 52,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-              }}
-            >
-              <Ionicons name="mic" size={20} color="#1A1A1A" />
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: "#1A1A1A",
-                  letterSpacing: 0.5,
-                  textTransform: "uppercase",
-                }}
-              >
-                Start speaking
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={handleStartTyping}
-              style={{
-                height: 48,
-                borderRadius: 9999,
-                borderWidth: 1.5,
-                borderColor: colors.border,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-              }}
-            >
-              <Ionicons name="create-outline" size={18} color={colors.text} />
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: colors.text,
-                  letterSpacing: 0.5,
-                  textTransform: "uppercase",
-                }}
-              >
-                Start typing
-              </Text>
-            </Pressable>
-            {onSkip && (
-              <Pressable
-                onPress={onSkip}
-                style={{ height: 44, alignItems: "center", justifyContent: "center", marginTop: 4 }}
-              >
-                <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: colors.textMuted }}>
-                  Skip for now
+                  Start speaking
                 </Text>
               </Pressable>
-            )}
-          </View>
+              <Pressable
+                onPress={handleStartTyping}
+                style={{
+                  height: 48,
+                  borderRadius: 9999,
+                  borderWidth: 1.5,
+                  borderColor: colors.border,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                }}
+              >
+                <Ionicons name="create-outline" size={18} color={colors.text} />
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 15,
+                    color: colors.text,
+                    letterSpacing: 0.5,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Start typing
+                </Text>
+              </Pressable>
+              {onMoreWaysPress && (
+                <View style={{ alignItems: "center", marginTop: 14 }}>
+                  <Pressable
+                    onPress={onMoreWaysPress}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      paddingHorizontal: 16,
+                      paddingVertical: 8,
+                      borderRadius: 9999,
+                      borderWidth: 1.5,
+                      borderColor: colors.border,
+                      borderStyle: "dashed",
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Medium",
+                        fontSize: 12,
+                        color: colors.text,
+                        letterSpacing: 1,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      More ways
+                    </Text>
+                    <Ionicons name="caret-up" size={11} color={colors.text} />
+                  </Pressable>
+                </View>
+              )}
+              {onSkip && (
+                <Pressable
+                  onPress={onSkip}
+                  style={{ height: 44, alignItems: "center", justifyContent: "center", marginTop: 4 }}
+                >
+                  <Text style={{ fontFamily: "Roboto-Light", fontSize: 14, color: colors.textMuted }}>
+                    {skipLabel}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
         )}
       </ScrollView>
 
@@ -1240,7 +1402,7 @@ export function EllieChatFlow({
                   borderRadius: 9999,
                   backgroundColor: colors.primary,
                   borderWidth: 2,
-                  borderColor: "#000000",
+                  borderColor: PINK_CTA_BORDER,
                   paddingHorizontal: 20,
                   paddingVertical: 10,
                   opacity: !userInput.trim() && !isFollowUp ? 0.45 : 1,
@@ -1250,7 +1412,7 @@ export function EllieChatFlow({
                   style={{
                     fontFamily: "Roboto-Medium",
                     fontSize: 14,
-                    color: "#000000",
+                    color: PINK_CTA_INK,
                     letterSpacing: 0.3,
                     textTransform: "uppercase",
                   }}

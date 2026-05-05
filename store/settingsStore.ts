@@ -3,15 +3,23 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { AccentColor } from "@/constants/Colors";
 
+export type ThemePreference = "light" | "dark" | "system";
+
 interface SettingsStore {
-  theme: "light" | "dark";
+  /**
+   * User-selected appearance preference. "system" means follow the device's
+   * current colour scheme (resolved at the call site via `useTheme`). The
+   * default is "system" so a fresh install picks up the OS look until the
+   * user explicitly chooses a side.
+   */
+  theme: ThemePreference;
   accentColor: AccentColor;
   notificationEnabled: boolean;
   notificationTime: { hour: number; minute: number };
   streakAtRiskEnabled: boolean;
   storyProgress: Record<string, number>;
   graphIntroSeen: boolean;
-  setTheme: (theme: "light" | "dark") => void;
+  setTheme: (theme: ThemePreference) => void;
   setAccentColor: (color: AccentColor) => void;
   setNotificationEnabled: (val: boolean) => void;
   setNotificationTime: (hour: number, minute: number) => void;
@@ -23,7 +31,7 @@ interface SettingsStore {
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set, get) => ({
-      theme: "dark",
+      theme: "system",
       accentColor: "pink",
       notificationEnabled: true,
       notificationTime: { hour: 6, minute: 0 },

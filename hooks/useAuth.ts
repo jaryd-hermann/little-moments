@@ -5,6 +5,7 @@ import { useAuthStore, type Profile } from "@/store/authStore";
 import { logOutRevenueCat } from "@/lib/revenuecat";
 import { cancelAllNotifications } from "@/lib/notifications";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
+import { applyThemeFromProfile } from "@/lib/themeSync";
 
 export function useAuth() {
   const { user, profile, session, isLoading, setProfile, clearAuth } =
@@ -20,6 +21,7 @@ export function useAuth() {
     if (data) {
       setProfile(data as Profile);
       applyNotificationTimeFromProfile(data.notification_time);
+      applyThemeFromProfile(data.color_theme, data as Profile);
     }
     return data as Profile | null;
   }, [user]);

@@ -8,7 +8,17 @@ import { CRASH_BURN_WORDS } from "@/constants/words";
 import { useAuth } from "@/hooks/useAuth";
 import { useEntries } from "@/hooks/useEntries";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
-import { hasFullPhotoLibraryAccess, useMediaLibrary } from "@/hooks/useMediaLibrary";
+import {
+  hasFullPhotoLibraryAccess,
+  useMediaLibrary,
+  type PickedPhoto,
+} from "@/hooks/useMediaLibrary";
+import {
+  categorizePhotoBucket,
+  photoAgeDays,
+  photoYear,
+  type PhotoBucket,
+} from "@/lib/photoBucket";
 import {
   type AfterSaveStats,
   type AfterSaveContext,
@@ -140,6 +150,8 @@ export default function AddScreen() {
   const [promptValue, setPromptValue] = useState("");
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
+  const [photoBucket, setPhotoBucket] = useState<PhotoBucket | undefined>();
+  const [shuffleCount, setShuffleCount] = useState(0);
   const [addTabPhotoMode, setAddTabPhotoMode] = useState<AddTabPhotoMode | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isFirstTime, setIsFirstTime] = useState(true);
@@ -167,6 +179,8 @@ export default function AddScreen() {
       setPromptValue("");
       setPhotoUri(undefined);
       setPhotoDate(undefined);
+      setPhotoBucket(undefined);
+      setShuffleCount(0);
       setAddTabPhotoMode(null);
       setIsShuffling(false);
       setTabBarHidden(false);
@@ -186,12 +200,67 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setPhotoBucket(undefined);
+    setShuffleCount(0);
     setAddTabPhotoMode(null);
     setIsShuffling(false);
     setTabBarHidden(false);
     setLastSavedEntryId(null);
     setShareModalVisible(false);
   }, [addResetTrigger, setTabBarHidden]);
+
+  /** Single source of truth for setting the photo + emitting `photo_shown`. */
+  const applyPickedPhoto = useCallback(
+    (
+      photo: PickedPhoto,
+      reason: "initial" | "shuffle" | "permission_grant" | "manual_pick"
+    ) => {
+      setPhotoUri(photo.asset.uri);
+      setPhotoDate(photo.asset.creationTime);
+      setPhotoBucket(photo.bucket);
+      posthog.capture("photo_shown", {
+        surface: "add_tab",
+        reason,
+        photo_bucket: photo.bucket,
+        photo_age_days: photoAgeDays(photo.asset.creationTime),
+        photo_year: photoYear(photo.asset.creationTime),
+        selection_path: photo.selectionPath,
+        shuffles_so_far: shuffleCount,
+      });
+    },
+    [posthog, shuffleCount]
+  );
+
+  /**
+   * Wraps an `ImagePicker` result (no PickedPhoto wrapper available) so the
+   * library / "different photo" flows still emit `photo_shown` consistently.
+   */
+  const applyManualLibraryPhoto = useCallback(
+    (
+      uri: string,
+      creationTime: number | undefined,
+      reason: "initial" | "manual_pick"
+    ) => {
+      const ts = creationTime ?? Date.now();
+      const bucket = categorizePhotoBucket(ts);
+      applyPickedPhoto(
+        {
+          asset: {
+            id: uri,
+            uri,
+            creationTime: ts,
+            mediaType: "photo",
+            width: 0,
+            height: 0,
+          },
+          bucket,
+          selectionPath: "query_fallback",
+        },
+        reason
+      );
+    },
+    [applyPickedPhoto]
+  );
 
   const handleChoice = useCallback(
     async (id: string) => {
@@ -208,15 +277,14 @@ export default function AddScreen() {
         setPromptValue("");
         setPhotoUri(undefined);
         setPhotoDate(undefined);
+        setPhotoBucket(undefined);
+        setShuffleCount(0);
         setPhase("flow");
         const hasAccess = await checkPermission();
         if (hasAccess) {
           getRandomAsset()
             .then((photo) => {
-              if (photo) {
-                setPhotoUri(photo.uri);
-                setPhotoDate(photo.creationTime);
-              }
+              if (photo) applyPickedPhoto(photo, "initial");
             })
             .catch(() => {});
         }
@@ -228,8 +296,8 @@ export default function AddScreen() {
         setAddTabPhotoMode("library");
         setPromptType("photo");
         setPromptValue("");
-        setPhotoUri(picked.uri);
-        setPhotoDate(picked.creationTime);
+        setShuffleCount(0);
+        applyManualLibraryPhoto(picked.uri, picked.creationTime, "initial");
         setPhase("flow");
       } else {
         setAddTabPhotoMode(null);
@@ -238,7 +306,14 @@ export default function AddScreen() {
         setPhase("flow");
       }
     },
-    [getRandomAsset, checkPermission, posthog, ensureFullPhotoAccess]
+    [
+      getRandomAsset,
+      checkPermission,
+      posthog,
+      ensureFullPhotoAccess,
+      applyPickedPhoto,
+      applyManualLibraryPhoto,
+    ]
   );
 
   const handleFlowStarted = useCallback((inputMethod: InputMethod) => {
@@ -259,9 +334,17 @@ export default function AddScreen() {
       body: string;
       rawText: string;
       attachedPhotoUri?: string;
+      attachedPhotoTakenAtMs?: number;
       analytics?: any;
     }) => {
       const today = format(new Date(), "yyyy-MM-dd");
+      const photoBucketAtSave = entry.attachedPhotoTakenAtMs
+        ? categorizePhotoBucket(entry.attachedPhotoTakenAtMs)
+        : null;
+      const photoAgeDaysAtSave =
+        entry.attachedPhotoTakenAtMs != null
+          ? photoAgeDays(entry.attachedPhotoTakenAtMs)
+          : null;
       const saved = await saveEntry({
         title: entry.title,
         body: entry.body,
@@ -277,6 +360,8 @@ export default function AddScreen() {
         is_ai_enhanced: true,
         streak_day_number: null,
         chapter_id: null,
+        photo_bucket_at_save: photoBucketAtSave,
+        photo_age_days_at_save: photoAgeDaysAtSave,
       });
 
       if (saved?.id) setLastSavedEntryId(saved.id);
@@ -316,6 +401,9 @@ export default function AddScreen() {
               storage_url: publicUrl,
               media_type: "image",
               display_order: 0,
+              taken_at: entry.attachedPhotoTakenAtMs
+                ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
+                : null,
             });
             console.log("[AddScreen] Photo uploaded and linked to entry");
             await fetchEntries(entryId);
@@ -334,37 +422,50 @@ export default function AddScreen() {
   const handlePhotoShuffle = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsShuffling(true);
+    setShuffleCount((c) => c + 1);
+    posthog.capture("photo_shuffled", {
+      surface: "add_tab",
+      from_photo_bucket: photoBucket ?? null,
+      from_photo_age_days: photoDate != null ? photoAgeDays(photoDate) : null,
+      shuffles_so_far: shuffleCount + 1,
+    });
     try {
       const photo = await getRandomAsset();
-      if (photo) {
-        setPhotoUri(photo.uri);
-        setPhotoDate(photo.creationTime);
-      }
+      if (photo) applyPickedPhoto(photo, "shuffle");
     } finally {
       setIsShuffling(false);
     }
-  }, [getRandomAsset]);
+  }, [
+    getRandomAsset,
+    posthog,
+    photoBucket,
+    photoDate,
+    shuffleCount,
+    applyPickedPhoto,
+  ]);
 
   const handlePhotoReplaceFromLibrary = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const picked = await pickPhotoFromLibrary();
     if (!picked) return;
-    setPhotoUri(picked.uri);
-    setPhotoDate(picked.creationTime);
-  }, []);
+    setShuffleCount((c) => c + 1);
+    applyManualLibraryPhoto(picked.uri, picked.creationTime, "manual_pick");
+  }, [applyManualLibraryPhoto]);
 
   const handleRequestPhotoAccess = useCallback(async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const ok = await ensureFullPhotoAccess();
     if (ok) {
       const photo = await getRandomAsset();
-      if (photo) {
-        setPhotoUri(photo.uri);
-        setPhotoDate(photo.creationTime);
-      }
+      if (photo) applyPickedPhoto(photo, "permission_grant");
     }
     await checkPermission();
-  }, [ensureFullPhotoAccess, getRandomAsset, checkPermission]);
+  }, [
+    ensureFullPhotoAccess,
+    getRandomAsset,
+    checkPermission,
+    applyPickedPhoto,
+  ]);
 
   const addPhotoPermissionBlocked =
     promptType === "photo" &&
@@ -378,6 +479,8 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setPhotoBucket(undefined);
+    setShuffleCount(0);
     setAddTabPhotoMode(null);
   }, [setTabBarHidden]);
 
@@ -388,6 +491,8 @@ export default function AddScreen() {
     setPromptValue("");
     setPhotoUri(undefined);
     setPhotoDate(undefined);
+    setPhotoBucket(undefined);
+    setShuffleCount(0);
     setAddTabPhotoMode(null);
   }, [setTabBarHidden]);
 
@@ -399,7 +504,7 @@ export default function AddScreen() {
       };
       const goThreads = () => {
         setTabBarHidden(false);
-        router.push("/threads");
+        router.push("/(tabs)/brain");
       };
       const goDone = () => {
         setTabBarHidden(false);
@@ -591,6 +696,8 @@ export default function AddScreen() {
         promptValue={promptValue}
         photoUri={photoUri}
         photoDate={photoDate}
+        photoBucket={photoBucket}
+        shufflesBeforeSave={shuffleCount}
         onComplete={handleComplete}
         onPhotoShuffle={
           promptType === "photo" && !addPhotoPermissionBlocked

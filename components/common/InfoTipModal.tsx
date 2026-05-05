@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Modal, View, Text, Pressable, ScrollView, useWindowDimensions } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { ModalScrim } from "@/components/common/ModalScrim";
 
 type InfoTipModalProps = {
@@ -57,16 +58,16 @@ export function InfoTipModal({
             zIndex: 2,
             borderRadius: 16,
             padding: 20,
-            backgroundColor: "#FFFFEB",
+            backgroundColor: colors.surface,
             borderWidth: 2,
-            borderColor: "#000000",
+            borderColor: colors.text,
           }}
         >
           <Text
             style={{
               fontFamily: "LibreBaskerville-Bold",
               fontSize: 18,
-              color: "#1A1A1A",
+              color: colors.text,
               marginBottom: 10,
             }}
           >
@@ -81,7 +82,7 @@ export function InfoTipModal({
               borderRadius: 9999,
               backgroundColor: colors.primary,
               borderWidth: 2,
-              borderColor: "#000000",
+              borderColor: PINK_CTA_BORDER,
               paddingHorizontal: 20,
               paddingVertical: 10,
             }}
@@ -90,7 +91,7 @@ export function InfoTipModal({
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 15,
-                color: "#000000",
+                color: PINK_CTA_INK,
               }}
             >
               {primaryLabel}

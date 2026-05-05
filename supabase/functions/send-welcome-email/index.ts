@@ -8,8 +8,21 @@
  * Disable JWT verification for this function in the Dashboard.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { sendEmail } from "../_shared/resend.ts";
+import { addContactToAudience, sendEmail } from "../_shared/resend.ts";
 import { welcomeEmail } from "../_shared/email-templates/welcome.ts";
+
+function splitDisplayName(
+  name: string | null | undefined,
+): { firstName: string | null; lastName: string | null } {
+  const trimmed = name?.trim();
+  if (!trimmed) return { firstName: null, lastName: null };
+  const idx = trimmed.indexOf(" ");
+  if (idx === -1) return { firstName: trimmed, lastName: null };
+  return {
+    firstName: trimmed.slice(0, idx),
+    lastName: trimmed.slice(idx + 1).trim() || null,
+  };
+}
 
 Deno.serve(async (req) => {
   try {
@@ -70,6 +83,29 @@ Deno.serve(async (req) => {
     await supabase
       .from("email_sends")
       .insert({ user_id, email_key: "welcome" });
+
+    // Best-effort: add user to the Resend audience so they're reachable from
+    // Broadcasts. Failure here must never break the welcome path.
+    const audienceId = Deno.env.get("RESEND_AUDIENCE_ID");
+    if (audienceId) {
+      const { firstName, lastName } = splitDisplayName(
+        profile?.display_name ?? display_name,
+      );
+      try {
+        const res = await addContactToAudience({
+          audienceId,
+          email,
+          firstName,
+          lastName,
+        });
+        if (res.alreadyExists) {
+          console.log(`resend audience: contact already exists for ${email}`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("resend addContactToAudience failed:", message);
+      }
+    }
 
     return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json" },

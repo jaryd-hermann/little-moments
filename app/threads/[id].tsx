@@ -14,6 +14,7 @@ import {
   differenceInMonths,
   differenceInDays,
 } from "date-fns";
+import { usePostHog } from "posthog-react-native";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/hooks/useTheme";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
@@ -23,16 +24,11 @@ import {
   makeDummyThread,
   useThreadDevStore,
 } from "@/store/threadDevStore";
-import { threadDetailHeadingFromOrdinal } from "@/lib/threadOrdinal";
-
-const CONNECTION_LABELS: Record<string, string> = {
-  thematic: "Thematic",
-  emotional: "Emotional signature",
-  person: "Recurring person",
-  place: "Recurring place",
-  pattern: "Longitudinal pattern",
-  evolution: "Evolution",
-};
+import {
+  CONNECTION_LABELS,
+  threadDetailHeadingFromOrdinal,
+} from "@/lib/threadOrdinal";
+import { markThreadViewed } from "@/lib/views";
 
 const THREAD_INSIGHT_BG = "#FECFB4";
 
@@ -79,10 +75,23 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+/**
+ * Returns the date that best represents *when the moment happened* — the
+ * photo's original capture time when one is attached, otherwise the day the
+ * entry was logged. Used for the "X days apart" gap and the per-entry date
+ * label so threads reflect lived time, not journaling cadence.
+ */
+function entryEffectiveDateString(entry: ThreadEntry): string | null {
+  const taken =
+    entry.media?.find((m) => m.taken_at)?.taken_at ?? null;
+  return taken ?? entry.entry_date ?? null;
+}
+
 function EntryView({ entry }: { entry: ThreadEntry }) {
   const { colors } = useTheme();
-  const dateStr = entry.entry_date
-    ? format(new Date(entry.entry_date), "MMMM d, yyyy")
+  const effectiveDate = entryEffectiveDateString(entry);
+  const dateStr = effectiveDate
+    ? format(new Date(effectiveDate), "MMMM d, yyyy")
     : "";
   const body = stripHtml(entry.ai_enhanced_body ?? entry.body);
 
@@ -135,6 +144,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
 export default function ThreadDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors } = useTheme();
+  const posthog = usePostHog();
   const [thread, setThread] = useState<Thread | null>(null);
   const [loading, setLoading] = useState(true);
   const [threadOrdinal, setThreadOrdinal] = useState<number | null>(null);
@@ -161,8 +171,8 @@ export default function ThreadDetailScreen() {
         .select(
           `
           *,
-          entry_a:entries!threads_entry_id_a_fkey(id, title, body, ai_enhanced_body, entry_date, created_at, entry_media(id, storage_url, media_type)),
-          entry_b:entries!threads_entry_id_b_fkey(id, title, body, ai_enhanced_body, entry_date, created_at, entry_media(id, storage_url, media_type))
+          entry_a:entries!threads_entry_id_a_fkey(id, title, body, ai_enhanced_body, entry_date, created_at, entry_media(id, storage_url, media_type, taken_at)),
+          entry_b:entries!threads_entry_id_b_fkey(id, title, body, ai_enhanced_body, entry_date, created_at, entry_media(id, storage_url, media_type, taken_at))
         `
         )
         .eq("id", id)
@@ -172,6 +182,7 @@ export default function ThreadDetailScreen() {
         const mapped: Thread = {
           ...data,
           questions: (data.questions as string[]) ?? [],
+          viewed_at: (data as { viewed_at?: string | null }).viewed_at ?? null,
           entry_a: data.entry_a
             ? { ...data.entry_a, media: data.entry_a.entry_media ?? [] }
             : null,
@@ -180,6 +191,23 @@ export default function ThreadDetailScreen() {
             : null,
         };
         setThread(mapped);
+
+        // Persist the first-view, fire the analytics event, and drop the
+        // tab-bar shimmer immediately. The list-screen useThreads is a
+        // separate hook instance, so we additionally nudge it via the
+        // shared useUnseenStore (decremented inside markThreadViewed; the
+        // session-level viewed-id set lets the in-feed shimmer drop too).
+        if (mapped.viewed_at == null) {
+          void markThreadViewed({
+            threadId: mapped.id,
+            posthog,
+            connectionType: mapped.connection_type,
+            createdAt: mapped.created_at,
+          });
+          setThread((prev) =>
+            prev ? { ...prev, viewed_at: new Date().toISOString() } : prev
+          );
+        }
 
         const { data: ordRows } = await supabase
           .from("threads")
@@ -201,7 +229,7 @@ export default function ThreadDetailScreen() {
       }
       setLoading(false);
     })();
-  }, [id]);
+  }, [id, posthog]);
 
   if (loading) {
     return (
@@ -231,8 +259,8 @@ export default function ThreadDetailScreen() {
   const typeBase = CONNECTION_LABELS[thread.connection_type] ?? "Thread";
   const typeTag = `${typeBase} thread`;
   const gap = timeGapLabel(
-    thread.entry_a?.entry_date,
-    thread.entry_b?.entry_date
+    thread.entry_a ? entryEffectiveDateString(thread.entry_a) : null,
+    thread.entry_b ? entryEffectiveDateString(thread.entry_b) : null
   );
 
   const insightTextStyle = {
@@ -366,7 +394,7 @@ export default function ThreadDetailScreen() {
         )}
 
         <Pressable
-          onPress={() => router.replace("/threads")}
+          onPress={() => router.replace("/(tabs)/brain?tab=ellie")}
           style={{
             marginTop: 8,
             height: 52,

@@ -3,7 +3,6 @@ import { StoryViewer } from "@/components/today/StoryViewer";
 import { useMarketingStories } from "@/hooks/useMarketingStories";
 import { useTheme } from "@/hooks/useTheme";
 import {
-    hasCompletedAllPhilosophyStories,
     resolveStoryProgress,
     resumeSlideIndexFromProgress,
     STREAK_PHILOSOPHY_SLUG,
@@ -76,13 +75,6 @@ export function AppHeader({
     const p = resolveStoryProgress(STREAK_PHILOSOPHY_SLUG, storyProgress);
     return resumeSlideIndexFromProgress(p, streakPhilosophySlides.length);
   }, [streakPhilosophySlides, storyProgress]);
-
-  const hasFirstStory = totalMoments >= 1;
-  const hasStoryFinderBadge = memoryRaceCount >= 1;
-  const hasPhilosopherBadge = useMemo(
-    () => hasCompletedAllPhilosophyStories(storyProgress, philosophyStories),
-    [storyProgress, philosophyStories]
-  );
 
   return (
     <>
@@ -281,7 +273,7 @@ export function AppHeader({
                 accessibilityLabel="Open Threads"
                 onPress={() => {
                   setShowStreak(false);
-                  router.push("/threads");
+                  router.push("/(tabs)/brain");
                 }}
                 style={{
                   flex: 1,
@@ -367,124 +359,6 @@ export function AppHeader({
                 </Text>
               </View>
             ) : null}
-
-            {(hasFirstStory || hasStoryFinderBadge || hasPhilosopherBadge) && (
-              <>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 12,
-                    color: colors.textMuted,
-                    letterSpacing: 1.2,
-                    alignSelf: "flex-start",
-                    marginTop: 28,
-                    marginBottom: 12,
-                  }}
-                >
-                  BADGES
-                </Text>
-                {hasFirstStory && (
-                  <View
-                    style={{
-                      marginBottom: 12,
-                      width: "100%",
-                      borderRadius: 16,
-                      borderWidth: 1,
-                      borderColor: colors.primary,
-                      backgroundColor: colors.primary + "18",
-                      padding: 20,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Medium",
-                        fontSize: 16,
-                        color: colors.text,
-                      }}
-                    >
-                      Story Starter!
-                    </Text>
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Light",
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                        marginTop: 2,
-                      }}
-                    >
-                      You posted your first moment. The journey begins.
-                    </Text>
-                  </View>
-                )}
-                {hasStoryFinderBadge && (
-                  <View
-                    style={{
-                      marginBottom: 12,
-                      width: "100%",
-                      borderRadius: 16,
-                      borderWidth: 1,
-                      borderColor: colors.primary,
-                      backgroundColor: colors.primary + "18",
-                      padding: 20,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Medium",
-                        fontSize: 16,
-                        color: colors.text,
-                      }}
-                    >
-                      Story finder
-                    </Text>
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Light",
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                        marginTop: 2,
-                      }}
-                    >
-                      You did your first memory race to find a story.
-                    </Text>
-                  </View>
-                )}
-                {hasPhilosopherBadge && (
-                  <View
-                    style={{
-                      marginBottom: 12,
-                      width: "100%",
-                      borderRadius: 16,
-                      borderWidth: 1,
-                      borderColor: colors.primary,
-                      backgroundColor: colors.primary + "18",
-                      padding: 20,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Medium",
-                        fontSize: 16,
-                        color: colors.text,
-                      }}
-                    >
-                      The Philosopher
-                    </Text>
-                    <Text
-                      style={{
-                        fontFamily: "Roboto-Light",
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                        marginTop: 2,
-                      }}
-                    >
-                      You cared to understand the how and why of little
-                      moments.
-                    </Text>
-                  </View>
-                )}
-              </>
-            )}
 
             <View style={{ width: "100%", marginTop: 24 }}>
               <MarketingStoryCard

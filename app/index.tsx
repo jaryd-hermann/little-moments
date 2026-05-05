@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
+import { applyThemeFromProfile } from "@/lib/themeSync";
 
 export default function IndexRedirect() {
   const { colors } = useTheme();
@@ -32,6 +33,7 @@ export default function IndexRedirect() {
         if (p) {
           setProfile(p);
           applyNotificationTimeFromProfile(p.notification_time);
+          applyThemeFromProfile(p.color_theme, p);
         }
         routeAfterAuth(p);
       });

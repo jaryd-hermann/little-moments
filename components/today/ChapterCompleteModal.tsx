@@ -1,9 +1,10 @@
-import { Modal, View, Text, Pressable, Linking } from "react-native";
+import { Modal, View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { ModalScrim } from "@/components/common/ModalScrim";
-import { shareInvite, FEEDBACK_MAIL } from "@/lib/inviteShare";
-
-const BG = "#FFFFEB";
+import { shareInvite } from "@/lib/inviteShare";
+import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 
 interface ChapterCompleteModalProps {
   visible: boolean;
@@ -16,6 +17,7 @@ export function ChapterCompleteModal({
   chapterTitle,
   onDismiss,
 }: ChapterCompleteModalProps) {
+  const { colors } = useTheme();
   return (
     <Modal
       visible={visible}
@@ -29,12 +31,12 @@ export function ChapterCompleteModal({
           style={{
             zIndex: 2,
             borderRadius: 20,
-            backgroundColor: BG,
+            backgroundColor: colors.surface,
             paddingHorizontal: 24,
             paddingTop: 44,
             paddingBottom: 28,
             borderWidth: 1,
-            borderColor: "rgba(0,0,0,0.08)",
+            borderColor: colors.border,
             shadowColor: "#000",
             shadowOffset: { width: 0, height: 8 },
             shadowOpacity: 0.12,
@@ -55,14 +57,14 @@ export function ChapterCompleteModal({
               justifyContent: "center",
             }}
           >
-            <Ionicons name="close" size={22} color="#1A1A1A" />
+            <Ionicons name="close" size={22} color={colors.text} />
           </Pressable>
 
           <Text
             style={{
               fontFamily: "LibreBaskerville-Regular",
               fontSize: 22,
-              color: "#1A1A1A",
+              color: colors.text,
               lineHeight: 30,
               textAlign: "center",
             }}
@@ -74,22 +76,27 @@ export function ChapterCompleteModal({
             style={{
               fontFamily: "LibreBaskerville-Regular",
               fontSize: 16,
-              color: "rgba(0,0,0,0.65)",
+              color: colors.textSecondary,
               textAlign: "center",
               marginTop: 12,
               lineHeight: 24,
             }}
           >
-            Another month in the book.
+            Another week in the book.
           </Text>
 
           <View style={{ marginTop: 28, gap: 12 }}>
             <Pressable
-              onPress={() => void Linking.openURL(FEEDBACK_MAIL)}
+              onPress={() => {
+                onDismiss();
+                router.push("/(tabs)/today?capture=1");
+              }}
               style={{
                 height: 48,
                 borderRadius: 9999,
-                backgroundColor: "#1A1A1A",
+                backgroundColor: colors.primary,
+                borderWidth: 1.5,
+                borderColor: PINK_CTA_BORDER,
                 alignItems: "center",
                 justifyContent: "center",
               }}
@@ -98,11 +105,12 @@ export function ChapterCompleteModal({
                 style={{
                   fontFamily: "Roboto-Medium",
                   fontSize: 14,
-                  color: "#FFFFFF",
-                  letterSpacing: 0.6,
+                  color: PINK_CTA_INK,
+                  letterSpacing: 0.5,
+                  textTransform: "uppercase",
                 }}
               >
-                Leave feedback
+                Capture another moment
               </Text>
             </Pressable>
             <Pressable
@@ -111,7 +119,7 @@ export function ChapterCompleteModal({
                 height: 48,
                 borderRadius: 9999,
                 borderWidth: 1.5,
-                borderColor: "rgba(0,0,0,0.2)",
+                borderColor: colors.border,
                 alignItems: "center",
                 justifyContent: "center",
               }}
@@ -120,11 +128,11 @@ export function ChapterCompleteModal({
                 style={{
                   fontFamily: "Roboto-Medium",
                   fontSize: 14,
-                  color: "#1A1A1A",
+                  color: colors.text,
                   letterSpacing: 0.4,
                 }}
               >
-                Invite a friend
+                Suggest to a friend
               </Text>
             </Pressable>
           </View>

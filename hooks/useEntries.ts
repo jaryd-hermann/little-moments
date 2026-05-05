@@ -77,9 +77,6 @@ export function useEntries() {
         is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
       });
       await updateStreakAfterEntry(userId);
-      void supabase.functions.invoke("notify-badges", { body: {} }).catch(
-        () => {}
-      );
       void supabase.functions
         .invoke("process-threads", { body: { entry_id: data.id } })
         .catch(() => {});

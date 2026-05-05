@@ -191,7 +191,7 @@ export function DailyPromptReminderSchedule({
             style={{
               fontFamily: "Roboto-Medium",
               fontSize: 15,
-              color: continueDisabled ? colors.textMuted : "#1A1A1A",
+              color: continueDisabled ? colors.textMuted : colors.text,
               letterSpacing: 0.5,
             }}
           >
@@ -313,7 +313,7 @@ export function DailyPromptReminderSchedule({
                   backgroundColor: colors.primary,
                 }}
               >
-                <Text style={{ fontFamily: "Roboto-Medium", fontSize: 15, color: "#1A1A1A" }}>Done</Text>
+                <Text style={{ fontFamily: "Roboto-Medium", fontSize: 15, color: colors.text }}>Done</Text>
               </Pressable>
             </View>
           </Pressable>

@@ -31,6 +31,7 @@ import { PromptSheet } from "@/components/composer/PromptSheet";
 import { DatePrecisionPicker } from "@/components/composer/DatePrecisionPicker";
 import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useAuthStore } from "@/store/authStore";
 import { useEntryStore, type EntryMedia } from "@/store/entryStore";
 import { useMomentCelebrationStore } from "@/store/momentCelebrationStore";
@@ -879,7 +880,7 @@ export default function ComposerScreen() {
                       height: 44,
                       borderRadius: 22,
                       borderWidth: 2,
-                      borderColor: theme === "dark" ? "#FFFFFF" : colors.border,
+                      borderColor: colors.text,
                       backgroundColor: colors.surface,
                       paddingLeft: 4,
                       paddingRight: 4,
@@ -969,7 +970,7 @@ export default function ComposerScreen() {
                       borderRadius: 22,
                       backgroundColor: colors.surface,
                       borderWidth: 2,
-                      borderColor: theme === "dark" ? "#FFFFFF" : colors.border,
+                      borderColor: colors.text,
                       alignItems: "center",
                       justifyContent: "center",
                     }}
@@ -1094,8 +1095,8 @@ export default function ComposerScreen() {
                   style={{
                     borderRadius: 9999,
                     backgroundColor: colors.primary,
-                    borderWidth: theme === "light" ? 2 : 0,
-                    borderColor: "#1A1A1A",
+                    borderWidth: 2,
+                    borderColor: PINK_CTA_BORDER,
                     paddingHorizontal: 16,
                     paddingVertical: 10,
                     opacity: !body.trim() || isSaving ? 0.5 : 1,
@@ -1105,7 +1106,7 @@ export default function ComposerScreen() {
                     style={{
                       fontFamily: "Roboto-Medium",
                       fontSize: 13,
-                      color: "#000000",
+                      color: PINK_CTA_INK,
                       letterSpacing: 0.5,
                       textTransform: "uppercase",
                     }}

@@ -18,6 +18,10 @@ import {
   trialExpiredEmail,
   trialExpiringEmail,
 } from "../supabase/functions/_shared/email-templates/trial.ts";
+import {
+  lifecycleEmail,
+  LIFECYCLE_EVENT_KEYS,
+} from "../supabase/functions/_shared/email-templates/lifecycle.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = join(__dirname, "..", "email-previews");
@@ -71,6 +75,41 @@ push(
   "Trial expired",
   trialExpiredEmail(trialPreview).html,
 );
+
+// ---- Lifecycle (behavior-triggered) templates ----
+// Pretty labels grouped by category so the index reads cleanly.
+const LIFECYCLE_LABELS: Record<string, string> = {
+  lifecycle_day1_starter: "Lifecycle · Day-1 starter (no captures yet)",
+  lifecycle_dig_deeper: "Lifecycle · Dig Deeper",
+  lifecycle_pin_album: "Lifecycle · Pin / album",
+  lifecycle_sharing: "Lifecycle · Sharing",
+  lifecycle_chapters_intro: "Lifecycle · Chapters intro",
+  lifecycle_threads: "Lifecycle · Threads",
+  lifecycle_brain: "Lifecycle · Brain graph",
+  lifecycle_capsule: "Lifecycle · Capsule flipbook",
+  lifecycle_premium_backstop: "Lifecycle · Premium backstop",
+
+  premium_capsule_full: "Premium pitch · Capsule full (15 moments)",
+  premium_chapters_proactive: "Premium pitch · Chapters proactive (4 + viewed)",
+  premium_chapters_reactive: "Premium pitch · Chapters reactive (paywall bump)",
+  premium_threads_proactive: "Premium pitch · Threads proactive (5 + viewed)",
+  premium_threads_reactive: "Premium pitch · Threads reactive (paywall bump)",
+  premium_album_5pins: "Premium pitch · Album (5 pins)",
+  premium_album_15pins: "Premium pitch · Album (15 pins)",
+  premium_album_25pins: "Premium pitch · Album (25 pins)",
+  premium_album_50pins: "Premium pitch · Album (50 pins)",
+
+  winback_d7: "Win-back · 7 days inactive",
+  winback_d14: "Win-back · 14 days inactive",
+  winback_d30: "Win-back · 30 days inactive",
+};
+
+for (const key of LIFECYCLE_EVENT_KEYS) {
+  const tpl = lifecycleEmail(key, { displayName: "Alex" });
+  if (!tpl) continue;
+  const label = LIFECYCLE_LABELS[key] ?? key;
+  push(key, `${label} — ${tpl.subject}`, tpl.html);
+}
 
 mkdirSync(outDir, { recursive: true });
 

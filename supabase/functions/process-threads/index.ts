@@ -1,7 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
-import { sendExpoPushTickets } from "../_shared/expo-push.ts";
-import { sendEmail } from "../_shared/resend.ts";
+import { dispatch } from "../_shared/dispatch.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
 import { observationPlainPreview } from "../_shared/thread-text.ts";
 import {
@@ -21,12 +20,26 @@ const anthropic = new Anthropic({
   apiKey: Deno.env.get("ANTHROPIC_API_KEY"),
 });
 
-const ANDROID_CHANNEL = "default";
-const MIN_SIMILARITY = 0.78;
-const MIN_CONFIDENCE = 0.75;
+// Tuned against real data on 2026-05-03: text-embedding-3-large produces
+// conservative scores on personal journal entries — even the heaviest user's
+// top pair only hit 0.671. Pre-tuning thresholds (0.78 / 0.75) yielded zero
+// threads system-wide. p90 of pair similarities is ~0.49, so 0.45 surfaces
+// roughly the top decile of pairs as candidates; Claude then filters via
+// MIN_CONFIDENCE.
+const MIN_SIMILARITY = 0.45;
+const MIN_CONFIDENCE = 0.6;
 const MIN_DAY_GAP = 7;
 const MAX_CANDIDATES = 15;
-const FREE_THREAD_LIMIT = 3;
+// Tiered free model. Users on `active` or `trial` subscriptions get unlimited
+// threads. Everyone else (free / cancelled / expired):
+//   - Threads 1..FREE_VISIBLE_LIMIT       → stored, visible, push + email sent
+//   - Threads (limit+1)..FREE_PROCESS_LIMIT → stored, locked teasers, no push/email
+//   - Past FREE_PROCESS_LIMIT             → not processed at all (cost cap)
+// Locked threads still live in the DB so they unlock instantly on upgrade.
+// Keep both constants in sync with cron-threads-nightly/index.ts and
+// hooks/useThreads.ts.
+const FREE_VISIBLE_LIMIT = 5;
+const FREE_PROCESS_LIMIT = 10;
 
 const METADATA_SYSTEM_PROMPT = `You extract structured metadata from a personal journal entry.
 Return ONLY a JSON object with these fields:
@@ -185,20 +198,45 @@ interface Candidate {
   created_at: string;
   entry_date: string;
   similarity: number;
+  /** Photo's original capture time (EXIF/MediaLibrary), null if no photo. */
+  photo_taken_at?: string | null;
+}
+
+/**
+ * The "effective" date for a moment is the day the photo was actually taken
+ * (when one is attached), not the day the user opened the app to record it.
+ * Threads compare these across entries so connections like "3 weeks apart"
+ * reflect the real lived gap, not journaling cadence.
+ */
+function effectiveDateString(
+  entryDate: string | null | undefined,
+  photoTakenAt: string | null | undefined
+): string {
+  if (photoTakenAt) {
+    // Trim to YYYY-MM-DD so the LLM gets a clean calendar day, matching
+    // entry_date's format and avoiding spurious timezone wobble.
+    return photoTakenAt.slice(0, 10);
+  }
+  return entryDate ?? "";
 }
 
 async function analyzeConnections(
-  newEntry: { id: string; title: string | null; body: string },
+  newEntry: {
+    id: string;
+    title: string | null;
+    body: string;
+    effective_date: string;
+  },
   candidates: Candidate[]
 ) {
   const candidateBlock = candidates
-    .map(
-      (c, i) =>
-        `--- Past Entry ${i + 1} (id: ${c.id}, date: ${c.entry_date}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`
-    )
+    .map((c, i) => {
+      const effective = effectiveDateString(c.entry_date, c.photo_taken_at);
+      return `--- Past Entry ${i + 1} (id: ${c.id}, date: ${effective}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`;
+    })
     .join("\n\n");
 
-  const userMessage = `NEW ENTRY (id: ${newEntry.id}):\nTitle: ${newEntry.title ?? "(untitled)"}\n${newEntry.body}\n\nPAST ENTRIES:\n${candidateBlock}`;
+  const userMessage = `NEW ENTRY (id: ${newEntry.id}, date: ${newEntry.effective_date}):\nTitle: ${newEntry.title ?? "(untitled)"}\n${newEntry.body}\n\nPAST ENTRIES:\n${candidateBlock}`;
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -249,10 +287,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // 1. Fetch the entry
+    // 1. Fetch the entry (+ first attached photo's taken_at, used as the
+    //    "effective date" so thread reasoning is anchored to when the photo
+    //    was actually taken — not when the user happened to log the entry).
     const { data: entry, error: entryErr } = await userSupabase
       .from("entries")
-      .select("id, title, body, ai_enhanced_body, entry_date, created_at, user_id")
+      .select(
+        "id, title, body, ai_enhanced_body, entry_date, created_at, user_id, entry_media(taken_at, display_order)"
+      )
       .eq("id", entry_id)
       .single();
 
@@ -264,6 +306,17 @@ Deno.serve(async (req) => {
     if (!entryText) {
       return jsonResponse({ ok: true, skipped: "empty_entry" });
     }
+
+    const entryMedia =
+      ((entry as { entry_media?: { taken_at: string | null; display_order: number | null }[] })
+        .entry_media ?? [])
+        .slice()
+        .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+    const newEntryPhotoTakenAt = entryMedia[0]?.taken_at ?? null;
+    const newEntryEffectiveDate = effectiveDateString(
+      entry.entry_date,
+      newEntryPhotoTakenAt
+    );
 
     // 2. Parallel: generate embedding + extract metadata
     const [embedding, metadata] = await Promise.all([
@@ -331,9 +384,69 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, threads_found: 0 });
     }
 
+    // Enrich candidates with their photo taken_at so the LLM sees the real
+    // photo dates (not the day the user happened to journal). Single round
+    // trip; first row per entry by display_order.
+    const candidateIds = filteredCandidates.map((c) => c.id);
+    const { data: candidateMedia } = await serviceSupabase
+      .from("entry_media")
+      .select("entry_id, taken_at, display_order")
+      .in("entry_id", candidateIds)
+      .order("display_order", { ascending: true });
+
+    const photoTakenAtByEntry = new Map<string, string | null>();
+    for (const row of (candidateMedia ?? []) as {
+      entry_id: string;
+      taken_at: string | null;
+      display_order: number | null;
+    }[]) {
+      if (!photoTakenAtByEntry.has(row.entry_id)) {
+        photoTakenAtByEntry.set(row.entry_id, row.taken_at ?? null);
+      }
+    }
+    for (const c of filteredCandidates) {
+      c.photo_taken_at = photoTakenAtByEntry.get(c.id) ?? null;
+    }
+
+    // Read profile + thread count BEFORE the expensive Claude call so we can
+    // skip processing entirely for free users who have already hit the cap.
+    const { data: profile } = await serviceSupabase
+      .from("profiles")
+      .select("subscription_status, email, display_name, notification_enabled")
+      .eq("id", user.id)
+      .single();
+
+    const hasUnlimitedThreads =
+      profile?.subscription_status === "active" ||
+      profile?.subscription_status === "trial";
+
+    const { data: stats } = await serviceSupabase
+      .from("user_thread_stats")
+      .select("total_connections")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const currentConnections = stats?.total_connections ?? 0;
+
+    // Cost cap: free users at FREE_PROCESS_LIMIT do not get further analysis
+    // until they upgrade. Embedding + metadata are already saved above so
+    // future backfill (e.g. after upgrade) can pick up where we stopped.
+    if (!hasUnlimitedThreads && currentConnections >= FREE_PROCESS_LIMIT) {
+      return jsonResponse({
+        ok: true,
+        threads_found: 0,
+        skipped: "free_process_limit_reached",
+      });
+    }
+
     // 5. LLM connection analysis
     const result = await analyzeConnections(
-      { id: entry_id, title: entry.title, body: entryText },
+      {
+        id: entry_id,
+        title: entry.title,
+        body: entryText,
+        effective_date: newEntryEffectiveDate,
+      },
       filteredCandidates
     );
 
@@ -401,33 +514,36 @@ Deno.serve(async (req) => {
     await serviceSupabase.rpc("increment_thread_count", {
       p_user_id: user.id,
     });
+    const newCount = currentConnections + 1;
 
-    // 9. Push notification (skip for free users past limit)
-    if (!pastFreeLimit && profile?.notification_enabled) {
-      const { data: tokens } = await serviceSupabase
-        .from("push_tokens")
-        .select("expo_push_token")
-        .eq("user_id", user.id);
+    // Free users past the visible limit: thread is stored (above) but stays
+    // locked in the UI (see hooks/useThreads.ts) and we send no push/email.
+    const pastVisibleLimit =
+      !hasUnlimitedThreads && newCount > FREE_VISIBLE_LIMIT;
 
-      if (tokens?.length) {
-        const observation = (result.ellie_observation as string) ?? "";
-        const preview = observationPlainPreview(observation);
-        const truncated =
-          preview.length > 120 ? preview.slice(0, 117) + "..." : preview;
+    // 9. Push notification (skip when locked teaser).
+    //    Routed through OneSignal via dispatch() so this lines up with
+    //    the rest of the lifecycle messaging system (one-shot keyed on
+    //    thread id, logged in lifecycle_dispatches).
+    if (!pastVisibleLimit && profile?.notification_enabled) {
+      const observation = (result.ellie_observation as string) ?? "";
+      const preview = observationPlainPreview(observation);
+      const truncated =
+        preview.length > 120 ? preview.slice(0, 117) + "..." : preview;
 
-        const tickets = tokens.map((t) => ({
-          to: t.expo_push_token,
-          title: "✦ Ellie found a Thread",
+      const r = await dispatch(serviceSupabase, {
+        userId: user.id,
+        eventKey: `thread_surfaced:${thread.id}`,
+        channel: "push",
+        oneShot: true,
+        payload: { thread_id: thread.id },
+        push: {
+          title: "Ellie found a thread",
           body: truncated,
-          sound: "default" as const,
-          priority: "high" as const,
-          channelId: ANDROID_CHANNEL,
-          data: { type: "thread", threadId: thread.id },
-        }));
-        await sendExpoPushTickets(tickets).catch((e) =>
-          console.error("Push send error:", e)
-        );
-
+          data: { type: "thread", thread_id: thread.id },
+        },
+      });
+      if (r.sent) {
         await serviceSupabase
           .from("threads")
           .update({ push_sent: true })
@@ -435,8 +551,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 10. Email (skip for free users past limit)
-    if (!pastFreeLimit && profile?.email) {
+    // 10. Email (skip when locked teaser)
+    if (!pastVisibleLimit && profile?.email) {
       const { data: entryB } = await serviceSupabase
         .from("entries")
         .select("title")
@@ -450,16 +566,24 @@ Deno.serve(async (req) => {
         entryTitleB: entryB?.title,
       });
 
-      await sendEmail({
-        to: profile.email,
-        subject: email.subject,
-        html: email.html,
-      }).catch((e) => console.error("Email send error:", e));
-
-      await serviceSupabase
-        .from("threads")
-        .update({ email_sent: true })
-        .eq("id", thread.id);
+      const r = await dispatch(serviceSupabase, {
+        userId: user.id,
+        eventKey: `thread_surfaced_email:${thread.id}`,
+        channel: "email",
+        oneShot: true,
+        payload: { thread_id: thread.id },
+        email: {
+          to: profile.email,
+          subject: email.subject,
+          html: email.html,
+        },
+      });
+      if (r.sent) {
+        await serviceSupabase
+          .from("threads")
+          .update({ email_sent: true })
+          .eq("id", thread.id);
+      }
     }
 
     return jsonResponse({ ok: true, threads_found: 1, thread_id: thread.id });

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Modal, View, Text, Pressable } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { ModalScrim } from "@/components/common/ModalScrim";
 
 type FullPhotoLibraryAccessModalProps = {
@@ -15,13 +16,19 @@ type FullPhotoLibraryAccessModalProps = {
   onSecondaryCtaPress?: () => void | Promise<void>;
 };
 
-function BoldBodyText({ children }: { children: ReactNode }) {
+function BoldBodyText({
+  children,
+  color,
+}: {
+  children: ReactNode;
+  color: string;
+}) {
   return (
     <Text
       style={{
         fontFamily: "Roboto-Regular",
         fontSize: 15,
-        color: "#333333",
+        color,
         lineHeight: 22,
       }}
     >
@@ -74,22 +81,22 @@ export function FullPhotoLibraryAccessModal({
             zIndex: 2,
             borderRadius: 16,
             padding: 20,
-            backgroundColor: "#FFFFEB",
+            backgroundColor: colors.surface,
             borderWidth: 2,
-            borderColor: "#000000",
+            borderColor: colors.text,
           }}
         >
           <Text
             style={{
               fontFamily: "LibreBaskerville-Bold",
               fontSize: 18,
-              color: "#1A1A1A",
+              color: colors.text,
               marginBottom: 10,
             }}
           >
             {title}
           </Text>
-          <BoldBodyText>{body}</BoldBodyText>
+          <BoldBodyText color={colors.textSecondary}>{body}</BoldBodyText>
           <Pressable
             onPress={() => void Promise.resolve(onAllowAccess())}
             style={{
@@ -98,7 +105,7 @@ export function FullPhotoLibraryAccessModal({
               borderRadius: 9999,
               backgroundColor: colors.primary,
               borderWidth: 2,
-              borderColor: "#000000",
+              borderColor: PINK_CTA_BORDER,
               paddingHorizontal: 20,
               paddingVertical: 10,
             }}
@@ -107,7 +114,7 @@ export function FullPhotoLibraryAccessModal({
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 15,
-                color: "#000000",
+                color: PINK_CTA_INK,
               }}
             >
               {primaryCtaLabel}
@@ -124,7 +131,7 @@ export function FullPhotoLibraryAccessModal({
                 style={{
                   fontFamily: "Roboto-Light",
                   fontSize: 14,
-                  color: "#6B6B6B",
+                  color: colors.textMuted,
                 }}
               >
                 {secondaryCtaLabel}

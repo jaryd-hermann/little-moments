@@ -4,9 +4,8 @@ import * as Haptics from "expo-haptics";
 import { useEntries } from "@/hooks/useEntries";
 import { useEntryStore } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
-
-const CARD_BG = "#FFFFEB";
 
 type SlideToPinMomentProps = {
   entryId: string;
@@ -34,8 +33,8 @@ export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
         style={[
           styles.cardShell,
           {
-            backgroundColor: CARD_BG,
-            borderColor: "rgba(0,0,0,0.08)",
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
             ...Platform.select({
               ios: {
                 shadowColor: "#000",
@@ -61,13 +60,13 @@ export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
           <View style={styles.row}>
             <View style={styles.textCol}>
               <Text
-                style={styles.title}
+                style={[styles.title, { color: colors.text }]}
                 selectable={false}
               >
                 {isPinned ? "Moment Pinned" : "Pin this moment"}
               </Text>
               <Text
-                style={styles.subtitle}
+                style={[styles.subtitle, { color: colors.textSecondary }]}
                 selectable={false}
               >
                 {isPinned
@@ -79,15 +78,16 @@ export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
             <View
               style={[
                 styles.pill,
-                isPinned
-                  ? { backgroundColor: colors.primary }
-                  : { backgroundColor: "#FFFFFF" },
+                {
+                  borderColor: isPinned ? PINK_CTA_BORDER : colors.text,
+                  backgroundColor: isPinned ? colors.primary : colors.surface,
+                },
               ]}
               pointerEvents="none"
             >
               <ThumbtackIcon
                 size={20}
-                color="#000000"
+                color={isPinned ? PINK_CTA_INK : colors.text}
                 weight={isPinned ? "solid" : "regular"}
               />
             </View>
@@ -130,13 +130,11 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: "LibreBaskerville-Bold",
     fontSize: 17,
-    color: "#000000",
     lineHeight: 24,
   },
   subtitle: {
     fontFamily: "Roboto-Regular",
     fontSize: 14,
-    color: "#000000",
     lineHeight: 20,
     marginTop: 6,
   },
@@ -145,7 +143,6 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 26,
     borderWidth: 2,
-    borderColor: "#000000",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,

@@ -1,30 +1,41 @@
 import { create } from "zustand";
 import type { ChapterRecord } from "@/lib/chapters";
 
-const DUMMY_SLIDES = [
-  { body: "This month started quietly — a Tuesday morning where you noticed the light differently, and something in you *shifted*." },
-  { body: "You wrote about coffee more than once. Not the coffee itself, but the ritual. The pause before the day begins. That's not about caffeine. That's about needing a moment that's yours." },
-  { body: "There was a conversation with someone close to you that didn't go the way you expected. You didn't write much about it, but you came back to it three days later. That's the moment that mattered." },
-  { body: "Mid-month, you found yourself laughing at something small — a thing your kid said, a look from a stranger, a memory that surfaced without warning. You wrote it down in two sentences. Those two sentences are the whole story." },
-  { body: "You mentioned feeling tired more than once. Not the dramatic kind. The quiet kind — the weight of *showing up every day* without anyone noticing. This chapter notices." },
-  { body: "The weekend entries were different from the weekday ones. Softer. More spacious. Like you finally had room to hear your own thoughts." },
-  { body: "Near the end of the month, you wrote something that surprised even you. A memory from years ago, triggered by a smell or a song. That's what this practice does — it doesn't just capture the present. It unlocks the past." },
-  { body: "Twenty-three moments. Some days you wrote a paragraph, some days a single line. Every single one of them is a thread in the fabric of who you are right now." },
+const DUMMY_SLIDES_WEEK_1 = [
+  { body: "This week opened on a Tuesday morning where the light caught you off guard. You wrote about it in two sentences, then put the phone down. That's the whole story." },
+  { body: "You came back to coffee three times — not the cup, the ritual. The pause before the day begins. *Some weeks,* that pause is the entire chapter." },
+  { body: "Mid-week, a small conversation didn't land the way you expected. You mentioned it briefly, then circled back two days later. The thing you didn't say first is the thing that matters." },
+  { body: "By Friday you were laughing at something small — a kid's offhand comment, a stranger's expression. You captured it in a line. A line is enough." },
+  { body: "Five moments. Some days you wrote a paragraph, some days only a sentence. They're already a thread in the fabric of who you are right now." },
 ];
 
-function makeDummyChapter(): ChapterRecord {
-  const now = new Date();
-  const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
-  const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+const DUMMY_SLIDES_WEEK_2 = [
+  { body: "You started this week tired. Not dramatic, just the weight of showing up. You wrote about it without softening it — that takes practice." },
+  { body: "The walk on Wednesday surprised you. The wind, the air, the way the light fell across the street. You stopped and pulled out your phone. *Good.*" },
+  { body: "There's a thread you keep returning to — someone you love, a thing they do that you haven't fully named. This week, you wrote one more sentence about it. Slowly, slowly, you're getting there." },
+  { body: "Saturday felt different. Softer. Like you finally had room to hear your own thoughts. You wrote less but it was clearer." },
+  { body: "Six moments. They're not perfect entries. They don't need to be. They are honest, and that's the only thing that matters." },
+];
 
+function makeDummyChapter(opts: {
+  chapterNumber: number;
+  weekStartIso: string;
+  momentCount: number;
+  slides: { body: string }[];
+  id: string;
+}): ChapterRecord {
+  const start = new Date(`${opts.weekStartIso}T00:00:00`);
   return {
-    id: "dummy-chapter-id",
+    id: opts.id,
     user_id: "dummy-user",
-    chapter_number: 3,
-    ref_year: prevYear,
-    ref_month: prevMonth,
-    moment_count: 23,
-    slides: DUMMY_SLIDES,
+    chapter_number: opts.chapterNumber,
+    ref_year: start.getFullYear(),
+    ref_month: start.getMonth() + 1,
+    ref_iso_week: 1,
+    ref_iso_week_year: start.getFullYear(),
+    ref_week_start_date: opts.weekStartIso,
+    moment_count: opts.momentCount,
+    slides: opts.slides,
     image_slide: {
       layout: "v4",
       media_ids: ["demo-1", "demo-2", "demo-3", "demo-4"],
@@ -37,21 +48,70 @@ function makeDummyChapter(): ChapterRecord {
     },
     source_entry_ids: [],
     source_media_ids: [],
-    created_at: now.toISOString(),
-    updated_at: now.toISOString(),
+    created_at: start.toISOString(),
+    updated_at: start.toISOString(),
+    viewed_at: null,
   };
+}
+
+function startOfMondayWeek(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diff = (day + 6) % 7; // days since Monday
+  d.setDate(d.getDate() - diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function makeDummyChapters(): ChapterRecord[] {
+  const today = new Date();
+  const lastWeekMonday = startOfMondayWeek(today);
+  lastWeekMonday.setDate(lastWeekMonday.getDate() - 7);
+  const twoWeeksAgoMonday = new Date(lastWeekMonday);
+  twoWeeksAgoMonday.setDate(twoWeeksAgoMonday.getDate() - 7);
+
+  return [
+    makeDummyChapter({
+      id: "dummy-chapter-2",
+      chapterNumber: 2,
+      weekStartIso: isoDate(lastWeekMonday),
+      momentCount: 6,
+      slides: DUMMY_SLIDES_WEEK_2,
+    }),
+    makeDummyChapter({
+      id: "dummy-chapter-1",
+      chapterNumber: 1,
+      weekStartIso: isoDate(twoWeeksAgoMonday),
+      momentCount: 5,
+      slides: DUMMY_SLIDES_WEEK_1,
+    }),
+  ];
 }
 
 interface ChapterDevStore {
   dummyChapterEnabled: boolean;
   toggleDummyChapter: () => void;
+  /** Latest dummy chapter (most recent week). */
   getDummyChapter: () => ChapterRecord | null;
+  /** Full list of dummy chapters (most recent first). */
+  getDummyChapters: () => ChapterRecord[];
 }
 
 export const useChapterDevStore = create<ChapterDevStore>((set, get) => ({
   dummyChapterEnabled: false,
   toggleDummyChapter: () =>
     set((s) => ({ dummyChapterEnabled: !s.dummyChapterEnabled })),
-  getDummyChapter: () =>
-    get().dummyChapterEnabled ? makeDummyChapter() : null,
+  getDummyChapter: () => {
+    if (!get().dummyChapterEnabled) return null;
+    return makeDummyChapters()[0] ?? null;
+  },
+  getDummyChapters: () =>
+    get().dummyChapterEnabled ? makeDummyChapters() : [],
 }));

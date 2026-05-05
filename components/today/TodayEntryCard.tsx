@@ -4,6 +4,7 @@ import { format, isToday, parseISO } from "date-fns";
 import * as Haptics from "expo-haptics";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 
 interface TodayEntryCardProps {
@@ -26,7 +27,7 @@ export function TodayEntryCard({
   selectedDate,
   hasDraft,
 }: TodayEntryCardProps) {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
   const dateLabel = isToday(selectedDate)
     ? "today"
     : format(selectedDate, "MMM d");
@@ -56,8 +57,8 @@ export function TodayEntryCard({
         style={{
           borderRadius: 16,
           backgroundColor: colors.primary,
-          borderWidth: theme === "light" ? 2 : 0,
-          borderColor: theme === "light" ? "#1A1A1A" : "transparent",
+          borderWidth: 2,
+          borderColor: PINK_CTA_BORDER,
           paddingTop: 32,
           paddingBottom: 20,
           paddingHorizontal: 20,
@@ -68,7 +69,7 @@ export function TodayEntryCard({
           style={{
             fontFamily: "LibreBaskerville-Bold",
             fontSize: 18,
-            color: "#1A1A1A",
+            color: PINK_CTA_INK,
             lineHeight: 26,
             textAlign: "center",
           }}
@@ -80,7 +81,7 @@ export function TodayEntryCard({
             style={{
               borderRadius: 9999,
               borderWidth: 2,
-              borderColor: "#1A1A1A",
+              borderColor: PINK_CTA_BORDER,
               paddingHorizontal: 20,
               paddingVertical: 10,
             }}
@@ -89,7 +90,7 @@ export function TodayEntryCard({
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 13,
-                color: "#1A1A1A",
+                color: PINK_CTA_INK,
                 letterSpacing: 0.5,
                 textTransform: "uppercase",
               }}
@@ -102,10 +103,10 @@ export function TodayEntryCard({
     );
   }
 
-  const cardBg = "#FFFFEB";
-  const cardText = "#1A1A1A";
-  const cardMuted = "rgba(0, 0, 0, 0.55)";
-  const cardDate = "rgba(0, 0, 0, 0.45)";
+  const cardBg = colors.surface;
+  const cardText = colors.text;
+  const cardMuted = colors.textSecondary;
+  const cardDate = colors.textMuted;
 
   const hasMedia = entry.media && entry.media.length > 0;
   const firstMedia = hasMedia ? entry.media![0] : null;
@@ -122,8 +123,7 @@ export function TodayEntryCard({
       style={{
         borderRadius: 16,
         borderWidth: 1,
-        borderColor:
-          theme === "light" ? "rgba(0, 0, 0, 0.12)" : "rgba(255,255,255,0.12)",
+        borderColor: colors.border,
         backgroundColor: cardBg,
         padding: 20,
       }}
@@ -191,9 +191,9 @@ export function TodayEntryCard({
                 width: 112,
                 height: 112,
                 borderRadius: 14,
-                backgroundColor: "rgba(0,0,0,0.06)",
+                backgroundColor: colors.surfaceSecondary,
                 borderWidth: 1.5,
-                borderColor: "#1A1A1A",
+                borderColor: colors.text,
               }}
             />
           ) : null}

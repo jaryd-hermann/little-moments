@@ -15,6 +15,7 @@ import {
   isErrorWithCode,
 } from "@react-native-google-signin/google-signin";
 import { supabase } from "@/lib/supabase";
+import { useTheme } from "@/hooks/useTheme";
 
 const GOOGLE_BTN_INK = "#000000";
 const GOOGLE_BTN_BG = "#FFFFFF";
@@ -94,6 +95,7 @@ interface Props {
 }
 
 export function GoogleSignInButton({ onSuccess, onError }: Props) {
+  const { theme } = useTheme();
   const handlePress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (!googleConfigured) {
@@ -174,6 +176,8 @@ export function GoogleSignInButton({ onSuccess, onError }: Props) {
           height: BUTTON_HEIGHT,
           borderRadius: 9999,
           backgroundColor: GOOGLE_BTN_BG,
+          borderWidth: theme === "light" ? 2 : 0,
+          borderColor: theme === "light" ? "#000000" : "transparent",
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",

@@ -5,6 +5,7 @@ import { sha256 } from "js-sha256";
 import * as Haptics from "expo-haptics";
 import { supabase } from "@/lib/supabase";
 import { jwtAudience, readJwtPayload } from "@/lib/jwtPayload";
+import { useTheme } from "@/hooks/useTheme";
 
 const LOG = "[Auth/Apple]";
 
@@ -31,6 +32,7 @@ function errorMessage(e: unknown): string {
 }
 
 export function AppleSignInButton({ onSuccess, onError }: Props) {
+  const { theme } = useTheme();
   if (Platform.OS !== "ios") return null;
 
   const handlePress = async () => {
@@ -102,7 +104,9 @@ export function AppleSignInButton({ onSuccess, onError }: Props) {
         AppleAuthentication.AppleAuthenticationButtonType.CONTINUE
       }
       buttonStyle={
-        AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+        theme === "dark"
+          ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+          : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
       }
       cornerRadius={9999}
       style={{ width: "100%", height: 52 }}

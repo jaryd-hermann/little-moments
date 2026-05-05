@@ -1,11 +1,9 @@
-import { Modal, View, Text, Pressable, Linking, Image } from "react-native";
+import { Modal, View, Text, Pressable, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ModalScrim } from "@/components/common/ModalScrim";
 import { shareInvite, FEEDBACK_MAIL } from "@/lib/inviteShare";
 import { formatOrdinal } from "@/lib/ordinal";
 import { useTheme } from "@/hooks/useTheme";
-
-const CELEBRATION_BG = "#FFFFEB";
 
 interface MomentCelebrationModalProps {
   visible: boolean;
@@ -42,12 +40,12 @@ export function MomentCelebrationModal({
           style={{
             zIndex: 2,
             borderRadius: 20,
-            backgroundColor: CELEBRATION_BG,
+            backgroundColor: colors.surface,
             paddingHorizontal: 24,
             paddingTop: 44,
             paddingBottom: 28,
             borderWidth: 1,
-            borderColor: "rgba(0,0,0,0.08)",
+            borderColor: colors.border,
             shadowColor: "#000",
             shadowOffset: { width: 0, height: 8 },
             shadowOpacity: 0.12,
@@ -68,14 +66,14 @@ export function MomentCelebrationModal({
               justifyContent: "center",
             }}
           >
-            <Ionicons name="close" size={22} color="#1A1A1A" />
+            <Ionicons name="close" size={22} color={colors.text} />
           </Pressable>
 
           <Text
             style={{
               fontFamily: "LibreBaskerville-Regular",
               fontSize: 22,
-              color: "#1A1A1A",
+              color: colors.text,
               lineHeight: 30,
               textAlign: "center",
             }}
@@ -87,77 +85,20 @@ export function MomentCelebrationModal({
             moment
           </Text>
 
-          {isFirstMoment && (
-            <>
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Regular",
-                  fontSize: 16,
-                  color: "rgba(0,0,0,0.75)",
-                  textAlign: "center",
-                  marginTop: 16,
-                  lineHeight: 24,
-                }}
-              >
-                You got your first badge
-              </Text>
-              <View
-                style={{
-                  marginTop: 12,
-                  width: "100%",
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: colors.primary,
-                  backgroundColor: colors.primary + "18",
-                  padding: 16,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <Image
-                  source={require("@/assets/images/story-starter-badge.png")}
-                  style={{ width: 36, height: 36 }}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Medium",
-                      fontSize: 16,
-                      color: "#1A1A1A",
-                    }}
-                  >
-                    Story Starter!
-                  </Text>
-                  <Text
-                    style={{
-                      fontFamily: "Roboto-Light",
-                      fontSize: 13,
-                      color: "rgba(0,0,0,0.55)",
-                      marginTop: 2,
-                    }}
-                  >
-                    You posted your first moment. The journey begins.
-                  </Text>
-                </View>
-              </View>
-            </>
-          )}
-
-          {!isFirstMoment && (
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                color: "rgba(0,0,0,0.65)",
-                textAlign: "center",
-                marginTop: 12,
-                lineHeight: 24,
-              }}
-            >
-              Your story is growing.
-            </Text>
-          )}
+          <Text
+            style={{
+              fontFamily: "LibreBaskerville-Regular",
+              fontSize: 16,
+              color: colors.textSecondary,
+              textAlign: "center",
+              marginTop: 12,
+              lineHeight: 24,
+            }}
+          >
+            {isFirstMoment
+              ? "The journey begins."
+              : "Your story is growing."}
+          </Text>
 
           <View style={{ marginTop: 28, gap: 12 }}>
             <Pressable
@@ -167,7 +108,7 @@ export function MomentCelebrationModal({
               style={{
                 height: 48,
                 borderRadius: 9999,
-                backgroundColor: "#1A1A1A",
+                backgroundColor: colors.text,
                 alignItems: "center",
                 justifyContent: "center",
               }}
@@ -176,7 +117,7 @@ export function MomentCelebrationModal({
                 style={{
                   fontFamily: "Roboto-Medium",
                   fontSize: 14,
-                  color: "#FFFFFF",
+                  color: colors.background,
                   letterSpacing: 0.6,
                 }}
               >
@@ -191,7 +132,7 @@ export function MomentCelebrationModal({
                 height: 48,
                 borderRadius: 9999,
                 borderWidth: 1.5,
-                borderColor: "rgba(0,0,0,0.2)",
+                borderColor: colors.border,
                 alignItems: "center",
                 justifyContent: "center",
               }}
@@ -200,7 +141,7 @@ export function MomentCelebrationModal({
                 style={{
                   fontFamily: "Roboto-Medium",
                   fontSize: 14,
-                  color: "#1A1A1A",
+                  color: colors.text,
                   letterSpacing: 0.4,
                 }}
               >

@@ -28,6 +28,7 @@ import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryMediaVideo } from "@/components/common/EntryMediaVideo";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { EntryPinToggle } from "@/components/common/EntryPinToggle";
+import { smartParagraphs as splitParagraphs } from "@/lib/paragraphs";
 
 function stripHtml(html: string): string {
   return html
@@ -45,6 +46,7 @@ function stripHtml(html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
 
 export default function EntryDetailScreen() {
   const { colors } = useTheme();
@@ -169,11 +171,19 @@ export default function EntryDetailScreen() {
     );
   }
 
-  const dateStr = entry.entry_date
-    ? format(new Date(entry.entry_date), "EEEE, MMMM d, yyyy")
-    : entry.entry_month
-      ? `${format(new Date(entry.entry_year, entry.entry_month - 1), "MMMM yyyy")}`
-      : `${entry.entry_year}`;
+  // Prefer the photo's original capture time (EXIF / MediaLibrary creation
+  // time stored on entry_media.taken_at) over the day the user happened to
+  // log the moment. Mirrors CapsuleFlipbookView so the date the user sees
+  // in flipbook and on the detail page always agrees.
+  const photoTakenAt =
+    entry.media?.find((m) => m.taken_at)?.taken_at ?? null;
+  const dateStr = photoTakenAt
+    ? format(new Date(photoTakenAt), "EEEE, MMMM d, yyyy")
+    : entry.entry_date
+      ? format(new Date(entry.entry_date), "EEEE, MMMM d, yyyy")
+      : entry.entry_month
+        ? `${format(new Date(entry.entry_year, entry.entry_month - 1), "MMMM yyyy")}`
+        : `${entry.entry_year}`;
 
   const previousTitle =
     previousEntry &&
@@ -355,16 +365,20 @@ export default function EntryDetailScreen() {
             >
               EXTRACTED STORY
             </Text>
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                lineHeight: 28,
-                color: colors.text,
-              }}
-            >
-              {stripHtml(entry.ai_enhanced_body)}
-            </Text>
+            {splitParagraphs(stripHtml(entry.ai_enhanced_body)).map((p, i, arr) => (
+              <Text
+                key={i}
+                style={{
+                  fontFamily: "LibreBaskerville-Regular",
+                  fontSize: 16,
+                  lineHeight: 28,
+                  color: colors.text,
+                  marginBottom: i < arr.length - 1 ? 14 : 0,
+                }}
+              >
+                {p}
+              </Text>
+            ))}
 
             <View
               style={{
@@ -386,29 +400,38 @@ export default function EntryDetailScreen() {
             >
               RAW RACE
             </Text>
-            <Text
-              style={{
-                fontFamily: "LibreBaskerville-Regular",
-                fontSize: 16,
-                lineHeight: 28,
-                color: colors.textMuted,
-              }}
-            >
-              {stripHtml(entry.original_body ?? entry.body)}
-            </Text>
+            {splitParagraphs(stripHtml(entry.original_body ?? entry.body)).map((p, i, arr) => (
+              <Text
+                key={i}
+                style={{
+                  fontFamily: "LibreBaskerville-Regular",
+                  fontSize: 16,
+                  lineHeight: 28,
+                  color: colors.textMuted,
+                  marginBottom: i < arr.length - 1 ? 14 : 0,
+                }}
+              >
+                {p}
+              </Text>
+            ))}
           </View>
         ) : (
-          <Text
-            style={{
-              fontFamily: "LibreBaskerville-Regular",
-              fontSize: 16,
-              lineHeight: 28,
-              color: colors.text,
-              marginTop: 24,
-            }}
-          >
-            {stripHtml(entry.body)}
-          </Text>
+          <View style={{ marginTop: 24 }}>
+            {splitParagraphs(stripHtml(entry.body)).map((p, i, arr) => (
+              <Text
+                key={i}
+                style={{
+                  fontFamily: "LibreBaskerville-Regular",
+                  fontSize: 16,
+                  lineHeight: 28,
+                  color: colors.text,
+                  marginBottom: i < arr.length - 1 ? 14 : 0,
+                }}
+              >
+                {p}
+              </Text>
+            ))}
+          </View>
         )}
 
         {entry.entry_type !== "chapter" ? (
@@ -425,12 +448,12 @@ export default function EntryDetailScreen() {
               gap: 8,
             }}
           >
-            <Ionicons name="share-outline" size={18} color="#1A1A1A" />
+            <Ionicons name="share-outline" size={18} color={colors.text} />
             <Text
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 14,
-                color: "#1A1A1A",
+                color: colors.text,
               }}
             >
               Share with someone

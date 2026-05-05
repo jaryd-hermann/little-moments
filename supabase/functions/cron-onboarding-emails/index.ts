@@ -1,13 +1,16 @@
 /**
  * Daily drip: send onboarding emails on days 1-10 after signup.
  *
- * Auth: Authorization: Bearer <CRON_SECRET>
- * Disable JWT verification for this function in the Dashboard.
+ * STATUS: DEPRECATED (2026-05-04 / superseded by cron-lifecycle-emails).
  *
- * Scheduling: migration 0013 registers a pg_cron job that POSTs here
- * every hour. The function finds users whose profiles.created_at is
- * 1-10 days ago (UTC calendar day), checks email_sends for duplicates,
- * and sends the appropriate day's email via Resend.
+ * The new behavior-triggered system in `cron-lifecycle-emails` replaces
+ * this time-based drip. Migration 0043 unschedules this cron and
+ * schedules the new one. The function below is kept as a no-op safety
+ * net for any stray scheduled invocations during the migration window.
+ *
+ * Do NOT re-enable. Add new lifecycle emails to
+ * `_shared/email-templates/lifecycle.ts` and a corresponding trigger
+ * predicate in `cron-lifecycle-emails/index.ts`.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { sendEmail } from "../_shared/resend.ts";
@@ -16,12 +19,23 @@ import {
   ONBOARDING_DAY_COUNT,
 } from "../_shared/email-templates/onboarding.ts";
 
+const ONBOARDING_DRIP_DISABLED = true;
+
 Deno.serve(async (req) => {
   try {
     const secret = Deno.env.get("CRON_SECRET");
     const auth = req.headers.get("Authorization");
     if (!secret || auth !== `Bearer ${secret}`) {
       return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (ONBOARDING_DRIP_DISABLED) {
+      // Hard no-op. Returns 200 so the cron job's `net.http_post` doesn't
+      // log spurious failures while we transition to the external sender.
+      return new Response(
+        JSON.stringify({ ok: true, sent: 0, disabled: true }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
     const supabase = createClient(

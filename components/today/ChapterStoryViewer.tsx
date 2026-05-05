@@ -6,19 +6,23 @@ import {
   Dimensions,
   Modal,
   ScrollView,
-  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { usePostHog } from "posthog-react-native";
 import type { ChapterRecord } from "@/lib/chapters";
 import {
   chapterMonthName,
+  chapterWeekLabel,
   chapterTotalSlides,
   chapterCardTitle,
 } from "@/lib/chapters";
 import { ChapterImageSlide } from "./ChapterImageSlide";
-import { shareInvite, FEEDBACK_MAIL } from "@/lib/inviteShare";
+import { shareInvite } from "@/lib/inviteShare";
+import { markChapterViewed } from "@/lib/views";
+import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const CTA_BG = "#F0D7FF";
@@ -63,6 +67,7 @@ export function ChapterStoryViewer({
 }: ChapterStoryViewerProps) {
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
+  const { colors } = useTheme();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showComplete, setShowComplete] = useState(false);
   const prevChapterRef = useRef<string | null>(null);
@@ -80,8 +85,23 @@ export function ChapterStoryViewer({
         ref_month: chapter.ref_month,
         ref_year: chapter.ref_year,
       });
+      // First-view tracking: mark `chapters.viewed_at` and fire
+      // `chapter_viewed` (different from `viewed_chapter` above which fires on
+      // every open). Skip dummy chapters — they don't exist server-side.
+      if (
+        chapter.viewed_at == null &&
+        !chapter.id.startsWith("dummy-")
+      ) {
+        void markChapterViewed({
+          chapterId: chapter.id,
+          posthog,
+          chapterNumber: chapter.chapter_number,
+          refWeekStartDate: chapter.ref_week_start_date,
+          createdAt: chapter.created_at,
+        });
+      }
     }
-  }, [chapter?.id]);
+  }, [chapter, posthog]);
 
   if (visible && chapter && prevChapterRef.current !== chapter.id) {
     handleOpen();
@@ -224,12 +244,17 @@ export function ChapterStoryViewer({
                 <Text
                   style={{
                     fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 48,
+                    fontSize: 36,
+                    lineHeight: 44,
                     color: textColor,
                     textAlign: "center",
                   }}
                 >
-                  {chapterMonthName(chapter.ref_month)}
+                  {chapter.ref_week_start_date
+                    ? chapterWeekLabel(chapter)
+                    : chapter.ref_month != null
+                      ? chapterMonthName(chapter.ref_month)
+                      : ""}
                 </Text>
 
                 <View
@@ -365,12 +390,12 @@ export function ChapterStoryViewer({
               style={{
                 zIndex: 2,
                 borderRadius: 20,
-                backgroundColor: "#FFFFEB",
+                backgroundColor: colors.surface,
                 paddingHorizontal: 24,
                 paddingTop: 44,
                 paddingBottom: 28,
                 borderWidth: 1,
-                borderColor: "rgba(0,0,0,0.08)",
+                borderColor: colors.border,
                 shadowColor: "#000",
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.12,
@@ -391,14 +416,14 @@ export function ChapterStoryViewer({
                   justifyContent: "center",
                 }}
               >
-                <Ionicons name="close" size={22} color="#1A1A1A" />
+                <Ionicons name="close" size={22} color={colors.text} />
               </Pressable>
 
               <Text
                 style={{
                   fontFamily: "LibreBaskerville-Regular",
                   fontSize: 22,
-                  color: "#1A1A1A",
+                  color: colors.text,
                   lineHeight: 30,
                   textAlign: "center",
                 }}
@@ -410,7 +435,7 @@ export function ChapterStoryViewer({
                 style={{
                   fontFamily: "LibreBaskerville-Regular",
                   fontSize: 16,
-                  color: "rgba(0,0,0,0.65)",
+                  color: colors.textSecondary,
                   textAlign: "center",
                   marginTop: 12,
                   lineHeight: 24,
@@ -421,11 +446,16 @@ export function ChapterStoryViewer({
 
               <View style={{ marginTop: 28, gap: 12 }}>
                 <Pressable
-                  onPress={() => void Linking.openURL(FEEDBACK_MAIL)}
+                  onPress={() => {
+                    handleClose();
+                    router.push("/(tabs)/today?capture=1");
+                  }}
                   style={{
                     height: 48,
                     borderRadius: 9999,
-                    backgroundColor: "#1A1A1A",
+                    backgroundColor: CTA_BG,
+                    borderWidth: 2,
+                    borderColor: PINK_CTA_BORDER,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
@@ -434,11 +464,12 @@ export function ChapterStoryViewer({
                     style={{
                       fontFamily: "Roboto-Medium",
                       fontSize: 14,
-                      color: "#FFFFFF",
+                      color: PINK_CTA_INK,
                       letterSpacing: 0.6,
+                      textTransform: "uppercase",
                     }}
                   >
-                    Leave feedback
+                    Capture a moment
                   </Text>
                 </Pressable>
                 <Pressable
@@ -447,7 +478,7 @@ export function ChapterStoryViewer({
                     height: 48,
                     borderRadius: 9999,
                     borderWidth: 1.5,
-                    borderColor: "rgba(0,0,0,0.2)",
+                    borderColor: colors.border,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
@@ -456,7 +487,7 @@ export function ChapterStoryViewer({
                     style={{
                       fontFamily: "Roboto-Medium",
                       fontSize: 14,
-                      color: "#1A1A1A",
+                      color: colors.text,
                       letterSpacing: 0.4,
                     }}
                   >

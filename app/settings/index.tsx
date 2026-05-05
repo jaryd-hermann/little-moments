@@ -1,4 +1,3 @@
-import { InfoTipModal } from "@/components/common/InfoTipModal";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ACCENT_PALETTES, Colors } from "@/constants/Colors";
@@ -21,6 +20,7 @@ import {
   useReminderScheduleState,
 } from "@/components/settings/DailyPromptReminderSchedule";
 import type { ReminderSlot } from "@/lib/notificationTimeSync";
+import { PINK_CTA_INK } from "@/lib/themedShadow";
 import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
 import { uploadAvatar } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
@@ -28,6 +28,8 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useChapterDevStore } from "@/store/chapterStore";
 import { useThreadDevStore } from "@/store/threadDevStore";
 import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
+import { useUnseenStore } from "@/store/unseenStore";
+import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -61,7 +63,12 @@ try {
 type ThemePalette = (typeof Colors)["light"];
 
 /** Set true to show theme / accent UI again. */
-const SHOW_APPEARANCE_SETTINGS = false;
+const SHOW_APPEARANCE_SETTINGS = true;
+/** Hide accent picker — theme toggle is the only appearance control for now. */
+const SHOW_ACCENT_PICKER = false;
+/** Hide the rewatchable Philosophy stories card. Flip back on if we want
+ *  to surface the marketing rewatch entry from settings again. */
+const SHOW_PHILOSOPHY_STORIES = false;
 
 const GOOD_TIMES_APP_STORE_URL =
   "https://apps.apple.com/us/app/good-times-one-group-question/id6755366013";
@@ -141,8 +148,7 @@ function SettingsDailyPromptTimeSection({
           marginBottom: 12,
         }}
       >
-        Daily new prompt — we&apos;ll notify you when your word, photo, or question is ready. Pick a default
-        time (change anytime).
+        We&apos;ll notify you when your new photo is ready. Pick a default time (change anytime).
       </Text>
       <DailyPromptReminderSchedule
         selectedSlot={selectedSlot}
@@ -174,7 +180,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     posthog.capture("viewed_settings");
   }, []);
-  const { colors, theme, setTheme, accentColor, setAccentColor } = useTheme();
+  const { colors, theme, themePreference, setTheme, accentColor, setAccentColor } = useTheme();
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const nameIsEmail =
@@ -236,12 +242,6 @@ export default function SettingsScreen() {
   const notificationTime = useSettingsStore(
     (s) => s.notificationTime
   );
-  const streakAtRiskEnabled = useSettingsStore(
-    (s) => s.streakAtRiskEnabled
-  );
-  const setStreakAtRiskEnabled = useSettingsStore(
-    (s) => s.setStreakAtRiskEnabled
-  );
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
   const { philosophyStories, bySlug } = useMarketingStories();
@@ -251,20 +251,6 @@ export default function SettingsScreen() {
   );
 
   const [storyViewerSlug, setStoryViewerSlug] = useState<string | null>(null);
-  const [showICloudComingSoon, setShowICloudComingSoon] = useState(false);
-  const [donationCauseName, setDonationCauseName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!profile?.donation_cause_id) return;
-    (async () => {
-      const { data } = await supabase
-        .from("donation_causes")
-        .select("title")
-        .eq("id", profile.donation_cause_id!)
-        .single();
-      if (data) setDonationCauseName(data.title);
-    })();
-  }, [profile?.donation_cause_id]);
   const activeStorySlides = storyViewerSlug
     ? bySlug.get(storyViewerSlug)?.slides
     : undefined;
@@ -306,13 +292,18 @@ export default function SettingsScreen() {
     });
   };
 
-  const handleThemeSwitch = (dark: boolean) => {
-    const newTheme = dark ? "dark" : "light";
-    setTheme(newTheme);
+  const handleThemeChoice = (next: "light" | "dark" | "system") => {
+    if (next === themePreference) return;
+    void Haptics.selectionAsync();
+    setTheme(next);
+    posthog.capture("theme_changed", {
+      preference: next,
+      previous: themePreference,
+    });
     if (user) {
       supabase
         .from("profiles")
-        .update({ color_theme: newTheme })
+        .update({ color_theme: next })
         .eq("id", user.id);
     }
   };
@@ -385,12 +376,12 @@ export default function SettingsScreen() {
           style={{
             flex: 1,
             textAlign: "left",
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 18,
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: 26,
             color: colors.text,
           }}
         >
-          Settings and stuff
+          Settings
         </Text>
         <Pressable
           onPress={() => router.back()}
@@ -457,7 +448,7 @@ export default function SettingsScreen() {
             onChangeText={setDisplayName}
             onSubmitEditing={handleSaveDisplayName}
             onBlur={handleSaveDisplayName}
-            placeholder="Tell Ellie your name"
+            placeholder="Add a name and pic for shared moments"
             placeholderTextColor={colors.textMuted}
             returnKeyType="done"
             maxLength={50}
@@ -524,109 +515,156 @@ export default function SettingsScreen() {
                 borderRadius: 12,
                 borderWidth: 1,
                 borderColor: colors.border,
+                paddingHorizontal: 16,
+                paddingVertical: 14,
               }}
             >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 15,
+                  color: colors.text,
+                  marginBottom: 10,
+                }}
+              >
+                Theme
+              </Text>
               <View
                 style={{
                   flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  paddingHorizontal: 16,
-                  paddingVertical: 14,
+                  borderRadius: 9999,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  padding: 3,
+                  backgroundColor: colors.surfaceSecondary,
                 }}
               >
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Regular",
-                    fontSize: 15,
-                    color: colors.text,
-                  }}
-                >
-                  Dark Mode
-                </Text>
-                <Switch
-                  value={theme === "dark"}
-                  onValueChange={handleThemeSwitch}
-                  trackColor={{
-                    true: colors.primary,
-                    false: colors.surfaceSecondary,
-                  }}
-                />
+                {(
+                  [
+                    { id: "light", label: "Light" },
+                    { id: "dark", label: "Dark" },
+                    { id: "system", label: "System" },
+                  ] as const
+                ).map((opt) => {
+                  const selected = themePreference === opt.id;
+                  return (
+                    <Pressable
+                      key={opt.id}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => handleThemeChoice(opt.id)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        borderRadius: 9999,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: selected ? colors.primary : "transparent",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: selected ? "Roboto-Medium" : "Roboto-Regular",
+                          fontSize: 13,
+                          color: selected ? PINK_CTA_INK : colors.textSecondary,
+                        }}
+                      >
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-              <SettingDivider colors={colors} />
-              {/* Accent color */}
-              <View
+              <Text
                 style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 14,
+                  fontFamily: "Roboto-Light",
+                  fontSize: 12,
+                  color: colors.textMuted,
+                  marginTop: 8,
                 }}
               >
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Regular",
-                    fontSize: 15,
-                    color: colors.text,
-                    marginBottom: 12,
-                  }}
-                >
-                  App Color
-                </Text>
-                <View style={{ flexDirection: "row", gap: 12 }}>
-                  {(Object.keys(ACCENT_PALETTES) as Array<keyof typeof ACCENT_PALETTES>).map(
-                    (key) => {
-                      const palette = ACCENT_PALETTES[key];
-                      const isSelected = accentColor === key;
-                      return (
-                        <Pressable
-                          key={key}
-                          onPress={() => setAccentColor(key)}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 8,
-                            paddingHorizontal: 14,
-                            paddingVertical: 8,
-                            borderRadius: 9999,
-                            borderWidth: 2,
-                            borderColor: isSelected ? palette.primary : colors.border,
-                            backgroundColor: isSelected
-                              ? palette.primary + "18"
-                              : "transparent",
-                          }}
-                        >
-                          <View
-                            style={{
-                              width: 18,
-                              height: 18,
-                              borderRadius: 9,
-                              backgroundColor: palette.primary,
-                              borderWidth: 1,
-                              borderColor: "rgba(0,0,0,0.1)",
-                            }}
-                          />
-                          <Text
-                            style={{
-                              fontFamily: "Roboto-Regular",
-                              fontSize: 14,
-                              color: colors.text,
-                              textTransform: "capitalize",
-                            }}
-                          >
-                            {key}
-                          </Text>
-                          {isSelected && (
-                            <Ionicons
-                              name="checkmark"
-                              size={16}
-                              color={colors.text}
-                            />
-                          )}
-                        </Pressable>
-                      );
-                    }
-                  )}
-                </View>
-              </View>
+                {themePreference === "system"
+                  ? `Following your device — currently ${theme === "dark" ? "Dark" : "Light"}.`
+                  : "Override the device theme."}
+              </Text>
+              {SHOW_ACCENT_PICKER ? (
+                <>
+                  <SettingDivider colors={colors} />
+                  {/* Accent color */}
+                  <View
+                    style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 14,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Regular",
+                        fontSize: 15,
+                        color: colors.text,
+                        marginBottom: 12,
+                      }}
+                    >
+                      App Color
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 12 }}>
+                      {(Object.keys(ACCENT_PALETTES) as Array<keyof typeof ACCENT_PALETTES>).map(
+                        (key) => {
+                          const palette = ACCENT_PALETTES[key];
+                          const isSelected = accentColor === key;
+                          return (
+                            <Pressable
+                              key={key}
+                              onPress={() => setAccentColor(key)}
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 8,
+                                paddingHorizontal: 14,
+                                paddingVertical: 8,
+                                borderRadius: 9999,
+                                borderWidth: 2,
+                                borderColor: isSelected ? palette.primary : colors.border,
+                                backgroundColor: isSelected
+                                  ? palette.primary + "18"
+                                  : "transparent",
+                              }}
+                            >
+                              <View
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: 9,
+                                  backgroundColor: palette.primary,
+                                  borderWidth: 1,
+                                  borderColor: "rgba(0,0,0,0.1)",
+                                }}
+                              />
+                              <Text
+                                style={{
+                                  fontFamily: "Roboto-Regular",
+                                  fontSize: 14,
+                                  color: colors.text,
+                                  textTransform: "capitalize",
+                                }}
+                              >
+                                {key}
+                              </Text>
+                              {isSelected && (
+                                <Ionicons
+                                  name="checkmark"
+                                  size={16}
+                                  color={colors.text}
+                                />
+                              )}
+                            </Pressable>
+                          );
+                        }
+                      )}
+                    </View>
+                  </View>
+                </>
+              ) : null}
             </View>
           </>
         ) : null}
@@ -698,91 +736,20 @@ export default function SettingsScreen() {
               </View>
             </>
           ) : null}
-          <SettingDivider colors={colors} />
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: "Roboto-Regular",
-                fontSize: 15,
-                color: colors.text,
-              }}
-            >
-              Streak at Risk Alerts
-            </Text>
-            <Switch
-              value={streakAtRiskEnabled}
-              onValueChange={(val) => {
-                setStreakAtRiskEnabled(val);
-                if (user) {
-                  supabase
-                    .from("profiles")
-                    .update({ streak_at_risk_enabled: val })
-                    .eq("id", user.id);
-                }
-              }}
-              trackColor={{
-                true: colors.primary,
-                false: colors.surfaceSecondary,
-              }}
-              thumbColor="#FFFFFF"
-              style={{
-                shadowColor: "#000000",
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.3,
-                shadowRadius: 1,
-              }}
+        </View>
+
+        {/* THE PHILOSOPHY — always rewatchable. Hidden behind a flag at the
+            top of the file so we can flip it back on without restoring the JSX. */}
+        {SHOW_PHILOSOPHY_STORIES ? (
+          <View style={{ marginTop: 24 }}>
+            <MarketingStoryCard
+              stories={philosophyListItems}
+              onPressStory={handleOpenStory}
+              storyProgress={storyProgress}
+              hideCompleted={false}
             />
           </View>
-        </View>
-
-        {/* THE PHILOSOPHY — always rewatchable */}
-        <View style={{ marginTop: 24 }}>
-          <MarketingStoryCard
-            stories={philosophyListItems}
-            onPressStory={handleOpenStory}
-            storyProgress={storyProgress}
-            hideCompleted={false}
-          />
-        </View>
-
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 11,
-            color: colors.textMuted,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            marginTop: 28,
-            marginBottom: 8,
-          }}
-        >
-          YOU MIGHT ALSO LIKE
-        </Text>
-        <Pressable
-          onPress={() => Linking.openURL(GOOD_TIMES_APP_STORE_URL)}
-          accessibilityRole="link"
-          accessibilityLabel="Good Times: One Group Question on the App Store"
-          style={{
-            borderRadius: 14,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: colors.border,
-          }}
-        >
-          <Image
-            source={PROMO_GOOD_TIMES}
-            style={{ width: "100%", aspectRatio: PROMO_GOOD_TIMES_ASPECT }}
-            contentFit="cover"
-          />
-        </Pressable>
+        ) : null}
 
         {__DEV__ && (
           <>
@@ -813,6 +780,10 @@ export default function SettingsScreen() {
               <SettingDivider colors={colors} />
               <DummyThreadToggle colors={colors} />
               <SettingDivider colors={colors} />
+              <ForceUnseenChapterToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <ForceUnseenConnectionToggle colors={colors} />
+              <SettingDivider colors={colors} />
               <DummyPhotoAccessFlowTester
                 colors={colors}
                 onPress={() => {
@@ -826,6 +797,8 @@ export default function SettingsScreen() {
                   showLimitedPhotoAccessForTesting();
                 }}
               />
+              <SettingDivider colors={colors} />
+              <DummyFirstPinTester colors={colors} />
             </View>
           </>
         )}
@@ -869,23 +842,6 @@ export default function SettingsScreen() {
                 void handleManageSubscription();
               }
             }}
-          />
-          {subscriptionStatus === "active" && (
-            <>
-              <SettingDivider colors={colors} />
-              <SettingRow
-                colors={colors}
-                label="Manage your donation"
-                sublabel={donationCauseName ?? undefined}
-                onPress={() => router.push("/settings/manage-donation")}
-              />
-            </>
-          )}
-          <SettingDivider colors={colors} />
-          <SettingRow
-            colors={colors}
-            label="Backup to iCloud"
-            onPress={() => setShowICloudComingSoon(true)}
           />
           <SettingDivider colors={colors} />
           <SettingRow
@@ -932,6 +888,39 @@ export default function SettingsScreen() {
           />
         </View>
 
+        {/* You might also like — cross-promo for our other app, anchored
+            below ACCOUNT so it doesn't compete with the user's own settings. */}
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 11,
+            color: colors.textMuted,
+            letterSpacing: 1,
+            textTransform: "uppercase",
+            marginTop: 28,
+            marginBottom: 8,
+          }}
+        >
+          YOU MIGHT ALSO LIKE
+        </Text>
+        <Pressable
+          onPress={() => Linking.openURL(GOOD_TIMES_APP_STORE_URL)}
+          accessibilityRole="link"
+          accessibilityLabel="Good Times: One Group Question on the App Store"
+          style={{
+            borderRadius: 14,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Image
+            source={PROMO_GOOD_TIMES}
+            style={{ width: "100%", aspectRatio: PROMO_GOOD_TIMES_ASPECT }}
+            contentFit="cover"
+          />
+        </Pressable>
+
         <Pressable onPress={() => { posthog.capture("logged_out"); signOut(); }} style={{ marginTop: 24, marginBottom: 48 }}>
           <Text
             style={{
@@ -954,24 +943,6 @@ export default function SettingsScreen() {
         onClose={handleCloseStory}
       />
       {fullPhotoAccessModal}
-
-      <InfoTipModal
-        visible={showICloudComingSoon}
-        onClose={() => setShowICloudComingSoon(false)}
-        title="Coming soon"
-      >
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 15,
-            color: "#333333",
-            lineHeight: 22,
-          }}
-        >
-          iCloud backup isn&apos;t available yet. We&apos;ll let you know when
-          you can save your moments there.
-        </Text>
-      </InfoTipModal>
     </SafeAreaView>
   );
 }
@@ -1142,6 +1113,78 @@ function DummyThreadToggle({ colors }: { colors: ThemePalette }) {
   );
 }
 
+/**
+ * Force the Chapters tab icon into its "unseen" attention loop without
+ * needing a real unviewed chapter in the database. Useful for previewing the
+ * shimmer + slow rotate effect on the triangle.
+ */
+function ForceUnseenChapterToggle({ colors }: { colors: ThemePalette }) {
+  const enabled = useUnseenStore((s) => s.forceUnseenChapterAttention);
+  const toggle = useUnseenStore((s) => s.toggleForceUnseenChapterAttention);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Unseen Chapter
+      </Text>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
+/** Same as `ForceUnseenChapterToggle`, but for the Connect (diamond) tab icon. */
+function ForceUnseenConnectionToggle({ colors }: { colors: ThemePalette }) {
+  const enabled = useUnseenStore((s) => s.forceUnseenThreadAttention);
+  const toggle = useUnseenStore((s) => s.toggleForceUnseenThreadAttention);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Unseen Connection
+      </Text>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
 function DummyPhotoAccessFlowTester({
   colors,
   onPress,
@@ -1200,6 +1243,41 @@ function DummyLimitedPhotoAccessTester({
         }}
       >
         Test limmited photo
+      </Text>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+/**
+ * Manually triggers the "You pinned your first moment" celebration sheet.
+ * Resets the persisted `hasSeenFirstPinCelebration` flag first so the sheet
+ * can be re-previewed even on accounts that have already seen it.
+ */
+function DummyFirstPinTester({ colors }: { colors: ThemePalette }) {
+  return (
+    <Pressable
+      onPress={() => {
+        const { resetSeen, show } = useFirstPinCelebrationStore.getState();
+        resetSeen();
+        show();
+      }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Pin
       </Text>
       <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
     </Pressable>

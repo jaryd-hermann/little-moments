@@ -16,9 +16,6 @@ verify_jwt = false
 [functions.register-push-token]
 verify_jwt = false
 
-[functions.notify-badges]
-verify_jwt = false
-
 [functions.story-coach]
 verify_jwt = false
 
@@ -31,6 +28,12 @@ verify_jwt = false
 [functions.cron-chapters]
 verify_jwt = false
 
+[functions.cron-weekly-chapter-intro]
+verify_jwt = false
+
+[functions.generate-chapter]
+verify_jwt = false
+
 [functions.cron-onboarding-emails]
 verify_jwt = false
 
@@ -38,6 +41,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.send-welcome-email]
+verify_jwt = false
+
+[functions.backfill-resend-audience]
 verify_jwt = false
 
 [functions.revenuecat-webhook]
@@ -59,4 +65,16 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.canonicalize-people]
+verify_jwt = false
+
+[functions.cron-onesignal-sync]
+verify_jwt = false
+
+[functions.cron-on-this-day]
+verify_jwt = false
+
+[functions.cron-lifecycle-emails]
+verify_jwt = false
+
+[functions.lifecycle-event]
 verify_jwt = false

@@ -73,13 +73,16 @@ function safeJSON(value: unknown): string {
 function palette(theme: "light" | "dark") {
   if (theme === "light") {
     return {
-      bg: "#FFFFFF",
+      bg: "#E8DDD0",
       nodeStroke: "rgba(0,0,0,0.25)",
       edgeBase: "rgba(0,0,0,0.25)",
       hullLabelFill: "rgba(0,0,0,0.55)",    // subtle — node title labels
       hullLabelStrong: "rgba(0,0,0,0.82)", // bold — cluster/theme labels
+      /** Per-node moment titles (right of circles) — must stay dark on paper-toned bg */
+      nodeTitleFill: "#1A1A1A",
+      nodeTitleOpacity: 0.88,
       hullOpacity: 0.03,                   // hulls are labels-only by default
-      introBg: "rgba(255,255,255,0.95)",
+      introBg: "rgba(232,221,208,0.97)",
       introText: "#1A1A1A",
       introAvatarBg: "#F0D7FF",
     };
@@ -90,6 +93,8 @@ function palette(theme: "light" | "dark") {
     edgeBase: "rgba(255,255,255,0.25)",
     hullLabelFill: "rgba(255,255,255,0.6)",
     hullLabelStrong: "rgba(255,255,255,0.92)",
+    nodeTitleFill: "#FFFFFF",
+    nodeTitleOpacity: 0.7,
     hullOpacity: 0.04,  // labels-only — fills barely register
     introBg: "rgba(0,0,0,0.92)",
     introText: "#FFFFFF",
@@ -586,8 +591,8 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         .attr('class', 'node-label')
         .attr('font-size', 6)
         .attr('font-family', 'Helvetica, Arial, sans-serif')
-        .attr('fill', '#FFFFFF')
-        .attr('fill-opacity', 0.7)
+        .attr('fill', theme.nodeTitleFill)
+        .attr('fill-opacity', theme.nodeTitleOpacity)
         .attr('opacity', 0)
         .attr('pointer-events', 'none')
         .attr('dominant-baseline', 'middle')

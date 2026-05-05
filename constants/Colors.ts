@@ -13,7 +13,7 @@ function buildTheme(mode: "light" | "dark", accent: AccentColor) {
       text: "#1A1A1A",
       textSecondary: "rgba(0, 0, 0, 0.6)",
       textMuted: "rgba(0, 0, 0, 0.4)",
-      background: "#FFFFFF",
+      background: "#FFFFEB",
       surface: "#FFFFEB",
       surfaceSecondary: "#F5F5E4",
       border: "rgba(0, 0, 0, 0.15)",
