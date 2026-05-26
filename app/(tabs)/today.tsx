@@ -11,20 +11,17 @@ import {
   Alert,
   Image,
   Animated,
-  Easing,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router, useLocalSearchParams } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
-import { MoreWaysSheet } from "@/components/common/MoreWaysSheet";
 import { TryPremiumPill } from "@/components/common/TryPremiumPill";
-import * as ImagePicker from "expo-image-picker";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import {
   EllieChatFlow,
@@ -46,21 +43,32 @@ import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import {
   hasFullPhotoLibraryAccess,
+  queryCameraPhotosForLocalDay,
   useMediaLibrary,
-  type PickedPhoto,
+  type MediaAsset,
 } from "@/hooks/useMediaLibrary";
 import {
   categorizePhotoBucket,
   photoAgeDays,
-  photoYear,
   type PhotoBucket,
 } from "@/lib/photoBucket";
-import { useDailyPhotoStore } from "@/store/dailyPhotoStore";
+import { CaptureBrowseHeading } from "@/components/capture/CaptureBrowseHeading";
+import { CuratorBrowsePanel } from "@/components/capture/CuratorBrowsePanel";
+import {
+  CaptureDayPickerSheet,
+  type DayPickerRow,
+} from "@/components/capture/CaptureDayPickerSheet";
+import {
+  calendarDateForReflectionTarget,
+  captureScreenHeading,
+  defaultReflectionTarget,
+} from "@/lib/reflectionTarget";
+import type { ReflectionQuestionItem } from "@/lib/captureReflectionQuestions";
+import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
 import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
 import { useThreads } from "@/hooks/useThreads";
 import { ThreadCard } from "@/components/threads/ThreadCard";
-import { getDailyPrompt } from "@/lib/dailyPrompt";
 import { shareInvite } from "@/lib/inviteShare";
 import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
@@ -77,94 +85,18 @@ import {
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTabBarStore } from "@/store/tabBarStore";
+import { useFirstMomentOnboardingSheetStore } from "@/store/firstMomentOnboardingSheetStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import type { PromptType } from "@/lib/momentAssist";
 import { type Entry } from "@/store/entryStore";
 
 const CREAM = "#F7F2E6";
 
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
-}
+const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
+const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
 
-const HEADER_SHIMMER_WIDTH = 60;
-const HEADER_SHIMMER_DELAY_MS = 250;
-const HEADER_SHIMMER_DURATION_MS = 950;
-
-function TodayInlineHeader({
-  totalMoments,
-  showCount,
-  shimmerKey,
-}: {
-  totalMoments: number;
-  threadsCount: number;
-  showCount: boolean;
-  /**
-   * Identifier of the most recently saved entry. When this changes to a new,
-   * non-null value, the "Nth capture" header fires a one-shot shimmer sweep.
-   */
-  shimmerKey: string | null;
-}) {
-  const { colors } = useTheme();
-
-  // Glimmer pulse when totalMoments increases (e.g. just after a save).
-  const prevMomentsRef = useRef(totalMoments);
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (totalMoments > prevMomentsRef.current) {
-      pulse.setValue(0);
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: 220,
-          useNativeDriver: false,
-        }),
-        Animated.delay(180),
-        Animated.timing(pulse, {
-          toValue: 0,
-          duration: 700,
-          useNativeDriver: false,
-        }),
-      ]).start();
-    }
-    prevMomentsRef.current = totalMoments;
-  }, [totalMoments, pulse]);
-
-  const animatedColor = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [colors.textMuted, colors.primary],
-  });
-  const animatedScale = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.12],
-  });
-
-  // One-shot shimmer sweep over the title each time we see a new save.
-  const [titleWidth, setTitleWidth] = useState(0);
-  const shimmerX = useRef(new Animated.Value(-HEADER_SHIMMER_WIDTH)).current;
-  const lastShimmeredKey = useRef<string | null>(null);
-  useEffect(() => {
-    if (!showCount) return;
-    if (!shimmerKey) return;
-    if (lastShimmeredKey.current === shimmerKey) return;
-    if (titleWidth <= 0) return;
-    lastShimmeredKey.current = shimmerKey;
-    shimmerX.setValue(-HEADER_SHIMMER_WIDTH);
-    const anim = Animated.sequence([
-      Animated.delay(HEADER_SHIMMER_DELAY_MS),
-      Animated.timing(shimmerX, {
-        toValue: titleWidth + HEADER_SHIMMER_WIDTH,
-        duration: HEADER_SHIMMER_DURATION_MS,
-        easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
-      }),
-    ]);
-    anim.start();
-    return () => anim.stop();
-  }, [showCount, shimmerKey, titleWidth, shimmerX]);
-
+function CaptureTabTopBar({ showPremium }: { showPremium: boolean }) {
+  const { colors, theme } = useTheme();
   return (
     <View
       style={{
@@ -176,56 +108,20 @@ function TodayInlineHeader({
         paddingBottom: 8,
       }}
     >
-      <View
-        onLayout={(e) => {
-          const w = e.nativeEvent.layout.width;
-          if (w !== titleWidth) setTitleWidth(w);
-        }}
+      <Image
+        source={
+          theme === "dark" ? WORDMARK_LIGHT_ON_DARK : WORDMARK_DARK_ON_LIGHT
+        }
         style={{
-          flexShrink: 1,
-          paddingHorizontal: 4,
-          overflow: "hidden",
+          width: 138,
+          height: 27,
+          resizeMode: "contain",
+          marginLeft: -10,
         }}
-      >
-        <Animated.Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 26,
-            color: showCount ? animatedColor : colors.text,
-            transform: [{ scale: showCount ? animatedScale : 1 }],
-          }}
-        >
-          {showCount
-            ? `${ordinal(Math.max(1, totalMoments))} capture`
-            : "Capture this"}
-        </Animated.Text>
-        {showCount && (
-          <Animated.View
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: HEADER_SHIMMER_WIDTH,
-              transform: [{ translateX: shimmerX }, { skewX: "-20deg" }],
-            }}
-          >
-            <LinearGradient
-              colors={[
-                "rgba(255,255,255,0)",
-                "rgba(255,255,255,0.55)",
-                "rgba(255,255,255,0)",
-              ]}
-              start={{ x: 0, y: 0.5 }}
-              end={{ x: 1, y: 0.5 }}
-              style={{ flex: 1 }}
-            />
-          </Animated.View>
-        )}
-      </View>
+        accessibilityLabel="Little Moments"
+      />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-        <TryPremiumPill source="today_header" />
+        {showPremium ? <TryPremiumPill source="today_header" /> : null}
         <Pressable
           onPress={() => router.push("/settings")}
           accessibilityLabel="Open settings"
@@ -251,10 +147,13 @@ export default function TodayScreen() {
   const notificationTime = useSettingsStore((s) => s.notificationTime);
   const posthog = usePostHog();
   const { entries, fetchEntries, saveEntry } = useEntries();
+  const momentCount = useMemo(
+    () => entries.filter((e) => e.entry_type === "moment").length,
+    [entries]
+  );
   const userId = useAuthStore((s) => s.user?.id ?? null);
-  const { streakCount, totalMoments } = useStreak();
+  const { streakCount } = useStreak();
   const {
-    getRandomAsset,
     requestPermission,
     checkPermission,
     permissionStatus,
@@ -275,24 +174,93 @@ export default function TodayScreen() {
   const [photoDate, setPhotoDate] = useState<number | undefined>();
   const [photoBucket, setPhotoBucket] = useState<PhotoBucket | undefined>();
   const [shuffleCount, setShuffleCount] = useState(0);
-  const [isShuffling, setIsShuffling] = useState(false);
+  const [pinnedQuestion, setPinnedQuestion] =
+    useState<ReflectionQuestionItem | null>(null);
+  const [questionAutoStart, setQuestionAutoStart] = useState<
+    "speaking" | "typing" | null
+  >(null);
+  const [dayPhotos, setDayPhotos] = useState<MediaAsset[]>([]);
+  const [loadingDayPhotos, setLoadingDayPhotos] = useState(false);
+  const [dayPickerOpen, setDayPickerOpen] = useState(false);
+  const [dayPickerSkipFilledDays, setDayPickerSkipFilledDays] = useState(false);
+  const [dayPickerPhotoCounts, setDayPickerPhotoCounts] = useState<
+    Record<string, number>
+  >({});
+  const [questionBrowseNonce, setQuestionBrowseNonce] = useState(0);
+  const [wantsNewMoment, setWantsNewMoment] = useState(false);
+  const captureDateInitializedRef = useRef(false);
+  const [captureTargetDate, setCaptureTargetDate] = useState<Date>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  });
   const [lastSavedEntryId, setLastSavedEntryId] = useState<string | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
-  /** When true, render EllieChatFlow even though there's already a moment for today. Reset after save. */
-  const [inCaptureMode, setInCaptureMode] = useState(false);
-  const { capture: captureParam } = useLocalSearchParams<{ capture?: string }>();
+  const { capture: captureParam, onboardingFirstMoment: onboardingFirstMomentParam, openCamera: openCameraParam } =
+    useLocalSearchParams<{
+      capture?: string;
+      onboardingFirstMoment?: string;
+      openCamera?: string;
+    }>();
   const inputMethodRef = useRef<InputMethod | null>(null);
+  const expectOnboardingFirstCaptureRef = useRef(false);
+  const [awaitingFirstOnboardingCapture, setAwaitingFirstOnboardingCapture] =
+    useState(false);
   const postSaveOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (momentCount > 0) setAwaitingFirstOnboardingCapture(false);
+  }, [momentCount]);
 
   const savedEntry: Entry | null = useMemo(
     () => (lastSavedEntryId ? entries.find((e) => e.id === lastSavedEntryId) ?? null : null),
     [entries, lastSavedEntryId]
   );
 
-  const dailyPrompt = useMemo(() => getDailyPrompt(), []);
-  const promptType: PromptType = "photo";
-  const [moreWaysVisible, setMoreWaysVisible] = useState(false);
+  const targetDayYmd = useMemo(
+    () => format(captureTargetDate, "yyyy-MM-dd"),
+    [captureTargetDate]
+  );
+
+  const captureHeading = useMemo(
+    () => captureScreenHeading(captureTargetDate),
+    [captureTargetDate]
+  );
+
+  useEffect(() => {
+    if (!profile || captureDateInitializedRef.current) return;
+    captureDateInitializedRef.current = true;
+    setCaptureTargetDate(
+      calendarDateForReflectionTarget(defaultReflectionTarget(profile))
+    );
+  }, [profile]);
+
+  const targetDayEntries: Entry[] = useMemo(
+    () =>
+      entries.filter(
+        (e) => e.entry_date === targetDayYmd && e.entry_type === "moment"
+      ),
+    [entries, targetDayYmd]
+  );
+
+  const isPinnedForEllie =
+    pinnedQuestion != null || (photoUri != null && photoDate != null);
+
+  const showHome =
+    !isPinnedForEllie && targetDayEntries.length > 0 && !wantsNewMoment;
+
+  const showBrowse =
+    !isPinnedForEllie && (wantsNewMoment || targetDayEntries.length === 0);
+
+  const targetDayEntriesLayoutKey = useMemo(
+    () => targetDayEntries.map((e) => e.id).join(","),
+    [targetDayEntries]
+  );
+  const todayCardHeightsRef = useRef<Record<string, number>>({});
+  const [todayCarouselMinHeight, setTodayCarouselMinHeight] = useState<
+    number | undefined
+  >(undefined);
+
 
   const { width: screenWidth } = useWindowDimensions();
   const CARD_WIDTH = screenWidth - 40;
@@ -303,31 +271,55 @@ export default function TodayScreen() {
   const todayNotifNudgeIsDevMockOnly =
     __DEV__ && dummyNotificationNudgeEnabled && !todayNotifNudgeVisible;
 
-  const todayEntries: Entry[] = useMemo(
-    () =>
-      entries.filter(
-        (e) =>
-          e.entry_date === format(new Date(), "yyyy-MM-dd") &&
-          e.entry_type === "moment"
-      ),
-    [entries]
-  );
+  const promptType: PromptType = pinnedQuestion ? "question" : "photo";
+  const effectivePromptValue = pinnedQuestion ? pinnedQuestion.prompt : "";
 
-  const todayEntriesLayoutKey = useMemo(
-    () => todayEntries.map((e) => e.id).join(","),
-    [todayEntries]
-  );
-  const todayCardHeightsRef = useRef<Record<string, number>>({});
-  const [todayCarouselMinHeight, setTodayCarouselMinHeight] = useState<
-    number | undefined
-  >(undefined);
+  const elliePhotoEnterOpacity = useRef(new Animated.Value(1)).current;
+  const capturePhotoEllieEnteredRef = useRef(false);
+
+  useEffect(() => {
+    if (!isPinnedForEllie) {
+      capturePhotoEllieEnteredRef.current = false;
+      elliePhotoEnterOpacity.setValue(1);
+      return;
+    }
+    if (promptType !== "photo") {
+      elliePhotoEnterOpacity.setValue(1);
+      capturePhotoEllieEnteredRef.current = true;
+      return;
+    }
+    if (capturePhotoEllieEnteredRef.current) return;
+    capturePhotoEllieEnteredRef.current = true;
+    elliePhotoEnterOpacity.setValue(0);
+    const timeouts = [
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 90),
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 270),
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 480),
+    ];
+    Animated.timing(elliePhotoEnterOpacity, {
+      toValue: 1,
+      duration: 680,
+      useNativeDriver: true,
+    }).start();
+    return () => {
+      for (const t of timeouts) clearTimeout(t);
+    };
+  }, [isPinnedForEllie, promptType, elliePhotoEnterOpacity]);
 
   useEffect(() => {
     todayCardHeightsRef.current = {};
     setTodayCarouselMinHeight(undefined);
-  }, [todayEntriesLayoutKey]);
+  }, [targetDayEntriesLayoutKey]);
 
-  const todayEntry = todayEntries.length > 0 ? todayEntries[0] : null;
+  /** Carousel-visible moment on the success home (Share / Dig deeper). */
+  const successHighlightEntry = useMemo(() => {
+    if (targetDayEntries.length === 0) return null;
+    const idx = Math.min(
+      Math.max(0, activeCardIndex),
+      targetDayEntries.length - 1
+    );
+    return targetDayEntries[idx] ?? null;
+  }, [targetDayEntries, activeCardIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -372,16 +364,12 @@ export default function TodayScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const todayCount = entries.filter(
-        (e) =>
-          e.entry_date === format(new Date(), "yyyy-MM-dd") &&
-          e.entry_type === "moment"
-      ).length;
       posthog.capture("viewed_today", {
-        has_entry_today: todayCount > 0,
-        entry_count_today: todayCount,
+        target_ymd: targetDayYmd,
+        has_moment_for_target: targetDayEntries.length > 0,
+        entry_count_for_target: targetDayEntries.length,
       });
-    }, [])
+    }, [targetDayYmd, targetDayEntries.length, posthog])
   );
 
   useFocusEffect(
@@ -390,102 +378,222 @@ export default function TodayScreen() {
     }, [checkPermission])
   );
 
-  // Honor a ?capture=1 query param: when arriving from end-of-feed in Capsule,
-  // open Capture in capture-another mode if today's moment already exists.
+  const clearPinState = useCallback(() => {
+    setPhotoUri(undefined);
+    setPhotoDate(undefined);
+    setPhotoBucket(undefined);
+    setPinnedQuestion(null);
+    setShuffleCount(0);
+    setQuestionAutoStart(null);
+    inputMethodRef.current = null;
+  }, []);
+
+  const handleReturnToPhotoPicker = useCallback(() => {
+    clearPinState();
+    setTabBarHidden(false);
+    setWantsNewMoment(true);
+  }, [clearPinState, setTabBarHidden]);
+
+  const handleUsePromptInsteadFromPhoto = useCallback(() => {
+    clearPinState();
+    setTabBarHidden(false);
+    setWantsNewMoment(true);
+    setQuestionBrowseNonce((n) => n + 1);
+  }, [clearPinState, setTabBarHidden]);
+
   useEffect(() => {
+    if (captureParam !== "1" && onboardingFirstMomentParam !== "1") return;
+
     if (captureParam === "1") {
+      clearPinState();
+      setLastSavedEntryId(null);
+      setWantsNewMoment(true);
+    }
+    if (onboardingFirstMomentParam === "1") {
+      expectOnboardingFirstCaptureRef.current = true;
+      setAwaitingFirstOnboardingCapture(true);
+    }
+
+    router.setParams({
+      ...(captureParam === "1" ? { capture: undefined } : {}),
+      ...(onboardingFirstMomentParam === "1"
+        ? { onboardingFirstMoment: undefined }
+        : {}),
+    });
+  }, [captureParam, onboardingFirstMomentParam, clearPinState]);
+
+  useEffect(() => {
+    if (openCameraParam !== "1") return;
+    router.setParams({ openCamera: undefined });
+    let cancelled = false;
+    void (async () => {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (cancelled || status !== "granted") return;
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.9,
+      });
+      if (cancelled || result.canceled || !result.assets[0]?.uri) return;
+      const asset = result.assets[0];
+      clearPinState();
+      setLastSavedEntryId(null);
+      setWantsNewMoment(true);
+      setPinnedQuestion(null);
+      setQuestionAutoStart(null);
+      const taken = Date.now();
+      setPhotoUri(asset.uri);
+      setPhotoDate(taken);
+      setPhotoBucket(categorizePhotoBucket(taken));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openCameraParam, clearPinState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const can = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
+      if (!can) {
+        if (!cancelled) {
+          setDayPhotos([]);
+          setLoadingDayPhotos(false);
+        }
+        return;
+      }
+      setLoadingDayPhotos(true);
+      try {
+        const list = await queryCameraPhotosForLocalDay(captureTargetDate);
+        if (!cancelled) {
+          setDayPhotos(list);
+          posthog.capture("photo_carousel_viewed", {
+            target_ymd: targetDayYmd,
+            photo_count: list.length,
+          });
+        }
+      } finally {
+        if (!cancelled) setLoadingDayPhotos(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    captureTargetDate,
+    permissionStatus,
+    accessPrivileges,
+    targetDayYmd,
+    posthog,
+  ]);
+
+  useEffect(() => {
+    if (!dayPickerOpen) return;
+    const can = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
+    if (!can) {
+      setDayPickerPhotoCounts({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const counts: Record<string, number> = {};
+      for (let i = 0; i < 21; i++) {
+        if (cancelled) return;
+        const d = subDays(new Date(), i);
+        const ymd = format(d, "yyyy-MM-dd");
+        const photos = await queryCameraPhotosForLocalDay(d);
+        counts[ymd] = photos.length;
+      }
+      if (!cancelled) setDayPickerPhotoCounts(counts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dayPickerOpen, permissionStatus, accessPrivileges]);
+
+  const handlePinPhotoFromBrowse = useCallback(
+    (asset: MediaAsset) => {
+      const bucket = categorizePhotoBucket(asset.creationTime);
+      setPinnedQuestion(null);
+      setQuestionAutoStart(null);
+      setPhotoUri(asset.uri);
+      setPhotoDate(asset.creationTime);
+      setPhotoBucket(bucket);
+      setShuffleCount(0);
+      posthog.capture("photo_pinned", {
+        target_ymd: targetDayYmd,
+        photo_bucket: bucket,
+        photo_age_days: photoAgeDays(asset.creationTime),
+      });
+    },
+    [posthog, targetDayYmd]
+  );
+
+  const handleStartQuestionFromBrowse = useCallback(
+    (q: ReflectionQuestionItem, method: "speaking" | "typing") => {
       setPhotoUri(undefined);
       setPhotoDate(undefined);
       setPhotoBucket(undefined);
+      setPinnedQuestion(q);
       setShuffleCount(0);
-      setLastSavedEntryId(null);
-      inputMethodRef.current = null;
-      setInCaptureMode(true);
-      router.setParams({ capture: undefined });
-    }
-  }, [captureParam]);
-
-  /**
-   * Apply a picked photo to the prompt UI and emit `photo_shown`. Use for
-   * every code path that sets `photoUri` from the random picker, the system
-   * picker, or a deep link, so the analytics stay in sync.
-   *
-   * `persist` controls whether this pick should also become the persisted
-   * "photo of the day". Fresh picks (initial / shuffle / manual_pick /
-   * permission_grant) all persist; rehydrating from disk does not.
-   */
-  const applyPickedPhoto = useCallback(
-    (
-      photo: PickedPhoto,
-      reason:
-        | "initial"
-        | "shuffle"
-        | "permission_grant"
-        | "manual_pick"
-        | "rehydrate",
-      options?: { persist?: boolean }
-    ) => {
-      setPhotoUri(photo.asset.uri);
-      setPhotoDate(photo.asset.creationTime);
-      setPhotoBucket(photo.bucket);
-      // Default: every reason except "rehydrate" persists. Rehydration
-      // already came from disk and re-writing would be a no-op.
-      const shouldPersist = options?.persist ?? reason !== "rehydrate";
-      if (shouldPersist) {
-        const dateKey = format(new Date(), "yyyy-MM-dd");
-        useDailyPhotoStore
-          .getState()
-          .setDailyPhoto(userId ?? "", dateKey, photo);
-      }
-      // Don't double-emit `photo_shown` on rehydrate — the user already
-      // saw this exact photo earlier in the day.
-      if (reason !== "rehydrate") {
-        posthog.capture("photo_shown", {
-          surface: "today",
-          reason,
-          photo_bucket: photo.bucket,
-          photo_age_days: photoAgeDays(photo.asset.creationTime),
-          photo_year: photoYear(photo.asset.creationTime),
-          selection_path: photo.selectionPath,
-          shuffles_so_far: shuffleCount,
-        });
-      }
+      setQuestionAutoStart(method);
+      posthog.capture("question_pinned", {
+        target_ymd: targetDayYmd,
+        question_id: q.id,
+        input_method: method,
+      });
     },
-    [posthog, shuffleCount, userId]
+    [posthog, targetDayYmd]
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      if (promptType !== "photo") return;
-      const canAccess = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
-      if (!canAccess || photoUri) return;
-      let cancelled = false;
-      void (async () => {
-        const dateKey = format(new Date(), "yyyy-MM-dd");
-        const stored = useDailyPhotoStore
-          .getState()
-          .getDailyPhoto(userId ?? "", dateKey);
-        if (stored) {
-          if (cancelled) return;
-          applyPickedPhoto(stored, "rehydrate");
-          return;
-        }
-        const photo = await getRandomAsset();
-        if (cancelled || !photo) return;
-        applyPickedPhoto(photo, "initial");
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [
-      promptType,
-      permissionStatus,
-      accessPrivileges,
-      photoUri,
-      getRandomAsset,
-      applyPickedPhoto,
-      userId,
-    ])
+  const defaultDayYmd = useMemo(
+    () =>
+      format(
+        calendarDateForReflectionTarget(defaultReflectionTarget(profile)),
+        "yyyy-MM-dd"
+      ),
+    [profile]
+  );
+
+  const dayPickerRows: DayPickerRow[] = useMemo(() => {
+    const momentDates = new Set(
+      entries
+        .filter((e) => e.entry_type === "moment" && e.entry_date)
+        .map((e) => e.entry_date as string)
+    );
+    const rows: DayPickerRow[] = [];
+    for (let i = 0; i < 21; i++) {
+      const d = subDays(new Date(), i);
+      const ymd = format(d, "yyyy-MM-dd");
+      const isToday = i === 0;
+      rows.push({
+        ymd,
+        titleLine: isToday
+          ? "Today"
+          : i === 1
+            ? "Yesterday"
+            : format(d, "EEEE"),
+        subtitle: format(d, "MMM d, yyyy"),
+        hasMoment: momentDates.has(ymd),
+        isDefaultRow: ymd === defaultDayYmd,
+        photoCount: dayPickerPhotoCounts[ymd] ?? null,
+      });
+    }
+    return rows;
+  }, [entries, defaultDayYmd, dayPickerPhotoCounts]);
+
+  const handleSelectDayFromPicker = useCallback(
+    (ymd: string) => {
+      const [y, m, d] = ymd.split("-").map(Number);
+      setCaptureTargetDate(new Date(y, m - 1, d));
+      clearPinState();
+      setLastSavedEntryId(null);
+      const hasMomentForDay = entries.some(
+        (e) => e.entry_type === "moment" && e.entry_date === ymd
+      );
+      setWantsNewMoment(!hasMomentForDay);
+      posthog.capture("capture_day_selected", { ymd, had_moment: hasMomentForDay });
+    },
+    [clearPinState, posthog, entries]
   );
 
   const handleRequestPhotoAccess = useCallback(async () => {
@@ -499,28 +607,14 @@ export default function TodayScreen() {
       result: ok ? "granted" : "dismissed",
       surface: "today",
     });
-    if (ok) {
-      const photo = await getRandomAsset();
-      if (photo) {
-        applyPickedPhoto(photo, "permission_grant");
-      }
-    }
     await checkPermission();
-  }, [
-    ensureFullPhotoAccess,
-    getRandomAsset,
-    checkPermission,
-    posthog,
-    applyPickedPhoto,
-  ]);
+  }, [ensureFullPhotoAccess, checkPermission, posthog]);
 
   const todayPhotoPermissionBlocked =
     promptType === "photo" &&
     !photoUri &&
     !hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
 
-  // Fire once per blocked-state transition so we can measure long-tail permission
-  // acquisition for users who skipped during onboarding.
   const photoNudgeShownRef = useRef(false);
   useEffect(() => {
     if (todayPhotoPermissionBlocked && !photoNudgeShownRef.current) {
@@ -531,81 +625,6 @@ export default function TodayScreen() {
     }
   }, [todayPhotoPermissionBlocked, posthog]);
 
-  const handlePhotoShuffle = useCallback(async () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsShuffling(true);
-    setShuffleCount((c) => c + 1);
-    posthog.capture("photo_shuffled", {
-      surface: "today",
-      from_photo_bucket: photoBucket ?? null,
-      from_photo_age_days: photoDate != null ? photoAgeDays(photoDate) : null,
-      shuffles_so_far: shuffleCount + 1,
-    });
-    try {
-      const photo = await getRandomAsset();
-      if (photo) {
-        applyPickedPhoto(photo, "shuffle");
-      }
-    } finally {
-      setIsShuffling(false);
-    }
-  }, [
-    getRandomAsset,
-    posthog,
-    photoBucket,
-    photoDate,
-    shuffleCount,
-    applyPickedPhoto,
-  ]);
-
-  const handleMoreWaysGiveWord = useCallback(() => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push("/capture/word");
-  }, []);
-
-  const handleMoreWaysJustWrite = useCallback(() => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push("/capture/freetext");
-  }, []);
-
-  const handleMoreWaysDifferentPhoto = useCallback(async () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const ok = await ensureFullPhotoAccess();
-    if (!ok) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,
-      quality: 1,
-      exif: true,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    const ts = (asset.exif?.DateTimeOriginal || asset.exif?.DateTime) as
-      | string
-      | undefined;
-    let creationTime = Date.now();
-    if (ts) {
-      const parsed = Date.parse(ts.replace(":", "-").replace(":", "-"));
-      if (!Number.isNaN(parsed)) creationTime = parsed;
-    }
-    const bucket = categorizePhotoBucket(creationTime);
-    applyPickedPhoto(
-      {
-        asset: {
-          id: asset.assetId ?? asset.uri,
-          uri: asset.uri,
-          creationTime,
-          mediaType: "photo",
-          width: asset.width ?? 0,
-          height: asset.height ?? 0,
-        },
-        bucket,
-        selectionPath: "query_fallback",
-      },
-      "manual_pick"
-    );
-  }, [ensureFullPhotoAccess, applyPickedPhoto]);
-
   const handleComplete = useCallback(
     async (entry: {
       title: string;
@@ -615,7 +634,8 @@ export default function TodayScreen() {
       attachedPhotoTakenAtMs?: number;
       analytics?: MomentCaptureAnalytics;
     }) => {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const memoryYmd = format(captureTargetDate, "yyyy-MM-dd");
+      const mem = captureTargetDate;
       const photoBucketAtSave = entry.attachedPhotoTakenAtMs
         ? categorizePhotoBucket(entry.attachedPhotoTakenAtMs)
         : null;
@@ -627,9 +647,9 @@ export default function TodayScreen() {
         title: entry.title,
         body: entry.body,
         entry_type: "moment",
-        entry_date: today,
-        entry_month: new Date().getMonth() + 1,
-        entry_year: new Date().getFullYear(),
+        entry_date: memoryYmd,
+        entry_month: mem.getMonth() + 1,
+        entry_year: mem.getFullYear(),
         date_precision: "exact",
         word_of_day: null,
         ai_conversation: null,
@@ -693,10 +713,11 @@ export default function TodayScreen() {
       await fetchEntries(saved?.id);
 
       // Animated transition back to the post-save Capture view: fade in + success haptic.
-      setInCaptureMode(false);
+      setWantsNewMoment(false);
       setPhotoUri(undefined);
       setPhotoDate(undefined);
       setPhotoBucket(undefined);
+      setPinnedQuestion(null);
       setShuffleCount(0);
       setTabBarHidden(false);
       postSaveOpacity.setValue(0);
@@ -714,13 +735,25 @@ export default function TodayScreen() {
       // can ship the public storage URL as the rich image. Text-only
       // saves fire it inline (no media to wait for).
 
+      if (expectOnboardingFirstCaptureRef.current && saved?.id) {
+        expectOnboardingFirstCaptureRef.current = false;
+        setAwaitingFirstOnboardingCapture(false);
+        useFirstMomentOnboardingSheetStore.getState().show(saved.id);
+      }
+
       return saved ?? null;
     },
-    [saveEntry, promptType, posthog, userId, fetchEntries, postSaveOpacity, setTabBarHidden]
+    [
+      saveEntry,
+      promptType,
+      posthog,
+      userId,
+      fetchEntries,
+      postSaveOpacity,
+      setTabBarHidden,
+      captureTargetDate,
+    ]
   );
-
-  const effectivePromptType: PromptType = promptType;
-  const effectivePromptValue = dailyPrompt.value;
 
   const hasRealName =
     !!profile?.display_name?.trim() &&
@@ -750,6 +783,12 @@ export default function TodayScreen() {
       notificationsEnabled: granted,
       reminderHour: notificationTime.hour,
       reminderMinute: notificationTime.minute,
+      reflectionTargetDefault: profile?.reflection_target_default ?? undefined,
+      captureRhythm:
+        profile?.capture_rhythm === "morning" ||
+        profile?.capture_rhythm === "evening"
+          ? profile.capture_rhythm
+          : undefined,
     });
     posthog.capture("today_notification_nudge", { choice: "turn_on", granted });
   }, [
@@ -759,6 +798,8 @@ export default function TodayScreen() {
     notificationTime.minute,
     fetchProfile,
     posthog,
+    profile?.reflection_target_default,
+    profile?.capture_rhythm,
   ]);
 
   const handleTodayNotifNudgeKeepOff = useCallback(async () => {
@@ -775,6 +816,12 @@ export default function TodayScreen() {
       notificationsEnabled: false,
       reminderHour: notificationTime.hour,
       reminderMinute: notificationTime.minute,
+      reflectionTargetDefault: profile?.reflection_target_default ?? undefined,
+      captureRhythm:
+        profile?.capture_rhythm === "morning" ||
+        profile?.capture_rhythm === "evening"
+          ? profile.capture_rhythm
+          : undefined,
     });
     posthog.capture("today_notification_nudge", { choice: "keep_off" });
   }, [
@@ -784,6 +831,8 @@ export default function TodayScreen() {
     notificationTime.minute,
     fetchProfile,
     posthog,
+    profile?.reflection_target_default,
+    profile?.capture_rhythm,
   ]);
 
   const afterSaveNode = useCallback(
@@ -943,19 +992,24 @@ export default function TodayScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {fullPhotoAccessModal}
-      <TodayInlineHeader
-        totalMoments={totalMoments}
-        threadsCount={totalConnections}
-        showCount={!!todayEntry && !inCaptureMode}
-        shimmerKey={lastSavedEntryId}
-      />
+      <CaptureTabTopBar showPremium={momentCount > 0} />
 
-      {todayEntry && !inCaptureMode ? (
+      {showHome ? (
         <Animated.ScrollView
           style={{ flex: 1, opacity: postSaveOpacity }}
           contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         >
+          <View style={{ marginHorizontal: -20, marginBottom: 8 }}>
+            <CaptureBrowseHeading
+              upperLabel="YOU CAPTURED"
+              title={captureHeading.title}
+              onPressChangeDay={() => {
+                setDayPickerSkipFilledDays(false);
+                setDayPickerOpen(true);
+              }}
+            />
+          </View>
 
           {__DEV__ && dummyThreadEnabled && (
             <View style={{ marginBottom: 16 }}>
@@ -974,7 +1028,7 @@ export default function TodayScreen() {
           {/* Today's moments — carousel if multiple */}
           <View style={{ marginHorizontal: -20, marginBottom: 20 }}>
             <FlatList
-              data={todayEntries}
+              data={targetDayEntries}
               keyExtractor={(item) => item.id}
               horizontal
               pagingEnabled
@@ -982,8 +1036,8 @@ export default function TodayScreen() {
               contentContainerStyle={{ paddingHorizontal: 20 }}
               snapToInterval={CARD_WIDTH + 12}
               decelerationRate="fast"
-              initialNumToRender={todayEntries.length}
-              windowSize={Math.max(5, todayEntries.length + 2)}
+              initialNumToRender={targetDayEntries.length}
+              windowSize={Math.max(5, targetDayEntries.length + 2)}
               removeClippedSubviews={false}
               onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
                 const idx = Math.round(
@@ -998,7 +1052,7 @@ export default function TodayScreen() {
                 const recordCardHeight = (h: number) => {
                   if (h <= 0) return;
                   todayCardHeightsRef.current[item.id] = h;
-                  const heights = todayEntries.map(
+                  const heights = targetDayEntries.map(
                     (e) => todayCardHeightsRef.current[e.id] ?? 0
                   );
                   if (heights.some((x) => x <= 0)) return;
@@ -1011,7 +1065,7 @@ export default function TodayScreen() {
                   <View
                     style={{
                       width: CARD_WIDTH,
-                      marginRight: index < todayEntries.length - 1 ? 12 : 0,
+                      marginRight: index < targetDayEntries.length - 1 ? 12 : 0,
                       position: "relative",
                       minHeight: todayCarouselMinHeight,
                     }}
@@ -1096,18 +1150,48 @@ export default function TodayScreen() {
                     <View
                       style={{
                         position: "absolute",
-                        top: 10,
-                        right: 10,
+                        top: 12,
+                        right: 12,
                         zIndex: 2,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
                       }}
                     >
-                      <EntryPinToggle entryId={item.id} />
+                      <EntryPinToggle entryId={item.id} size={20} />
+                      <Pressable
+                        onPress={() => {
+                          void Haptics.impactAsync(
+                            Haptics.ImpactFeedbackStyle.Light
+                          );
+                          setLastSavedEntryId(item.id);
+                          setShareModalVisible(true);
+                        }}
+                        hitSlop={10}
+                        accessibilityLabel="Share moment"
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 18,
+                          borderWidth: 1,
+                          borderColor: "rgba(0,0,0,0.14)",
+                          backgroundColor: "#FFFFFF",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Ionicons
+                          name="share-outline"
+                          size={18}
+                          color="#000000"
+                        />
+                      </Pressable>
                     </View>
                   </View>
                 );
               }}
             />
-            {todayEntries.length > 1 && (
+            {targetDayEntries.length > 1 && (
               <View
                 style={{
                   flexDirection: "row",
@@ -1116,7 +1200,7 @@ export default function TodayScreen() {
                   marginTop: 10,
                 }}
               >
-                {todayEntries.map((_, i) => (
+                {targetDayEntries.map((_, i) => (
                   <View
                     key={i}
                     style={{
@@ -1239,21 +1323,11 @@ export default function TodayScreen() {
           <Pressable
             onPress={() => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              // Drop the persisted daily-photo cache so the focus effect
-              // picks a fresh asset for this second capture instead of
-              // rehydrating the one the user just used. Without this,
-              // useFocusEffect immediately re-applies the cached photo
-              // and "Capture another" reproduces the same prompt.
-              const dateKey = format(new Date(), "yyyy-MM-dd");
-              useDailyPhotoStore
-                .getState()
-                .clearDailyPhoto(userId ?? "", dateKey);
-              setPhotoUri(undefined);
-              setPhotoDate(undefined);
-              setShuffleCount(0);
-              setLastSavedEntryId(null);
-              inputMethodRef.current = null;
-              setInCaptureMode(true);
+              posthog.capture("capture_another_open_day_picker", {
+                from_ymd: targetDayYmd,
+              });
+              setDayPickerSkipFilledDays(true);
+              setDayPickerOpen(true);
             }}
             style={{
               height: 56,
@@ -1287,18 +1361,19 @@ export default function TodayScreen() {
             </Text>
           </Pressable>
 
-          {/* Dig Deeper with Ellie — opens dig deeper modal for the latest entry */}
-          {todayEntry && (
+          {/* Dig Deeper with Ellie — opens dig deeper modal for the visible carousel moment */}
+          {successHighlightEntry && (
             <Pressable
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 router.push({
                   pathname: "/dig-deeper",
                   params: {
-                    entryId: todayEntry.id,
-                    title: todayEntry.title ?? "",
-                    body: todayEntry.body ?? "",
-                    photoUri: todayEntry.media?.[0]?.storage_url ?? "",
+                    entryId: successHighlightEntry.id,
+                    title: successHighlightEntry.title ?? "",
+                    body: successHighlightEntry.body ?? "",
+                    photoUri:
+                      successHighlightEntry.media?.[0]?.storage_url ?? "",
                   },
                 });
               }}
@@ -1336,48 +1411,21 @@ export default function TodayScreen() {
             </Pressable>
           )}
 
-          {/* Share — small text link */}
-          <Pressable
-            onPress={() => {
-              if (todayEntry) {
-                setLastSavedEntryId(todayEntry.id);
-                setShareModalVisible(true);
-              }
-            }}
-            style={{
-              alignItems: "center",
-              paddingVertical: 6,
-            }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-              <Ionicons name="arrow-up" size={14} color={colors.textSecondary} style={{ transform: [{ rotate: "45deg" }] }} />
-              <Text
-                style={{
-                  fontFamily: "Roboto-Regular",
-                  fontSize: 14,
-                  color: colors.textSecondary,
-                }}
-              >
-                Share
-              </Text>
-            </View>
-          </Pressable>
-
         </Animated.ScrollView>
-      ) : (
+      ) : isPinnedForEllie ? (
+        <Animated.View style={{ flex: 1, opacity: elliePhotoEnterOpacity }}>
         <EllieChatFlow
-          promptType={effectivePromptType}
+          promptType={promptType}
           promptValue={effectivePromptValue}
           photoUri={photoUri}
           photoDate={photoDate}
           photoBucket={photoBucket}
           shufflesBeforeSave={shuffleCount}
-          isShufflingPhoto={isShuffling}
+          isShufflingPhoto={false}
+          keyboardAvoidingExtraOffset={48}
           onComplete={handleComplete}
           onPhotoShuffle={
-            effectivePromptType === "photo" && !todayPhotoPermissionBlocked
-              ? handlePhotoShuffle
-              : undefined
+            promptType === "photo" ? handleReturnToPhotoPicker : undefined
           }
           photoPermissionBlocked={todayPhotoPermissionBlocked}
           onRequestPhotoAccess={
@@ -1406,27 +1454,107 @@ export default function TodayScreen() {
           onFlowStarted={(inputMethod) => {
             inputMethodRef.current = inputMethod;
             posthog.capture("today_flow_started", {
-              prompt_type: effectivePromptType,
+              prompt_type: promptType,
               input_method: inputMethod,
             });
             setTabBarHidden(true);
           }}
           analyticsSource="today"
+          hideTimerHint={promptType === "photo"}
+          promptAccent={pinnedQuestion?.promptAccent}
+          questionOrdinal={
+            pinnedQuestion
+              ? {
+                  current:
+                    REFLECTION_QUESTIONS.findIndex(
+                      (q) => q.id === pinnedQuestion.id
+                    ) + 1,
+                  total: REFLECTION_QUESTIONS.length,
+                }
+              : undefined
+          }
+          headerNode={
+            <View style={{ marginHorizontal: -20 }}>
+              <CaptureBrowseHeading
+                title={captureHeading.title}
+                onPressChangeDay={() => {
+                  setDayPickerSkipFilledDays(false);
+                  setDayPickerOpen(true);
+                }}
+                titleAccessory={
+                  promptType === "photo" ? (
+                    <Pressable
+                      onPress={handleUsePromptInsteadFromPhoto}
+                      hitSlop={8}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: "Roboto-Medium",
+                          fontSize: 14,
+                          color: colors.textSecondary,
+                        }}
+                      >
+                        Do a prompt instead
+                      </Text>
+                    </Pressable>
+                  ) : undefined
+                }
+              />
+            </View>
+          }
+          autoStartInputMethod={
+            pinnedQuestion && questionAutoStart
+              ? questionAutoStart
+              : undefined
+          }
           onAbortFlow={() => {
+            clearPinState();
             setTabBarHidden(false);
-            inputMethodRef.current = null;
           }}
-          onMoreWaysPress={() => setMoreWaysVisible(true)}
           skipPreview
         />
+        </Animated.View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <CuratorBrowsePanel
+            key={targetDayYmd}
+            headingTitle={captureHeading.title}
+            onPressChangeDay={() => {
+              setDayPickerSkipFilledDays(false);
+              setDayPickerOpen(true);
+            }}
+            dayPhotos={dayPhotos}
+            loadingPhotos={loadingDayPhotos}
+            onChoosePhoto={handlePinPhotoFromBrowse}
+            onStartQuestionCapture={handleStartQuestionFromBrowse}
+            forceQuestionModeNonce={questionBrowseNonce}
+            ellieNoPhotosFirstCapture={
+              awaitingFirstOnboardingCapture &&
+              !loadingDayPhotos &&
+              dayPhotos.length === 0
+            }
+            analyticsContext={{
+              target_ymd: targetDayYmd,
+              surface: "today",
+            }}
+          />
+        </ScrollView>
       )}
 
-      <MoreWaysSheet
-        visible={moreWaysVisible}
-        onClose={() => setMoreWaysVisible(false)}
-        onGiveWord={handleMoreWaysGiveWord}
-        onJustWrite={handleMoreWaysJustWrite}
-        onUseDifferentPhoto={handleMoreWaysDifferentPhoto}
+      <CaptureDayPickerSheet
+        visible={dayPickerOpen}
+        onClose={() => {
+          setDayPickerOpen(false);
+          setDayPickerSkipFilledDays(false);
+        }}
+        rows={dayPickerRows}
+        selectedYmd={targetDayYmd}
+        onSelectYmd={handleSelectDayFromPicker}
+        disableDaysWithMoments={dayPickerSkipFilledDays}
       />
 
       <ShareMomentModal

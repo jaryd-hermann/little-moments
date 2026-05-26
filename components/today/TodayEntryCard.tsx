@@ -11,6 +11,8 @@ interface TodayEntryCardProps {
   entry: Entry | null;
   selectedDate: Date;
   hasDraft?: boolean;
+  /** Render saved moment as a static preview (no navigation). */
+  readOnly?: boolean;
 }
 
 function stripEntryHtml(html: string): string {
@@ -26,6 +28,7 @@ export function TodayEntryCard({
   entry,
   selectedDate,
   hasDraft,
+  readOnly = false,
 }: TodayEntryCardProps) {
   const { colors } = useTheme();
   const dateLabel = isToday(selectedDate)
@@ -117,87 +120,97 @@ export function TodayEntryCard({
     ? format(parseISO(entry.created_at), "h:mm a")
     : null;
 
-  return (
-    <Pressable
-      onPress={() => router.push(`/entry/${entry.id}`)}
+  const outerStyle = {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: cardBg,
+    padding: 20,
+  };
+
+  const inner = (
+    <View
       style={{
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: cardBg,
-        padding: 20,
+        flexDirection: "row",
+        gap: 14,
+        alignItems: "flex-start",
+        minHeight: hasMedia ? 120 : undefined,
       }}
     >
       <View
         style={{
-          flexDirection: "row",
-          gap: 14,
-          alignItems: "flex-start",
-          minHeight: hasMedia ? 120 : undefined,
+          flex: 1,
+          minWidth: 0,
+          justifyContent: "space-between",
+          alignSelf: "stretch",
         }}
       >
-        <View
-          style={{
-            flex: 1,
-            minWidth: 0,
-            justifyContent: "space-between",
-            alignSelf: "stretch",
-          }}
-        >
-          <View>
-            {entry.title ? (
-              <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Bold",
-                  fontSize: 18,
-                  color: cardText,
-                }}
-                numberOfLines={2}
-              >
-                {entry.title}
-              </Text>
-            ) : null}
+        <View>
+          {entry.title ? (
             <Text
               style={{
-                fontFamily: "Roboto-Regular",
-                fontSize: 14,
-                color: cardMuted,
-                marginTop: entry.title ? 6 : 0,
-                lineHeight: 22,
+                fontFamily: "LibreBaskerville-Bold",
+                fontSize: 18,
+                color: cardText,
               }}
-              numberOfLines={hasMedia ? 5 : 3}
+              numberOfLines={2}
             >
-              {plainBody}
+              {entry.title}
             </Text>
-          </View>
+          ) : null}
           <Text
             style={{
-              fontFamily: "Roboto-Light",
-              fontSize: 12,
-              color: cardDate,
-              marginTop: 12,
-              alignSelf: "flex-start",
+              fontFamily: "Roboto-Regular",
+              fontSize: 14,
+              color: cardMuted,
+              marginTop: entry.title ? 6 : 0,
+              lineHeight: 22,
             }}
+            numberOfLines={hasMedia ? 5 : 3}
           >
-            {dateLine}
-            {timeLine ? ` · ${timeLine}` : ""}
+            {plainBody}
           </Text>
         </View>
-
-        {firstMedia ? (
-            <EntryMediaImage
-              media={firstMedia}
-              style={{
-                width: 112,
-                height: 112,
-                borderRadius: 14,
-                backgroundColor: colors.surfaceSecondary,
-                borderWidth: 1.5,
-                borderColor: colors.text,
-              }}
-            />
-          ) : null}
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 12,
+            color: cardDate,
+            marginTop: 12,
+            alignSelf: "flex-start",
+          }}
+        >
+          {dateLine}
+          {timeLine ? ` · ${timeLine}` : ""}
+        </Text>
       </View>
+
+      {firstMedia ? (
+        <EntryMediaImage
+          media={firstMedia}
+          style={{
+            width: 112,
+            height: 112,
+            borderRadius: 14,
+            backgroundColor: colors.surfaceSecondary,
+            borderWidth: 1.5,
+            borderColor: colors.text,
+          }}
+        />
+      ) : null}
+    </View>
+  );
+
+  if (readOnly) {
+    return <View style={outerStyle}>{inner}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={() => router.push(`/entry/${entry.id}`)}
+      style={outerStyle}
+    >
+      {inner}
     </Pressable>
   );
 }

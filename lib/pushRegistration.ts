@@ -4,10 +4,17 @@ import * as Notifications from "expo-notifications";
 import { supabase } from "@/lib/supabase";
 import {
   ensureAndroidNotificationChannel,
-  scheduleDailyReminder,
+  scheduleLocalNotificationReminders,
   cancelAllNotifications,
 } from "@/lib/notifications";
 import { formatNotificationTimeForDb } from "@/lib/notificationTimeSync";
+import type { LocalReminderReflectionTarget } from "@/lib/notifications";
+
+function normalizeReflectionTarget(
+  v: LocalReminderReflectionTarget | null | undefined
+): LocalReminderReflectionTarget {
+  return v === "yesterday" || v === "today" ? v : "today";
+}
 
 function getExpoProjectId(): string | undefined {
   const extra = Constants.expoConfig?.extra as
@@ -38,6 +45,9 @@ export async function syncPushRegistration(options: {
   notificationsEnabled: boolean;
   reminderHour: number;
   reminderMinute: number;
+  reflectionTargetDefault?: LocalReminderReflectionTarget | null;
+  /** When set, written to `profiles.capture_rhythm`. */
+  captureRhythm?: "morning" | "evening" | null;
 }): Promise<void> {
   await ensureAndroidNotificationChannel();
 
@@ -53,16 +63,29 @@ export async function syncPushRegistration(options: {
     data: { session },
   } = await supabase.auth.getSession();
   if (session?.user) {
-    await supabase
-      .from("profiles")
-      .update({
-        notification_time: formatNotificationTimeForDb(
-          options.reminderHour,
-          options.reminderMinute
-        ),
-      })
-      .eq("id", session.user.id);
+    const row: Record<string, string> = {
+      notification_time: formatNotificationTimeForDb(
+        options.reminderHour,
+        options.reminderMinute
+      ),
+    };
+    if (
+      options.reflectionTargetDefault !== undefined &&
+      options.reflectionTargetDefault !== null
+    ) {
+      row.reflection_target_default = normalizeReflectionTarget(
+        options.reflectionTargetDefault
+      );
+    }
+    if (options.captureRhythm === "morning" || options.captureRhythm === "evening") {
+      row.capture_rhythm = options.captureRhythm;
+    }
+    await supabase.from("profiles").update(row).eq("id", session.user.id);
   }
+
+  const reflectionTarget = normalizeReflectionTarget(
+    options.reflectionTargetDefault
+  );
 
   const token = await tryGetExpoPushToken();
 
@@ -78,15 +101,17 @@ export async function syncPushRegistration(options: {
       },
     });
     if (error) {
-      await scheduleDailyReminder(
-        options.reminderHour,
-        options.reminderMinute
-      );
+      await scheduleLocalNotificationReminders({
+        reminderHour: options.reminderHour,
+        reminderMinute: options.reminderMinute,
+        reflectionTarget,
+      });
     }
   } else {
-    await scheduleDailyReminder(
-      options.reminderHour,
-      options.reminderMinute
-    );
+    await scheduleLocalNotificationReminders({
+      reminderHour: options.reminderHour,
+      reminderMinute: options.reminderMinute,
+      reflectionTarget,
+    });
   }
 }

@@ -18,7 +18,7 @@ export function PremiumInlineCard({ analyticsSource, style }: PremiumInlineCardP
       onPress={() => {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
         posthog.capture("premium_card_tapped", { source: analyticsSource });
-        router.push("/ellie-premium");
+        router.push("/paywall");
       }}
       style={style}
     >

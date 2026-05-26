@@ -3,18 +3,17 @@
  *
  * 1. Daily nudge — fires inside a 20-min window around the user's chosen
  *    `notification_time` (interpreted in `notification_timezone`). Sent with
- *    the `push-mock.png` rich-media image. Copy is photo-only — the in-app
- *    `today.tsx` hardcodes `promptType = "photo"` so word / question prompt
- *    types are no longer surfaced to users. Skipped (with the same
+ *    the `push-mock.png` rich-media image. Copy reflects
+ *    `reflection_target_default` (yesterday vs today). Skipped (with the same
  *    `last_morning_push_local_date` stamp as a send) when the user already
- *    has an exact-date moment for *today* in their timezone, so early birds
- *    who capture before nudge time never get "your photo is ready".
+ *    has an exact-date moment for *today* in their timezone.
  * 2. Follow-up — `notification_time + 3h`, only if the user hasn't captured a
  *    moment today. Text-only.
- * 3. Bedtime activation rescue (D0 only) — at 22:00 local on the signup day,
- *    if the user still hasn't captured anything. Highest-leverage activation
- *    push: getting that first capture in week 1 lifts 2-month retention by
- *    ~71% (research benchmark). One-shot per user, ever.
+ * 3. Midday photo nudge — 12:30 local; copy nudges snapping a pic; app opens
+ *    the camera. Skipped when user already captured today. One per local day
+ *    (`last_midday_photo_nudge_local_date`).
+ * 4. Bedtime activation rescue (D0 only) — at 22:00 local on the signup day,
+ *    if the user still hasn't captured anything. One-shot per user, ever.
  *
  * Delivery: OneSignal REST API via the shared `dispatch()` helper, which
  * targets users by `external_id` (= Supabase user id) and logs each send
@@ -38,9 +37,11 @@ type ProfileRow = {
   notification_enabled: boolean;
   last_morning_push_local_date: string | null;
   last_followup_push_local_date: string | null;
+  last_midday_photo_nudge_local_date: string | null;
   notification_timezone: string | null;
   /** Local time (HH:MM:SS) for the daily nudge, interpreted in notification_timezone. */
   notification_time: string | null;
+  reflection_target_default: string | null;
   total_moments: number | null;
   created_at: string;
 };
@@ -73,17 +74,29 @@ function inTimeWindow(
   return now >= start && now < start + windowMinutes;
 }
 
-// Daily prompts are now photo-only (see app/(tabs)/today.tsx where
-// `promptType` is hardcoded to "photo"). Copy is therefore a single
-// constant — no per-type rotation.
-const DAILY_NUDGE_COPY = {
-  title: "Today's photo is ready for you",
-  body: "See which one it is, and add your moment. It takes less than 60s.",
-};
+// Daily prompt copy reflects whether the user typically captures “yesterday” or
+// “today” — matches profiles.reflection_target_default from onboarding.
+function dailyNudgeCopy(reflectionTarget: string | null): {
+  title: string;
+  body: string;
+} {
+  if (reflectionTarget === "yesterday") {
+    return {
+      title: "Your moment for yesterday",
+      body:
+        "Pick a photo from that day or answer a quick question — under two minutes.",
+    };
+  }
+  return {
+    title: "Your moment for today",
+    body:
+      "Pick a photo from today or answer a quick question — under two minutes.",
+  };
+}
 
 const FOLLOWUP_COPY = {
   title: "Still time today",
-  body: "Your photo is waiting — capture today's moment. It takes less than 60s.",
+  body: "Your moment is waiting — open Capture to finish in under a minute.",
 };
 
 // D0 last-chance copy. Tone is intentionally softer than the daytime
@@ -94,6 +107,15 @@ const BEDTIME_RESCUE_COPY = {
   body:
     "One moment — talk it out, type a line. The first one is always the hardest.",
 };
+
+const MIDDAY_PHOTO_NUDGE_COPY = {
+  title: "Light reminder",
+  body: "Snap a pic of something today for your next moment.",
+};
+
+// 12:30 local — light-weight daytime nudge; pairs with in-app camera deep link.
+const MIDDAY_HOUR = 12;
+const MIDDAY_MINUTE = 30;
 
 // 22:00 local — late enough to be a "before bed" nudge, early enough to
 // not wake anyone up. Only fires if the user hasn't captured today AND
@@ -129,7 +151,7 @@ Deno.serve(async (req) => {
     const { data: profiles, error: profErr } = await supabase
       .from("profiles")
       .select(
-        "id, notification_enabled, last_morning_push_local_date, last_followup_push_local_date, notification_timezone, notification_time, total_moments, created_at",
+        "id, notification_enabled, last_morning_push_local_date, last_followup_push_local_date, last_midday_photo_nudge_local_date, notification_timezone, notification_time, reflection_target_default, total_moments, created_at",
       )
       .eq("notification_enabled", true);
 
@@ -145,8 +167,10 @@ Deno.serve(async (req) => {
     const dailyNudgeRecipients: string[] = [];
     const followupRecipients: string[] = [];
     const bedtimeRescueRecipients: string[] = [];
+    const middayPhotoNudgeRecipients: string[] = [];
     const dailyNudgeUserUpdates = new Map<string, string>();
     const followupUserUpdates = new Map<string, string>();
+    const middayPhotoNudgeUserUpdates = new Map<string, string>();
 
     const momentTodayCache = new Map<string, boolean>();
     async function hasMomentToday(
@@ -220,6 +244,12 @@ Deno.serve(async (req) => {
         BEDTIME_HOUR,
         BEDTIME_MINUTE,
       );
+      const inMiddayWindow = inTimeWindow(
+        hour,
+        minute,
+        MIDDAY_HOUR,
+        MIDDAY_MINUTE,
+      );
 
       // --- Daily nudge: at user's chosen time ---
       if (inDailyNudgeWindow && p.last_morning_push_local_date !== todayStr) {
@@ -243,6 +273,20 @@ Deno.serve(async (req) => {
         if (!(await hasMomentToday(p.id, todayStr))) {
           followupRecipients.push(p.id);
           followupUserUpdates.set(p.id, todayStr);
+        }
+      }
+
+      // --- Midday camera nudge: 12:30 local, once per day ---
+      if (
+        inMiddayWindow &&
+        p.last_midday_photo_nudge_local_date !== todayStr &&
+        !inDailyNudgeWindow &&
+        !inFollowupWindow &&
+        !inBedtimeWindow
+      ) {
+        if (!(await hasMomentToday(p.id, todayStr))) {
+          middayPhotoNudgeRecipients.push(p.id);
+          middayPhotoNudgeUserUpdates.set(p.id, todayStr);
         }
       }
 
@@ -270,17 +314,45 @@ Deno.serve(async (req) => {
 
     // Dispatch each bucket. The bulk helper logs to lifecycle_dispatches
     // so we get analytics on top of OneSignal's own.
+    const profileById = new Map((profiles as ProfileRow[]).map((p) => [p.id, p]));
+
     if (dailyNudgeRecipients.length > 0) {
-      await dispatchBulkPush(supabase, {
-        userIds: dailyNudgeRecipients,
-        eventKey: "daily_nudge",
-        push: {
-          title: DAILY_NUDGE_COPY.title,
-          body: DAILY_NUDGE_COPY.body,
-          imageUrl: pushMockUrl,
-          data: { type: "daily_nudge" },
-        },
-      });
+      const dailyYesterday: string[] = [];
+      const dailyTodayBucket: string[] = [];
+      for (const uid of dailyNudgeRecipients) {
+        const pr = profileById.get(uid);
+        if (pr?.reflection_target_default === "yesterday") {
+          dailyYesterday.push(uid);
+        } else {
+          dailyTodayBucket.push(uid);
+        }
+      }
+      if (dailyYesterday.length > 0) {
+        const copy = dailyNudgeCopy("yesterday");
+        await dispatchBulkPush(supabase, {
+          userIds: dailyYesterday,
+          eventKey: "daily_nudge_yesterday",
+          push: {
+            title: copy.title,
+            body: copy.body,
+            imageUrl: pushMockUrl,
+            data: { type: "daily_nudge" },
+          },
+        });
+      }
+      if (dailyTodayBucket.length > 0) {
+        const copy = dailyNudgeCopy("today");
+        await dispatchBulkPush(supabase, {
+          userIds: dailyTodayBucket,
+          eventKey: "daily_nudge_today",
+          push: {
+            title: copy.title,
+            body: copy.body,
+            imageUrl: pushMockUrl,
+            data: { type: "daily_nudge" },
+          },
+        });
+      }
     }
 
     if (followupRecipients.length > 0) {
@@ -308,6 +380,25 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (middayPhotoNudgeRecipients.length > 0) {
+      await dispatchBulkPush(supabase, {
+        userIds: middayPhotoNudgeRecipients,
+        eventKey: "midday_photo_nudge",
+        push: {
+          title: MIDDAY_PHOTO_NUDGE_COPY.title,
+          body: MIDDAY_PHOTO_NUDGE_COPY.body,
+          data: { type: "midday_camera_nudge" },
+        },
+      });
+    }
+
+    for (const [id, date] of middayPhotoNudgeUserUpdates) {
+      await supabase
+        .from("profiles")
+        .update({ last_midday_photo_nudge_local_date: date })
+        .eq("id", id);
+    }
+
     for (const [id, date] of dailyNudgeUserUpdates) {
       await supabase
         .from("profiles")
@@ -328,6 +419,7 @@ Deno.serve(async (req) => {
       daily_nudge_sent: dailyNudgeRecipients.length,
       followup_sent: followupRecipients.length,
       bedtime_rescue_sent: bedtimeRescueRecipients.length,
+      midday_photo_nudge_sent: middayPhotoNudgeRecipients.length,
     });
     await logger.flush();
 
@@ -337,6 +429,7 @@ Deno.serve(async (req) => {
         dailyNudge: dailyNudgeRecipients.length,
         followup: followupRecipients.length,
         bedtimeRescue: bedtimeRescueRecipients.length,
+        middayPhotoNudge: middayPhotoNudgeRecipients.length,
       }),
       { headers: { "Content-Type": "application/json" } },
     );

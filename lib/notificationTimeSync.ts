@@ -51,6 +51,23 @@ export function inferReminderSlotFromTime(
   return "evening";
 }
 
+/** Morning/evening only — maps afternoon to whichever default is closer. */
+export function inferMorningEveningSlotFromTime(
+  hour: number,
+  minute: number
+): "morning" | "evening" {
+  const slot = inferReminderSlotFromTime(hour, minute);
+  if (slot === "morning" || slot === "evening") return slot;
+  const t = hour * 60 + minute;
+  const m =
+    REMINDER_SLOT_DEFAULTS.morning.hour * 60 +
+    REMINDER_SLOT_DEFAULTS.morning.minute;
+  const e =
+    REMINDER_SLOT_DEFAULTS.evening.hour * 60 +
+    REMINDER_SLOT_DEFAULTS.evening.minute;
+  return Math.abs(t - m) <= Math.abs(t - e) ? "morning" : "evening";
+}
+
 export function applyNotificationTimeFromProfile(
   notificationTime: string | null | undefined
 ): void {

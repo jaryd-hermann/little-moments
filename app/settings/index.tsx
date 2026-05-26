@@ -19,7 +19,10 @@ import {
   DailyPromptReminderSchedule,
   useReminderScheduleState,
 } from "@/components/settings/DailyPromptReminderSchedule";
-import type { ReminderSlot } from "@/lib/notificationTimeSync";
+import {
+  inferMorningEveningSlotFromTime,
+  type ReminderSlot,
+} from "@/lib/notificationTimeSync";
 import { PINK_CTA_INK } from "@/lib/themedShadow";
 import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
 import { uploadAvatar } from "@/lib/storage";
@@ -30,6 +33,8 @@ import { useThreadDevStore } from "@/store/threadDevStore";
 import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
 import { useUnseenStore } from "@/store/unseenStore";
 import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
+import { useFirstMomentOnboardingSheetStore } from "@/store/firstMomentOnboardingSheetStore";
+import { useEntryStore } from "@/store/entryStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -77,41 +82,65 @@ const PROMO_GOOD_TIMES = require("@/assets/images/promo-good-times.png");
 /** Intrinsic size of promo-good-times.png (avoids letterboxing in a fixed-height box). */
 const PROMO_GOOD_TIMES_ASPECT = 1242 / 580;
 
+const SETTINGS_REMINDER_VISIBLE: ReminderSlot[] = ["morning", "evening"];
+const SETTINGS_RHYTHM_TOGGLE_BG = "#FEEEB1";
+const SETTINGS_RHYTHM_TOGGLE_FG = "#000000";
+const SETTINGS_RHYTHM_TOGGLE_BORDER = "rgba(0,0,0,0.14)";
+
 function SettingsDailyPromptTimeSection({
-  userId,
   notificationEnabled,
+  reflectionTargetDefault,
+  captureRhythm,
 }: {
-  userId: string;
   notificationEnabled: boolean;
+  reflectionTargetDefault?: "yesterday" | "today" | null;
+  captureRhythm?: "morning" | "evening" | null;
 }) {
   const { colors } = useTheme();
   const { fetchProfile } = useAuth();
+  const posthog = usePostHog();
   const notificationTime = useSettingsStore((s) => s.notificationTime);
   const setNotificationTime = useSettingsStore((s) => s.setNotificationTime);
-  const { selectedSlot, times, selectSlot, changeTimeForSlot } = useReminderScheduleState({
-    hour: notificationTime.hour,
-    minute: notificationTime.minute,
-  });
+  const { selectedSlot, times, selectSlot, changeTimeForSlot } =
+    useReminderScheduleState(
+      { hour: notificationTime.hour, minute: notificationTime.minute },
+      { captureRhythm }
+    );
+
+  const [reflectionTarget, setReflectionTarget] = useState<
+    "yesterday" | "today"
+  >(() =>
+    reflectionTargetDefault === "today" ? "today" : "yesterday"
+  );
+
+  useEffect(() => {
+    setReflectionTarget(
+      reflectionTargetDefault === "today" ? "today" : "yesterday"
+    );
+  }, [reflectionTargetDefault]);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestRef = useRef({ times, selectedSlot });
-  latestRef.current = { times, selectedSlot };
+  const latestRef = useRef({ times, selectedSlot, reflectionTarget });
+  latestRef.current = { times, selectedSlot, reflectionTarget };
 
   const flushPersist = useCallback(async () => {
-    const { times: tm, selectedSlot: sl } = latestRef.current;
+    const { times: tm, selectedSlot: sl, reflectionTarget: rt } =
+      latestRef.current;
     const t = tm[sl];
+    const rhythmForProfile =
+      sl === "morning" || sl === "evening"
+        ? sl
+        : inferMorningEveningSlotFromTime(t.hour, t.minute);
     setNotificationTime(t.hour, t.minute);
     await syncPushRegistration({
       notificationsEnabled: notificationEnabled,
       reminderHour: t.hour,
       reminderMinute: t.minute,
+      reflectionTargetDefault: rt,
+      captureRhythm: rhythmForProfile,
     });
     await fetchProfile();
-  }, [
-    userId,
-    notificationEnabled,
-    setNotificationTime,
-    fetchProfile,
-  ]);
+  }, [notificationEnabled, setNotificationTime, fetchProfile]);
 
   const schedulePersist = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -137,24 +166,182 @@ function SettingsDailyPromptTimeSection({
     [changeTimeForSlot, schedulePersist]
   );
 
+  const rhythm: "morning" | "evening" =
+    selectedSlot === "evening" ? "evening" : "morning";
+
   return (
     <View style={{ paddingTop: 4, paddingBottom: 4 }}>
+      <Text
+        style={{
+          fontFamily: "Roboto-Light",
+          fontSize: 11,
+          color: colors.textMuted,
+          letterSpacing: 1,
+          textTransform: "uppercase",
+          marginBottom: 8,
+        }}
+      >
+        When you reflect
+      </Text>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        {(
+          [
+            {
+              id: "morning" as const,
+              label: "Morning",
+              sub: "around 8:00 am",
+              icon: "sunny-outline" as const,
+            },
+            {
+              id: "evening" as const,
+              label: "Evening",
+              sub: "around 9:00 pm",
+              icon: "moon-outline" as const,
+            },
+          ] as const
+        ).map((opt) => {
+          const selected = rhythm === opt.id;
+          return (
+            <Pressable
+              key={opt.id}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                selectWrapped(opt.id);
+                posthog.capture("settings_capture_rhythm_selected", {
+                  rhythm: opt.id,
+                });
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 14,
+                paddingHorizontal: 10,
+                borderRadius: 16,
+                backgroundColor: selected
+                  ? SETTINGS_RHYTHM_TOGGLE_BG
+                  : "transparent",
+                borderWidth: 1.5,
+                borderColor: selected
+                  ? SETTINGS_RHYTHM_TOGGLE_BORDER
+                  : colors.border,
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Ionicons
+                name={opt.icon}
+                size={24}
+                color={
+                  selected ? SETTINGS_RHYTHM_TOGGLE_FG : colors.textSecondary
+                }
+              />
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 15,
+                  color: selected
+                    ? SETTINGS_RHYTHM_TOGGLE_FG
+                    : colors.textSecondary,
+                }}
+              >
+                {opt.label}
+              </Text>
+              <Text
+                style={{
+                  fontFamily: "Roboto-Regular",
+                  fontSize: 11,
+                  color: selected
+                    ? SETTINGS_RHYTHM_TOGGLE_FG
+                    : colors.textMuted,
+                }}
+              >
+                {opt.sub}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Text
+        style={{
+          fontFamily: "Roboto-Light",
+          fontSize: 11,
+          color: colors.textMuted,
+          letterSpacing: 1,
+          textTransform: "uppercase",
+          marginTop: 20,
+          marginBottom: 8,
+        }}
+      >
+        Reflect on
+      </Text>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        {(
+          [
+            { id: "yesterday" as const, label: "Yesterday" },
+            { id: "today" as const, label: "Today" },
+          ] as const
+        ).map((opt) => {
+          const selected = reflectionTarget === opt.id;
+          return (
+            <Pressable
+              key={opt.id}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setReflectionTarget(opt.id);
+                schedulePersist();
+                posthog.capture("settings_reflection_target_selected", {
+                  reflection_target: opt.id,
+                });
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: 999,
+                backgroundColor: selected
+                  ? SETTINGS_RHYTHM_TOGGLE_BG
+                  : "transparent",
+                borderWidth: 1.5,
+                borderColor: selected
+                  ? SETTINGS_RHYTHM_TOGGLE_BORDER
+                  : colors.border,
+                alignItems: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 13,
+                  color: selected
+                    ? SETTINGS_RHYTHM_TOGGLE_FG
+                    : colors.textSecondary,
+                }}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <Text
         style={{
           fontFamily: "Roboto-Light",
           fontSize: 13,
           color: colors.textMuted,
           lineHeight: 20,
+          marginTop: 20,
           marginBottom: 12,
         }}
       >
-        We&apos;ll notify you when your new photo is ready. Pick a default time (change anytime).
+        We’ll nudge you when it’s time to capture your moment. Pick a
+        default time (change anytime).
       </Text>
       <DailyPromptReminderSchedule
         selectedSlot={selectedSlot}
         times={times}
         onSelectSlot={selectWrapped}
         onChangeTimeForSlot={changeWrapped}
+        visibleSlots={SETTINGS_REMINDER_VISIBLE}
       />
     </View>
   );
@@ -289,6 +476,12 @@ export default function SettingsScreen() {
       notificationsEnabled: val,
       reminderHour: notificationTime.hour,
       reminderMinute: notificationTime.minute,
+      reflectionTargetDefault: profile?.reflection_target_default ?? undefined,
+      captureRhythm:
+        profile?.capture_rhythm === "morning" ||
+        profile?.capture_rhythm === "evening"
+          ? profile.capture_rhythm
+          : undefined,
     });
   };
 
@@ -489,7 +682,7 @@ export default function SettingsScreen() {
           onManage={handleManageSubscription}
           onExplore={() => {
             posthog.capture("premium_card_tapped", { source: "settings" });
-            router.push("/ellie-premium");
+            router.push("/paywall");
           }}
         />
 
@@ -730,8 +923,9 @@ export default function SettingsScreen() {
               <SettingDivider colors={colors} />
               <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                 <SettingsDailyPromptTimeSection
-                  userId={user.id}
                   notificationEnabled={notificationEnabled}
+                  reflectionTargetDefault={profile?.reflection_target_default}
+                  captureRhythm={profile?.capture_rhythm ?? null}
                 />
               </View>
             </>
@@ -799,6 +993,8 @@ export default function SettingsScreen() {
               />
               <SettingDivider colors={colors} />
               <DummyFirstPinTester colors={colors} />
+              <SettingDivider colors={colors} />
+              <DummyFirstMomentOnboardingTester colors={colors} />
             </View>
           </>
         )}
@@ -1278,6 +1474,45 @@ function DummyFirstPinTester({ colors }: { colors: ThemePalette }) {
         }}
       >
         Pin
+      </Text>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+function DummyFirstMomentOnboardingTester({ colors }: { colors: ThemePalette }) {
+  return (
+    <Pressable
+      onPress={() => {
+        const list = useEntryStore
+          .getState()
+          .entries.filter((e) => e.entry_type === "moment");
+        const e = list[0];
+        if (!e) {
+          Alert.alert(
+            "No moments yet",
+            "Save a moment first, then run this preview.",
+          );
+          return;
+        }
+        useFirstMomentOnboardingSheetStore.getState().show(e.id);
+      }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        First capture onboarding sheet
       </Text>
       <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
     </Pressable>

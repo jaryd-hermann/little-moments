@@ -13,7 +13,6 @@ import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
 import { useEntries } from "@/hooks/useEntries";
 import { useStreak } from "@/hooks/useStreak";
 import { useTheme } from "@/hooks/useTheme";
-import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTabBarStore } from "@/store/tabBarStore";
 import { useMarketingStories } from "@/hooks/useMarketingStories";
@@ -22,7 +21,6 @@ import {
   resolveStoryProgress,
   resumeSlideIndexFromProgress,
 } from "@/lib/marketingStories";
-import { EllieMessage } from "@/components/ellie/EllieMessage";
 import { useChapters } from "@/hooks/useChapters";
 import { useChapterDevStore } from "@/store/chapterStore";
 import type { ChapterRecord } from "@/lib/chapters";
@@ -34,6 +32,7 @@ import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
 import { useThreads } from "@/hooks/useThreads";
 import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
+import { DashedEmptyState } from "@/components/common/DashedEmptyState";
 
 type ViewMode = "list" | "flipbook";
 
@@ -188,36 +187,13 @@ export default function MemoriesScreen() {
   if (isEmptyLibrary) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 24 }}>
-          <EllieMessage
-            content={"This is where your captured moments will go!\n\nI'll build you a searchable archive of all your memories, and there's even a fun Flipbook view as your moments grow to scroll through your timeline.\n\nI'll also share the Threads across your stories I find with you here."}
-            showAvatar
-          />
-          <Pressable
-            onPress={() => router.replace("/(tabs)/today")}
-            style={{
-              marginTop: 20,
-              height: 52,
-              borderRadius: 9999,
-              backgroundColor: colors.primary,
-              borderWidth: 2,
-              borderColor: PINK_CTA_BORDER,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: "Roboto-Medium",
-                fontSize: 15,
-                color: PINK_CTA_INK,
-                letterSpacing: 0.5,
-              }}
-            >
-              Add first moment
-            </Text>
-          </Pressable>
-        </View>
+        <DashedEmptyState
+          title="Your Capsule starts here"
+          subtitle="Capture your first moment to see your Flipbook and saved archive of moments"
+          singleLineTitle
+          ctaLabel="Capture a moment"
+          onCtaPress={() => router.replace("/(tabs)/today")}
+        />
       </SafeAreaView>
     );
   }

@@ -1,6 +1,10 @@
 import type { PostHog } from "posthog-react-native";
 import { supabase } from "@/lib/supabase";
 import { useUnseenStore } from "@/store/unseenStore";
+import {
+  scheduleReviewAfterFirstChapterOpened,
+  scheduleReviewAfterFirstThreadOpened,
+} from "@/lib/ratingPrompt";
 
 /**
  * Mark a thread as viewed by its owner, idempotently.
@@ -61,6 +65,7 @@ export async function markThreadViewed(args: {
           ? Math.max(0, Date.now() - new Date(createdAt).getTime())
           : null,
     });
+    void scheduleReviewAfterFirstThreadOpened();
   }
 
   return { wasUnseen };
@@ -121,6 +126,7 @@ export async function markChapterViewed(args: {
           ? Math.max(0, Date.now() - new Date(createdAt).getTime())
           : null,
     });
+    void scheduleReviewAfterFirstChapterOpened();
   }
 
   return { wasUnseen };

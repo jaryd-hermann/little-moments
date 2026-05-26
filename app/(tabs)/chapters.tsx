@@ -13,7 +13,6 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "@/hooks/useTheme";
-import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useChapters } from "@/hooks/useChapters";
 import { useChapterDevStore } from "@/store/chapterStore";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
@@ -30,6 +29,7 @@ import { Shimmer } from "@/components/common/Shimmer";
 import { useUnseenStore } from "@/store/unseenStore";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
 import { usePostHog } from "posthog-react-native";
+import { DashedEmptyState } from "@/components/common/DashedEmptyState";
 
 const REQUIRED_PER_WEEK = 4;
 
@@ -170,6 +170,8 @@ export default function ChaptersScreen() {
 
   const current = realOrDummy[activeIdx];
 
+  const remainingForChapters = Math.max(0, REQUIRED_PER_WEEK - thisWeekMomentsCount);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <View
@@ -196,7 +198,17 @@ export default function ChaptersScreen() {
       </View>
 
       {realOrDummy.length === 0 ? (
-        <ChaptersEmptyPlaceholder thisWeekCount={thisWeekMomentsCount} />
+        <DashedEmptyState
+          title="Your weekly chapter lives here"
+          singleLineTitle
+          subtitle={
+            remainingForChapters > 0
+              ? `Add ${remainingForChapters} more moment${remainingForChapters === 1 ? "" : "s"} this week to get a chapter created.`
+              : "You're set for this week — we'll publish your chapter next Monday."
+          }
+          ctaLabel="Capture a moment"
+          onCtaPress={() => router.push("/(tabs)/today")}
+        />
       ) : current ? (
         <View
           style={{
@@ -457,119 +469,3 @@ function CollageGrid({
   );
 }
 
-function ChaptersEmptyPlaceholder({
-  thisWeekCount,
-}: {
-  thisWeekCount: number;
-}) {
-  const { colors, theme } = useTheme();
-  const remaining = Math.max(0, REQUIRED_PER_WEEK - thisWeekCount);
-  return (
-    <View
-      style={{
-        flex: 1,
-        paddingHorizontal: 20,
-        paddingTop: 12,
-        paddingBottom: 100,
-      }}
-    >
-      <View
-        style={{
-          flex: 1,
-          borderRadius: 24,
-          borderWidth: 1.5,
-          borderStyle: "dashed",
-          borderColor: colors.border,
-          padding: 28,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 120,
-            height: 80,
-            marginBottom: 28,
-            position: "relative",
-          }}
-        >
-          {[
-            { left: 6, top: 18 },
-            { left: 36, top: 0 },
-            { left: 70, top: 24 },
-            { left: 30, top: 48 },
-          ].map((p, i) => (
-            <View
-              key={i}
-              style={{
-                position: "absolute",
-                left: p.left,
-                top: p.top,
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                backgroundColor: colors.primary,
-                borderWidth: 1,
-                borderColor: colors.text,
-              }}
-            />
-          ))}
-        </View>
-        <Text
-          style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 18,
-            lineHeight: 26,
-            color: colors.text,
-            textAlign: "center",
-            marginBottom: 10,
-          }}
-        >
-          Your weekly chapter{"\n"}lives here
-        </Text>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 14,
-            lineHeight: 22,
-            color: colors.textSecondary,
-            textAlign: "center",
-            marginBottom: 24,
-            paddingHorizontal: 8,
-          }}
-        >
-          {remaining > 0
-            ? `Add ${remaining} more moment${remaining === 1 ? "" : "s"} this week to get a chapter created.`
-            : "You're set for this week — we'll publish your chapter next Monday."}
-        </Text>
-        <Pressable
-          onPress={() => router.push("/(tabs)/today")}
-          style={{
-            height: 56,
-            paddingHorizontal: 28,
-            borderRadius: 9999,
-            backgroundColor: colors.primary,
-            borderWidth: 2,
-            borderColor: PINK_CTA_BORDER,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            ...bevelShadow(theme),
-          }}
-        >
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 15,
-              color: PINK_CTA_INK,
-              letterSpacing: 0.8,
-              textTransform: "uppercase",
-            }}
-          >
-            Capture a moment
-          </Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}

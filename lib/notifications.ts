@@ -35,26 +35,86 @@ export async function getNotificationPermissionGranted(): Promise<boolean> {
   return status === "granted";
 }
 
-export async function scheduleDailyReminder(
-  hour: number,
-  minute: number
-): Promise<void> {
+export type LocalReminderReflectionTarget = "yesterday" | "today";
+
+function dailyReminderCopy(target: LocalReminderReflectionTarget): {
+  title: string;
+  body: string;
+} {
+  if (target === "yesterday") {
+    return {
+      title: "Your moment for yesterday",
+      body: "Pick a photo from that day or answer a quick question — under two minutes.",
+    };
+  }
+  return {
+    title: "Your moment for today",
+    body: "Pick a photo from today or answer a quick question — under two minutes.",
+  };
+}
+
+const MIDDAY_PHOTO_NUDGE = {
+  title: "Light reminder",
+  body: "Snap a pic of something today for your next moment.",
+} as const;
+
+/**
+ * Local-only scheduled reminders when the user has no Expo push token.
+ * Schedules the main daily nudge plus a fixed midday “open camera” nudge.
+ */
+export async function scheduleLocalNotificationReminders(opts: {
+  hour: number;
+  minute: number;
+  reflectionTarget: LocalReminderReflectionTarget;
+}): Promise<void> {
   await ensureAndroidNotificationChannel();
   await Notifications.cancelAllScheduledNotificationsAsync();
+  const { title, body } = dailyReminderCopy(opts.reflectionTarget);
+  const android = Platform.OS === "android"
+    ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
+    : {};
+
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: "Your daily prompt is ready",
-      body: "Capture your moment — it takes less than 2 minutes.",
+      title,
+      body,
       sound: true,
-      ...(Platform.OS === "android"
-        ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
-        : {}),
+      data: { type: "daily_nudge" },
+      ...android,
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour,
-      minute,
+      hour: opts.hour,
+      minute: opts.minute,
     },
+  });
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: MIDDAY_PHOTO_NUDGE.title,
+      body: MIDDAY_PHOTO_NUDGE.body,
+      sound: true,
+      data: { type: "midday_camera_nudge" },
+      ...android,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+      hour: 12,
+      minute: 30,
+    },
+  });
+}
+
+/** @deprecated Use scheduleLocalNotificationReminders */
+export async function scheduleDailyReminder(
+  hour: number,
+  minute: number,
+  reflectionTarget: LocalReminderReflectionTarget = "today",
+): Promise<void> {
+  await scheduleLocalNotificationReminders({
+    hour,
+    minute,
+    reflectionTarget,
   });
 }
 
@@ -106,6 +166,28 @@ export async function fireMomentSavedNotification(opts: {
       { url: opts.attachedPhotoUri!, identifier: "captured-photo" },
     ];
   }
+
+  await Notifications.scheduleNotificationAsync({
+    content,
+    trigger: null,
+  });
+}
+
+/** One-shot welcome nudge after onboarding when notifications are enabled. */
+export async function fireWelcomeFirstCaptureNotification(): Promise<void> {
+  await ensureAndroidNotificationChannel();
+  const granted = await getNotificationPermissionGranted();
+  if (!granted) return;
+
+  const content: Notifications.NotificationContentInput = {
+    title: "Welcome!",
+    body: "Let's capture your first moment quickly.",
+    sound: true,
+    data: { type: "welcome_first_capture" },
+    ...(Platform.OS === "android"
+      ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
+      : {}),
+  };
 
   await Notifications.scheduleNotificationAsync({
     content,

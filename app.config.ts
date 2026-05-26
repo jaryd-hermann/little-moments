@@ -3,6 +3,11 @@ import { ExpoConfig, ConfigContext } from "expo/config";
 const IOS_BUNDLE_ID = "com.jarydhermann.littlemoments";
 const ANDROID_PACKAGE = "com.jarydhermann.littlemoments";
 
+/** Public listing — used by `expo-store-review` (`hasAction` / store fallback). */
+const APP_STORE_URL =
+  "https://apps.apple.com/us/app/little-moments-one-pic-a-day/id6761054988";
+const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
+
 /**
  * iOS Google Sign-In needs `CFBundleURLSchemes` = `com.googleusercontent.apps.{CLIENT_PREFIX}`
  * where CLIENT_PREFIX is the part before `.apps.googleusercontent.com` on the iOS OAuth client ID.
@@ -49,7 +54,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
   slug: "little-moments",
-  version: "2.0.0",
+  version: "2.2.0",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "littlemoments",
@@ -58,6 +63,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: IOS_BUNDLE_ID,
+    appStoreUrl: APP_STORE_URL,
     // `buildNumber` (CFBundleVersion) is managed by EAS — see
     // `appVersionSource: "remote"` + `autoIncrement: true` in eas.json.
     // EAS auto-bumps it on every production build so we never have to
@@ -81,6 +87,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     softwareKeyboardLayoutMode: "resize",
     package: ANDROID_PACKAGE,
+    playStoreUrl: PLAY_STORE_URL,
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/images/android-icon-foreground.png",

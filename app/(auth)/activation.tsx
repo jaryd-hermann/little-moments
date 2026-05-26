@@ -4,16 +4,29 @@ import type {
   MomentCaptureAnalytics,
 } from "@/components/ellie/EllieChatFlow";
 import { getDailyWord } from "@/constants/words";
+import { CaptureBrowseHeading } from "@/components/capture/CaptureBrowseHeading";
+import { CuratorBrowsePanel } from "@/components/capture/CuratorBrowsePanel";
 import { useEntries } from "@/hooks/useEntries";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
-import { useMediaLibrary, type PickedPhoto } from "@/hooks/useMediaLibrary";
+import {
+  hasFullPhotoLibraryAccess,
+  queryCameraPhotosForLocalDay,
+  useMediaLibrary,
+  type MediaAsset,
+} from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
+import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { setActivationPhotoUri } from "@/lib/onboardingHandoff";
+import type { ReflectionQuestionItem } from "@/lib/captureReflectionQuestions";
+import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
+import {
+  calendarDateForReflectionTarget,
+  captureScreenHeading,
+} from "@/lib/reflectionTarget";
 import {
   categorizePhotoBucket,
   photoAgeDays,
-  photoYear,
   type PhotoBucket,
 } from "@/lib/photoBucket";
 import { uploadEntryMedia } from "@/lib/storage";
@@ -21,10 +34,17 @@ import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
 import { format } from "date-fns";
+import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Animated, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const ACTIVATION_PREVIEW_INSTRUCTION = `Here's a preview of your moment. Tap anywhere in the card to edit it.
@@ -37,89 +57,186 @@ export default function ActivationScreen() {
   const setProfile = useAuthStore((s) => s.setProfile);
   const user = useAuthStore((s) => s.user);
   const { saveEntry, fetchEntries } = useEntries();
-  const { checkPermission, requestPermission, getRandomAsset } =
+  const { checkPermission, requestPermission, permissionStatus, accessPrivileges } =
     useMediaLibrary();
   const { ensureFullPhotoAccess, fullPhotoAccessModal } =
     useFullPhotoAccessExplainer({ checkPermission, requestPermission });
 
   const params = useLocalSearchParams<{ prompt_type?: string }>();
-  const promptType: "photo" | "word" = params.prompt_type === "word" ? "word" : "photo";
+  const promptTypeParam: "photo" | "word" =
+    params.prompt_type === "word" ? "word" : "photo";
 
   const word = useMemo(() => getDailyWord(), []);
+
+  const captureTargetDate = useMemo(
+    () => calendarDateForReflectionTarget("yesterday"),
+    []
+  );
+  const captureHeading = useMemo(
+    () => captureScreenHeading(captureTargetDate),
+    [captureTargetDate]
+  );
+  const memoryYmd = useMemo(
+    () => format(captureTargetDate, "yyyy-MM-dd"),
+    [captureTargetDate]
+  );
+
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
   const [photoBucket, setPhotoBucket] = useState<PhotoBucket | undefined>();
   const [shuffleCount, setShuffleCount] = useState(0);
-  const [isShufflingPhoto, setIsShufflingPhoto] = useState(false);
+  const [pinnedQuestion, setPinnedQuestion] =
+    useState<ReflectionQuestionItem | null>(null);
+  const [questionAutoStart, setQuestionAutoStart] = useState<
+    "speaking" | "typing" | null
+  >(null);
+  const [dayPhotos, setDayPhotos] = useState<MediaAsset[]>([]);
+  const [loadingDayPhotos, setLoadingDayPhotos] = useState(false);
+
+  const flowPromptType =
+    promptTypeParam === "word" ? "word" : pinnedQuestion ? "question" : "photo";
+  const effectivePromptValue =
+    promptTypeParam === "word" ? word : pinnedQuestion ? pinnedQuestion.prompt : "";
+
+  const isPinnedForEllie =
+    promptTypeParam === "word" ||
+    pinnedQuestion != null ||
+    (photoUri != null && photoDate != null);
 
   const startedAtRef = useRef<number>(Date.now());
   const inputMethodRef = useRef<InputMethod | null>(null);
+  const elliePhotoEnterOpacity = useRef(new Animated.Value(1)).current;
+  const capturePhotoEllieEnteredRef = useRef(false);
+
+  useEffect(() => {
+    if (!isPinnedForEllie || promptTypeParam === "word") {
+      capturePhotoEllieEnteredRef.current = false;
+      elliePhotoEnterOpacity.setValue(1);
+      return;
+    }
+    if (flowPromptType !== "photo") {
+      elliePhotoEnterOpacity.setValue(1);
+      capturePhotoEllieEnteredRef.current = true;
+      return;
+    }
+    if (capturePhotoEllieEnteredRef.current) return;
+    capturePhotoEllieEnteredRef.current = true;
+    elliePhotoEnterOpacity.setValue(0);
+    const timeouts = [
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 90),
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 270),
+      setTimeout(() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light), 480),
+    ];
+    Animated.timing(elliePhotoEnterOpacity, {
+      toValue: 1,
+      duration: 680,
+      useNativeDriver: true,
+    }).start();
+    return () => {
+      for (const t of timeouts) clearTimeout(t);
+    };
+  }, [isPinnedForEllie, promptTypeParam, flowPromptType, elliePhotoEnterOpacity]);
 
   useEffect(() => {
     posthog.capture(
       "viewed_activation",
-      onboardingEventProps(4, { prompt_type: promptType })
+      onboardingEventProps(4, { prompt_type: promptTypeParam })
     );
-  }, [promptType]);
+  }, [promptTypeParam]);
 
-  const applyPickedPhoto = useCallback(
-    (photo: PickedPhoto, reason: "initial" | "shuffle") => {
-      setPhotoUri(photo.asset.uri);
-      setPhotoDate(photo.asset.creationTime);
-      setPhotoBucket(photo.bucket);
-      posthog.capture(
-        "photo_shown",
-        onboardingEventProps(4, {
-          surface: "activation",
-          reason,
-          photo_bucket: photo.bucket,
-          photo_age_days: photoAgeDays(photo.asset.creationTime),
-          photo_year: photoYear(photo.asset.creationTime),
-          selection_path: photo.selectionPath,
-          shuffles_so_far: shuffleCount,
-        })
-      );
-    },
-    [posthog, shuffleCount]
-  );
-
-  // Photo path: load a random photo on mount.
   useEffect(() => {
-    if (promptType !== "photo") return;
+    if (promptTypeParam !== "photo") return;
     let cancelled = false;
     void (async () => {
-      const ok = await checkPermission();
-      if (!ok || cancelled) return;
-      const photo = await getRandomAsset();
-      if (cancelled || !photo) return;
-      applyPickedPhoto(photo, "initial");
+      const can = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
+      if (!can) {
+        if (!cancelled) {
+          setDayPhotos([]);
+          setLoadingDayPhotos(false);
+        }
+        return;
+      }
+      setLoadingDayPhotos(true);
+      try {
+        const list = await queryCameraPhotosForLocalDay(captureTargetDate);
+        if (!cancelled) {
+          setDayPhotos(list);
+          posthog.capture(
+            "photo_carousel_viewed",
+            onboardingEventProps(4, {
+              target_ymd: memoryYmd,
+              photo_count: list.length,
+              surface: "activation",
+            })
+          );
+        }
+      } finally {
+        if (!cancelled) setLoadingDayPhotos(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [promptType, checkPermission, getRandomAsset, applyPickedPhoto]);
+  }, [
+    promptTypeParam,
+    captureTargetDate,
+    permissionStatus,
+    accessPrivileges,
+    memoryYmd,
+    posthog,
+  ]);
 
-  const handlePhotoShuffle = useCallback(async () => {
-    setIsShufflingPhoto(true);
-    setShuffleCount((c) => c + 1);
-    posthog.capture(
-      "photo_shuffled",
-      onboardingEventProps(4, {
-        surface: "activation",
-        from_photo_bucket: photoBucket ?? null,
-        from_photo_age_days: photoDate != null ? photoAgeDays(photoDate) : null,
-        shuffles_so_far: shuffleCount + 1,
-      })
-    );
-    try {
-      const photo = await getRandomAsset();
-      if (photo) {
-        applyPickedPhoto(photo, "shuffle");
-      }
-    } finally {
-      setIsShufflingPhoto(false);
-    }
-  }, [getRandomAsset, posthog, photoBucket, photoDate, shuffleCount, applyPickedPhoto]);
+  const clearPinState = useCallback(() => {
+    setPhotoUri(undefined);
+    setPhotoDate(undefined);
+    setPhotoBucket(undefined);
+    setPinnedQuestion(null);
+    setShuffleCount(0);
+    setQuestionAutoStart(null);
+    inputMethodRef.current = null;
+  }, []);
+
+  const handlePinPhotoFromBrowse = useCallback(
+    (asset: MediaAsset) => {
+      const bucket = categorizePhotoBucket(asset.creationTime);
+      setPinnedQuestion(null);
+      setQuestionAutoStart(null);
+      setPhotoUri(asset.uri);
+      setPhotoDate(asset.creationTime);
+      setPhotoBucket(bucket);
+      setShuffleCount(0);
+      posthog.capture(
+        "photo_pinned",
+        onboardingEventProps(4, {
+          surface: "activation",
+          target_ymd: memoryYmd,
+          photo_bucket: bucket,
+        })
+      );
+    },
+    [posthog, memoryYmd]
+  );
+
+  const handleStartQuestionFromBrowse = useCallback(
+    (q: ReflectionQuestionItem, method: "speaking" | "typing") => {
+      setPhotoUri(undefined);
+      setPhotoDate(undefined);
+      setPhotoBucket(undefined);
+      setPinnedQuestion(q);
+      setShuffleCount(0);
+      setQuestionAutoStart(method);
+      posthog.capture(
+        "question_pinned",
+        onboardingEventProps(4, {
+          surface: "activation",
+          question_id: q.id,
+          target_ymd: memoryYmd,
+          input_method: method,
+        })
+      );
+    },
+    [posthog, memoryYmd]
+  );
 
   const handleComplete = useCallback(
     async (entry: {
@@ -130,7 +247,12 @@ export default function ActivationScreen() {
       attachedPhotoTakenAtMs?: number;
       analytics?: MomentCaptureAnalytics;
     }) => {
-      const today = format(new Date(), "yyyy-MM-dd");
+      const now = new Date();
+      const mem = promptTypeParam === "word" ? now : captureTargetDate;
+      const entryYmd =
+        promptTypeParam === "word"
+          ? format(now, "yyyy-MM-dd")
+          : format(captureTargetDate, "yyyy-MM-dd");
       const photoBucketAtSave = entry.attachedPhotoTakenAtMs
         ? categorizePhotoBucket(entry.attachedPhotoTakenAtMs)
         : null;
@@ -142,11 +264,11 @@ export default function ActivationScreen() {
         title: entry.title,
         body: entry.body,
         entry_type: "moment",
-        entry_date: today,
-        entry_month: new Date().getMonth() + 1,
-        entry_year: new Date().getFullYear(),
+        entry_date: entryYmd,
+        entry_month: mem.getMonth() + 1,
+        entry_year: mem.getFullYear(),
         date_precision: "exact",
-        word_of_day: promptType === "word" ? word : null,
+        word_of_day: promptTypeParam === "word" ? word : null,
         ai_conversation: null,
         ai_enhanced_body: null,
         original_body: entry.rawText,
@@ -158,10 +280,6 @@ export default function ActivationScreen() {
       });
 
       if (entry.attachedPhotoUri && user?.id && saved?.id) {
-        // Stash the local URI so the notifications-prompt screen can attach
-        // it to the first-moment celebration push. The entry's `media` row
-        // after upload only has the remote `storage_url`, which iOS
-        // notification attachments won't accept.
         setActivationPhotoUri(entry.attachedPhotoUri);
         const entryId = saved.id;
         const takenAtIso = entry.attachedPhotoTakenAtMs
@@ -194,7 +312,7 @@ export default function ActivationScreen() {
         await supabase
           .from("profiles")
           .update({
-            ...(promptType === "word"
+            ...(promptTypeParam === "word"
               ? { activation_word_completed: true }
               : { activation_photo_completed: true }),
             onboarding_phase: "reveal",
@@ -212,7 +330,7 @@ export default function ActivationScreen() {
       posthog.capture(
         "activation_saved",
         onboardingEventProps(4, {
-          prompt_type: promptType,
+          prompt_type: promptTypeParam,
           input_method: inputMethodRef.current,
           ms_to_save: msToSave,
           ...entry.analytics,
@@ -226,25 +344,44 @@ export default function ActivationScreen() {
 
       return saved ?? null;
     },
-    [saveEntry, fetchEntries, promptType, word, user, posthog, setProfile]
+    [
+      saveEntry,
+      fetchEntries,
+      promptTypeParam,
+      word,
+      user,
+      posthog,
+      setProfile,
+      captureTargetDate,
+    ]
   );
 
   const handleSkipOnboarding = useCallback(async () => {
     posthog.capture(
       "activation_skipped",
-      onboardingEventProps(4, { prompt_type: promptType })
+      onboardingEventProps(4, { prompt_type: promptTypeParam })
     );
     if (user) {
       const { data } = await supabase
         .from("profiles")
-        .update({ onboarding_phase: "done" })
+        .update({ onboarding_phase: "done", onboarding_completed: true })
         .eq("id", user.id)
         .select()
         .single();
       if (data) setProfile(data as Profile);
     }
     router.replace("/(tabs)/today");
-  }, [posthog, promptType, user, setProfile]);
+  }, [posthog, promptTypeParam, user, setProfile]);
+
+  const todayPhotoPermissionBlocked =
+    flowPromptType === "photo" &&
+    !photoUri &&
+    !hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
+
+  const handleRequestPhotoAccess = useCallback(async () => {
+    await ensureFullPhotoAccess();
+    await checkPermission();
+  }, [ensureFullPhotoAccess, checkPermission]);
 
   return (
     <SafeAreaView
@@ -269,39 +406,121 @@ export default function ActivationScreen() {
           Capture your first moment
         </Text>
       </View>
-      <EllieChatFlow
-        promptType={promptType}
-        promptValue={promptType === "word" ? word : ""}
-        photoUri={photoUri}
-        photoDate={photoDate}
-        photoBucket={photoBucket}
-        shufflesBeforeSave={shuffleCount}
-        isShufflingPhoto={isShufflingPhoto}
-        onComplete={handleComplete}
-        onPhotoShuffle={promptType === "photo" ? handlePhotoShuffle : undefined}
-        photoFooterNote={
-          promptType === "photo"
-            ? "p.s if you want a different photo, tap shuffle."
-            : undefined
-        }
-        previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
-        analyticsSource="activation"
-        ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
-        onFlowStarted={(inputMethod) => {
-          inputMethodRef.current = inputMethod;
-          posthog.capture(
-            "activation_initiated",
-            onboardingEventProps(4, {
-              input_method: inputMethod,
-              prompt_type: promptType,
-            })
-          );
-        }}
-        onSkip={handleSkipOnboarding}
-        skipLabel="Skip this"
-        skipPreview
-        hideHelperText
-      />
+
+      {promptTypeParam === "word" ? (
+        <EllieChatFlow
+          promptType="word"
+          promptValue={word}
+          shufflesBeforeSave={shuffleCount}
+          onComplete={handleComplete}
+          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+          analyticsSource="activation"
+          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
+          onFlowStarted={(inputMethod) => {
+            inputMethodRef.current = inputMethod;
+            posthog.capture(
+              "activation_initiated",
+              onboardingEventProps(4, {
+                input_method: inputMethod,
+                prompt_type: "word",
+              })
+            );
+          }}
+          onSkip={handleSkipOnboarding}
+          skipLabel="Skip this"
+          skipPreview
+          hideHelperText
+        />
+      ) : isPinnedForEllie ? (
+        <Animated.View style={{ flex: 1, opacity: elliePhotoEnterOpacity }}>
+        <EllieChatFlow
+          promptType={flowPromptType === "question" ? "question" : "photo"}
+          promptValue={effectivePromptValue}
+          photoUri={photoUri}
+          photoDate={photoDate}
+          photoBucket={photoBucket}
+          shufflesBeforeSave={shuffleCount}
+          isShufflingPhoto={false}
+          onComplete={handleComplete}
+          onPhotoShuffle={undefined}
+          photoPermissionBlocked={todayPhotoPermissionBlocked}
+          onRequestPhotoAccess={
+            todayPhotoPermissionBlocked ? handleRequestPhotoAccess : undefined
+          }
+          photoAccessButtonLabel={
+            permissionStatus === "denied" || accessPrivileges === "limited"
+              ? "OPEN SETTINGS"
+              : "CONTINUE"
+          }
+          previewInstructionOverride={ACTIVATION_PREVIEW_INSTRUCTION}
+          analyticsSource="activation"
+          ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
+          promptAccent={pinnedQuestion?.promptAccent}
+          questionOrdinal={
+            pinnedQuestion
+              ? {
+                  current:
+                    REFLECTION_QUESTIONS.findIndex(
+                      (q) => q.id === pinnedQuestion.id
+                    ) + 1,
+                  total: REFLECTION_QUESTIONS.length,
+                }
+              : undefined
+          }
+          headerNode={
+            <View style={{ marginHorizontal: -20 }}>
+              <CaptureBrowseHeading
+                title={captureHeading.title}
+                hideChangeDay
+                topLeftAction={{ label: "Go back", onPress: clearPinState }}
+              />
+            </View>
+          }
+          onFlowStarted={(inputMethod) => {
+            inputMethodRef.current = inputMethod;
+            posthog.capture(
+              "activation_initiated",
+              onboardingEventProps(4, {
+                input_method: inputMethod,
+                prompt_type: flowPromptType,
+              })
+            );
+          }}
+          onAbortFlow={clearPinState}
+          autoStartInputMethod={
+            pinnedQuestion && questionAutoStart
+              ? questionAutoStart
+              : undefined
+          }
+          onSkip={handleSkipOnboarding}
+          skipLabel="Skip this"
+          skipPreview
+          hideHelperText
+          hideTimerHint={flowPromptType === "photo"}
+        />
+        </Animated.View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <CuratorBrowsePanel
+            key={memoryYmd}
+            headingTitle={captureHeading.title}
+            onPressChangeDay={() => {}}
+            dayPhotos={dayPhotos}
+            loadingPhotos={loadingDayPhotos}
+            onChoosePhoto={handlePinPhotoFromBrowse}
+            onStartQuestionCapture={handleStartQuestionFromBrowse}
+            hideChangeDay
+            analyticsContext={{
+              target_ymd: memoryYmd,
+              surface: "activation",
+            }}
+          />
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, Pressable, Image as RNImage, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, Image as RNImage, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
@@ -7,6 +7,8 @@ import { useTheme } from "@/hooks/useTheme";
 import type { PromptType } from "@/lib/momentAssist";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 import { PhotoAccessNudgeCard } from "@/components/common/PhotoAccessNudgeCard";
+import { PromptWithAccentText } from "@/components/capture/PromptWithAccentText";
+import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
 
 const APP_ICON = require("@/assets/images/white-icon.png");
 
@@ -36,6 +38,14 @@ interface PromptCardProps {
    * prompt, then Ellie footer + CTAs — independent of when the random photo URI resolves.
    */
   photoEllieTypingDelayMs?: number;
+  /** Replaces Ellie’s follow-up line under the photo (“What was this moment?”). */
+  photoEllieFollowUp?: string;
+  /** Question: highlight substring (italic + tinted background). */
+  promptAccent?: string;
+  /** Question: picker-style chrome vs capturing (fixed slot, no dots / header / swipe). */
+  questionChrome?: "rich" | "minimal";
+  /** Question: 1-based index for "QUESTION N OF M" when chrome is rich. */
+  questionOrdinal?: { current: number; total: number };
 }
 
 function PhotoImage({ uri }: { uri: string }) {
@@ -86,8 +96,13 @@ export function PromptCard({
   onPhotoAccessWordFallback,
   onPhotoViewportReady,
   photoEllieTypingDelayMs,
+  photoEllieFollowUp = "What was meaningful about this?",
+  promptAccent,
+  questionChrome,
+  questionOrdinal,
 }: PromptCardProps) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
+  const { width: screenW } = useWindowDimensions();
   const firstPhotoReadyNotifiedRef = useRef(false);
   const [activationPostTypingReveal, setActivationPostTypingReveal] = useState(false);
 
@@ -289,7 +304,7 @@ export function PromptCard({
                 color: colors.text,
               }}
             >
-              What was this moment?
+              {photoEllieFollowUp}
               {photoFooterNote ? (
                 <>
                   {"\n\n"}
@@ -364,7 +379,109 @@ export function PromptCard({
     );
   }
 
-  // question or freetext
+  // question: Curator-matched frame; rich = header + dots + swipe, minimal = capture phase.
+  if (promptType === "question") {
+    const frameBorder = theme === "dark" ? "#D9CFC0" : "#000000";
+    const accentBg =
+      theme === "dark" ? "rgba(230, 216, 242, 0.35)" : "rgba(212, 165, 216, 0.45)";
+    const rich = questionChrome === "rich";
+    const m = questionOrdinal?.total ?? REFLECTION_QUESTIONS.length;
+    const ord = questionOrdinal?.current ?? 1;
+    const cardMin = Math.max(260, Math.min(screenW - 52, screenW - 40));
+    const serifStyle = {
+      fontFamily: "LibreBaskerville-Bold",
+      fontSize: 22,
+      lineHeight: 30,
+      color: colors.text,
+      textAlign: "center" as const,
+    };
+    const dotActive = theme === "dark" ? "#FFFFFF" : "#000000";
+    const dotMuted =
+      theme === "dark" ? "rgba(255,255,255,0.32)" : "rgba(0,0,0,0.28)";
+
+    return (
+      <View
+        style={{
+          marginBottom: 16,
+          borderRadius: 16,
+          borderWidth: 2,
+          borderColor: frameBorder,
+          backgroundColor: colors.surface,
+          paddingHorizontal: 18,
+          paddingTop: rich ? 20 : 24,
+          paddingBottom: rich ? 14 : 24,
+          minHeight: cardMin,
+          justifyContent: "center",
+        }}
+      >
+        {rich ? (
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 10,
+              letterSpacing: 1,
+              color: colors.textMuted,
+              marginBottom: 12,
+            }}
+          >
+            QUESTION {ord} OF {m}
+          </Text>
+        ) : null}
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            paddingVertical: rich ? 6 : 12,
+            minHeight: rich ? 120 : 160,
+          }}
+        >
+          <PromptWithAccentText
+            prompt={promptValue}
+            accent={promptAccent}
+            serifStyle={serifStyle}
+            accentBg={accentBg}
+            accentColor={colors.text}
+          />
+        </View>
+        {rich && m > 1 ? (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: 6,
+            }}
+          >
+            <View style={{ flexDirection: "row", gap: 5 }}>
+              {REFLECTION_QUESTIONS.map((_, i) => (
+                <View
+                  key={i}
+                  style={{
+                    width: i === ord - 1 ? 18 : 5,
+                    height: 5,
+                    borderRadius: 2.5,
+                    backgroundColor: i === ord - 1 ? dotActive : dotMuted,
+                  }}
+                />
+              ))}
+            </View>
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 11,
+                letterSpacing: 0.6,
+                color: colors.textMuted,
+              }}
+            >
+              SWIPE ⇄
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  // freetext
   return (
     <View
       style={{

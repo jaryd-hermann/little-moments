@@ -19,7 +19,9 @@ export interface Profile {
   total_moments: number;
   onboarding_completed: boolean;
   onboarding_phase?:
-    // photo-focus v3 phases
+    // photo-focus v3 + quiz v1 phases
+    | "quiz"
+    | "onboarding_welcome"
     | "photo_permission"
     | "activation"
     | "reveal"
@@ -34,6 +36,13 @@ export interface Profile {
     | "story_coach"
     | "personalized"
     | null;
+  /**
+   * Raw pre-auth quiz answers ({ [questionId]: optionId }). Populated by
+   * `onboardingQuizStore.flushToProfile` right after sign-in succeeds.
+   */
+  quiz_answers?: Record<string, string> | null;
+  /** Derived persona tag from Q1 of the onboarding quiz. */
+  quiz_persona?: string | null;
   resonance_option_ids?: string[] | null;
   donation_cause_id?: string | null;
   follow_up_screen_key?: string | null;
@@ -43,6 +52,12 @@ export interface Profile {
   /** Closing activation: yes | kind_of | no — did Ellie explain LM clearly */
   activation_lm_understanding?: "yes" | "kind_of" | "no" | null;
   notification_timezone?: string | null;
+  /** Morning vs evening — set during onboarding "When?" step. */
+  capture_rhythm?: "morning" | "evening" | null;
+  /** Default day chip: reflect on yesterday vs today (user can change per capture). */
+  reflection_target_default?: "yesterday" | "today" | null;
+  /** Local YYYY-MM-DD: last midday “snap a pic” nudge sent (server cron). */
+  last_midday_photo_nudge_local_date?: string | null;
   last_daily_push_local_date?: string | null;
   last_streak_risk_push_local_date?: string | null;
   created_at: string;

@@ -4,6 +4,7 @@ import { useEntryStore, type Entry } from "@/store/entryStore";
 import { useAuthStore } from "@/store/authStore";
 import { updateStreakAfterEntry } from "@/lib/streak";
 import { format } from "date-fns";
+import { scheduleReviewAfterMomentMilestone } from "@/lib/ratingPrompt";
 
 export function useEntries() {
   const {
@@ -76,7 +77,11 @@ export function useEntries() {
         ...(data as Entry),
         is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
       });
-      await updateStreakAfterEntry(userId);
+      const streakMeta = await updateStreakAfterEntry(userId);
+      scheduleReviewAfterMomentMilestone({
+        newTotalMoments: streakMeta.newTotalMoments,
+        streakJustHitMilestone: streakMeta.streakJustHitMilestone,
+      });
       void supabase.functions
         .invoke("process-threads", { body: { entry_id: data.id } })
         .catch(() => {});

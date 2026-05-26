@@ -2,6 +2,7 @@ import { Tabs } from "expo-router";
 import { CustomTabBar } from "@/components/common/CustomTabBar";
 import { MomentCelebrationHost } from "@/components/today/MomentCelebrationHost";
 import { FirstPinCelebrationHost } from "@/components/common/FirstPinCelebrationHost";
+import { FirstMomentOnboardingSheetHost } from "@/components/common/FirstMomentOnboardingSheetHost";
 import { usePushRegistration } from "@/hooks/usePushRegistration";
 import { useUnseenBootstrap } from "@/hooks/useUnseenBootstrap";
 import { useOneSignalMomentSync } from "@/hooks/useOneSignalMomentSync";
@@ -36,6 +37,7 @@ export default function TabLayout() {
       <OneSignalEngagementSyncHost />
       <MomentCelebrationHost />
       <FirstPinCelebrationHost />
+      <FirstMomentOnboardingSheetHost />
       <Tabs
         tabBar={(props) => <CustomTabBar {...props} />}
         screenOptions={{ headerShown: false }}

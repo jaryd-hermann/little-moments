@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
-import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { routeAfterAuth, healProfileIfStuckAfterCapture } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
 import { usePostHog } from "posthog-react-native";
@@ -36,7 +36,7 @@ export default function SplashScreen() {
           .eq("id", session.user.id)
           .single()
           .then(({ data: profile }) => {
-            const p = profile as Profile | null;
+            const p = healProfileIfStuckAfterCapture(profile as Profile | null);
             if (p) {
               setProfile(p);
               applyNotificationTimeFromProfile(p.notification_time);
@@ -73,7 +73,7 @@ export default function SplashScreen() {
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             posthog.capture("splash_get_started", onboardingEventProps(1));
-            router.replace("/(auth)/sign-in");
+            router.replace("/(auth)/welcome");
           }}
           style={{
             height: 56,

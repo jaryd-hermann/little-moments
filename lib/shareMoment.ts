@@ -2,6 +2,7 @@ import { Share } from "react-native";
 import { supabase } from "./supabase";
 import { notifyLifecycleEvent } from "./lifecycleEvent";
 import { captureException } from "./errors";
+import { scheduleReviewAfterFirstShare } from "./ratingPrompt";
 
 const SHARE_BASE = "https://getlittlemoments.com/share";
 
@@ -48,7 +49,10 @@ export async function createShareLink(entryId: string): Promise<string> {
         .select("share_token")
         .eq("entry_id", entryId)
         .single();
-      if (race?.share_token) return `${SHARE_BASE}/${race.share_token}`;
+      if (race?.share_token) {
+        void scheduleReviewAfterFirstShare();
+        return `${SHARE_BASE}/${race.share_token}`;
+      }
     }
     captureException(error, {
       where: "createShareLink",
@@ -61,6 +65,7 @@ export async function createShareLink(entryId: string): Promise<string> {
   // Fire the sender ack push. Server validates entry ownership +
   // one-shot per (user, entry) so re-creating a link doesn't double-fire.
   void notifyLifecycleEvent("share_created", { entry_id: entryId });
+  void scheduleReviewAfterFirstShare();
 
   return `${SHARE_BASE}/${token}`;
 }

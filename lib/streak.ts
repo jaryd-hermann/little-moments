@@ -1,6 +1,8 @@
 import {
   differenceInCalendarDays,
+  format,
   parseISO,
+  startOfDay,
 } from "date-fns";
 import { supabase } from "./supabase";
 import { notifyLifecycleEvent } from "./lifecycleEvent";
@@ -95,32 +97,34 @@ export function countMomentEntries(
   return entries.filter((e) => e.entry_type === "moment").length;
 }
 
-export function exactEntryDateKeys(
-  entries: { date_precision: string; entry_date: string | null }[]
-): string[] {
-  return entries
-    .filter((e) => e.date_precision === "exact" && e.entry_date)
-    .map((e) => e.entry_date as string);
+/** Local calendar days the user saved any entry (habit streak), from `created_at`. */
+export function habitStreakCalendarDates(
+  entries: { created_at: string }[]
+): Date[] {
+  return entries.map((e) => startOfDay(parseISO(e.created_at)));
+}
+
+/** Sorted unique yyyy-MM-dd keys for longest-habit-streak math. */
+export function habitStreakDayKeys(entries: { created_at: string }[]): string[] {
+  const keys = entries.map((e) =>
+    format(startOfDay(parseISO(e.created_at)), "yyyy-MM-dd")
+  );
+  return [...new Set(keys)].sort();
 }
 
 export async function updateStreakAfterEntry(
   userId: string
-): Promise<void> {
+): Promise<{ newTotalMoments: number; streakJustHitMilestone: boolean }> {
   try {
     const { data: entries } = await supabase
       .from("entries")
-      .select("entry_date")
+      .select("created_at")
       .eq("user_id", userId)
-      .eq("date_precision", "exact")
-      .not("entry_date", "is", null)
-      .order("entry_date", { ascending: false })
-      .limit(60);
+      .order("created_at", { ascending: false })
+      .limit(120);
 
     const dates =
-      entries?.map((e) => {
-        const [y, m, d] = (e.entry_date as string).split("-").map(Number);
-        return new Date(y, m - 1, d);
-      }) ?? [];
+      entries?.map((e) => startOfDay(parseISO(e.created_at as string))) ?? [];
     const { streakCount } = calculateStreak(dates);
 
     const { data: profile } = await supabase
@@ -128,6 +132,8 @@ export async function updateStreakAfterEntry(
       .select("longest_streak, total_moments, streak_count")
       .eq("id", userId)
       .single();
+
+    const newTotalMoments = (profile?.total_moments ?? 0) + 1;
 
     await supabase
       .from("profiles")
@@ -137,8 +143,8 @@ export async function updateStreakAfterEntry(
           streakCount,
           profile?.longest_streak ?? 0
         ),
-        last_entry_date: new Date().toISOString().split("T")[0],
-        total_moments: (profile?.total_moments ?? 0) + 1,
+        last_entry_date: format(new Date(), "yyyy-MM-dd"),
+        total_moments: newTotalMoments,
       })
       .eq("id", userId);
 
@@ -147,9 +153,13 @@ export async function updateStreakAfterEntry(
     // the milestone, current streak hits it. Server re-checks the count
     // and enforces one-shot via lifecycle_dispatches.
     const previousStreak = profile?.streak_count ?? 0;
-    if (STREAK_MILESTONES.has(streakCount) && previousStreak < streakCount) {
+    const streakJustHitMilestone =
+      STREAK_MILESTONES.has(streakCount) && previousStreak < streakCount;
+    if (streakJustHitMilestone) {
       void notifyLifecycleEvent("streak_milestone");
     }
+
+    return { newTotalMoments, streakJustHitMilestone };
   } catch (err) {
     // Streak update is best-effort: if the counter doesn't tick, the
     // user still has their entry. But we MUST surface failures because

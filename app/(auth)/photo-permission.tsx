@@ -135,6 +135,10 @@ export default function PhotoPermissionScreen() {
         />
         <View style={{ marginTop: 28 }}>
           <PhotoAccessNudgeCard
+            headline="Pick from your day's photos"
+            subtitle="Each day, we'll show you photos from that day so you choose which one mattered. Nothing leaves your device until you save a moment."
+            primaryLabel="ALLOW PHOTOS"
+            wordFallbackLabel="Use questions instead"
             onPrimaryPress={handleAllow}
             onWordFallbackPress={handleWordFallback}
           />

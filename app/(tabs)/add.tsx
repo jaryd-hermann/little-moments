@@ -697,6 +697,7 @@ export default function AddScreen() {
         photoUri={photoUri}
         photoDate={photoDate}
         photoBucket={photoBucket}
+        keyboardAvoidingExtraOffset={44}
         shufflesBeforeSave={shuffleCount}
         onComplete={handleComplete}
         onPhotoShuffle={

@@ -7,7 +7,8 @@ import {
   averageMomentWordCount,
   computeLongestStreakEver,
   countMomentEntries,
-  exactEntryDateKeys,
+  habitStreakCalendarDates,
+  habitStreakDayKeys,
 } from "@/lib/streak";
 
 /** Snapshot after a save completes (reads Zustand stores synchronously). */
@@ -24,13 +25,8 @@ export type AfterSaveContext = {
 export function getStreakDisplayFromStores(): AfterSaveStats {
   const entries = useEntryStore.getState().entries;
   const profile = useAuthStore.getState().profile;
-  const exactDates = entries
-    .filter((e) => e.date_precision === "exact" && e.entry_date)
-    .map((e) => {
-      const [y, m, d] = e.entry_date!.split("-").map(Number);
-      return new Date(y, m - 1, d);
-    });
-  const streakData = calculateStreak(exactDates);
+  const habitDates = habitStreakCalendarDates(entries);
+  const streakData = calculateStreak(habitDates);
   const totalMomentsFromEntries = countMomentEntries(entries);
   const totalMoments = Math.max(
     profile?.total_moments ?? 0,
@@ -47,13 +43,7 @@ export function useStreak() {
   const profile = useAuthStore((s) => s.profile);
 
   const streakData = useMemo(() => {
-    const exactDates = entries
-      .filter((e) => e.date_precision === "exact" && e.entry_date)
-      .map((e) => {
-        const [y, m, d] = e.entry_date!.split("-").map(Number);
-        return new Date(y, m - 1, d);
-      });
-    return calculateStreak(exactDates);
+    return calculateStreak(habitStreakCalendarDates(entries));
   }, [entries]);
 
   const memoryRaceCount = useMemo(
@@ -71,7 +61,7 @@ export function useStreak() {
   );
 
   const longestFromEntries = useMemo(
-    () => computeLongestStreakEver(exactEntryDateKeys(entries)),
+    () => computeLongestStreakEver(habitStreakDayKeys(entries)),
     [entries]
   );
 

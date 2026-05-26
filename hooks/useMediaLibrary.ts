@@ -89,7 +89,7 @@ let _excludedIds: Set<string> | null = null;
 let _excludedIdsPromise: Promise<Set<string>> | null = null;
 
 const EXCLUDED_ALBUM_RE =
-  /screenshot|whatsapp|telegram|messenger|signal|viber|wechat|snapchat/i;
+  /screenshot|screen\s*shot|whatsapp|whats\s*app|wa\s+images|telegram|messenger|signal|viber|wechat|snapchat/i;
 
 async function loadExcludedAssetIds(): Promise<Set<string>> {
   if (_excludedIds) return _excludedIds;
@@ -133,10 +133,20 @@ async function loadExcludedAssetIds(): Promise<Set<string>> {
 
 function isCameraPhoto(
   asset: { id: string; width: number; height: number; mediaSubtypes?: string[] },
-  excludedIds: Set<string>
+  excludedIds: Set<string>,
+  opts?: { filename?: string | null }
 ): boolean {
   if (excludedIds.has(asset.id)) return false;
   if (asset.mediaSubtypes?.includes("screenshot")) return false;
+  const fn = opts?.filename?.toLowerCase() ?? "";
+  if (
+    fn &&
+    /screenshot|screen[-_ ]?shot|img-?wa-|\bwa\d{4,}|whatsapp|_chat\.|inline\.png/i.test(
+      fn
+    )
+  ) {
+    return false;
+  }
   if (isScreenshotDimensions(asset.width, asset.height)) return false;
   return true;
 }
@@ -439,6 +449,53 @@ export function warmUpPhotoCache(): void {
 }
 
 /* ── Hook ───────────────────────────────────────────────────────────────── */
+
+/**
+ * Fetch all camera photos for a local calendar day (paginated). Does not touch
+ * hook state — safe for Capture / onboarding day-carousel.
+ */
+export async function queryCameraPhotosForLocalDay(
+  date: Date
+): Promise<MediaAsset[]> {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+
+  const excludedIds = await loadExcludedAssetIds();
+  const out: MediaAsset[] = [];
+  let after: string | undefined;
+  let guard = 0;
+  while (guard++ < 30) {
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType: [MediaLibrary.MediaType.photo],
+      createdAfter: start.getTime(),
+      createdBefore: end.getTime(),
+      first: 200,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      ...(after ? { after } : {}),
+    });
+    for (const a of page.assets) {
+      let merged: MediaLibrary.Asset = a;
+      try {
+        const info = await MediaLibrary.getAssetInfoAsync(a.id);
+        merged = { ...a, ...info };
+      } catch {
+        /* use list row only */
+      }
+      const filename =
+        ("filename" in merged && typeof merged.filename === "string"
+          ? merged.filename
+          : null) ?? null;
+      if (isCameraPhoto(merged, excludedIds, { filename })) {
+        out.push(mapExpoAsset(merged));
+      }
+    }
+    if (!page.hasNextPage || !page.endCursor) break;
+    after = page.endCursor;
+  }
+  return out;
+}
 
 export function useMediaLibrary() {
   const [permissionStatus, setPermissionStatus] =

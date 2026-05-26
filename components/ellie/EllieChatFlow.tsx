@@ -120,7 +120,13 @@ interface EllieChatFlowProps {
     ctx: AfterSaveContext
   ) => React.ReactNode;
   onFlowStarted?: (inputMethod: InputMethod) => void;
+  /** If set, automatically starts speaking or typing once the prompt step is ready (Curator handoff). */
+  autoStartInputMethod?: InputMethod;
   headerNode?: React.ReactNode;
+  /** Question flow: substring of `promptValue` for italic + highlight (matches Curator). */
+  promptAccent?: string;
+  /** Question flow: 1-based index for "QUESTION N OF M" when chrome is rich. */
+  questionOrdinal?: { current: number; total: number };
   onSkip?: () => void;
   /** Label for the bottom-of-flow skip link. Default: "Skip for now". */
   skipLabel?: string;
@@ -142,6 +148,8 @@ interface EllieChatFlowProps {
   ensureFullPhotoLibraryAccess?: () => Promise<boolean>;
   /** Activation: fixed delay before Ellie photo footer + CTAs (matches word_saved typing beat). */
   photoEllieTypingDelayMs?: number;
+  /** Ellie follow-up sentence under the photo in the photo prompt flow. */
+  photoEllieFollowUp?: string;
   analyticsSource?: "activation" | "today" | "add_tab";
   /**
    * First message + typing indicator on mount; after `typingDurationMs`, remaining messages and the prompt card appear.
@@ -154,6 +162,11 @@ interface EllieChatFlowProps {
   };
   /** When set, shows a "More ways" pill below the CTAs that invokes this handler. */
   onMoreWaysPress?: () => void;
+  /**
+   * Pixels **below** the top safe-area inset to add to iOS `KeyboardAvoidingView`
+   * (e.g. Capture tab wordmark row ~48pt). Safe-area top is always included.
+   */
+  keyboardAvoidingExtraOffset?: number;
   /** When true, "Send" assembles the moment and saves immediately — no follow-up question, no preview. */
   skipPreview?: boolean;
 }
@@ -202,7 +215,10 @@ export function EllieChatFlow({
   firstReplyOverride,
   afterSaveNode,
   onFlowStarted,
+  autoStartInputMethod,
   headerNode,
+  promptAccent,
+  questionOrdinal,
   onSkip,
   skipLabel = "Skip for now",
   hideTimerHint,
@@ -217,14 +233,17 @@ export function EllieChatFlow({
   photoAccessButtonLabel,
   onPhotoAccessWordFallback,
   photoEllieTypingDelayMs,
+  photoEllieFollowUp,
   analyticsSource,
   ensureFullPhotoLibraryAccess,
   onMoreWaysPress,
   skipPreview,
+  keyboardAvoidingExtraOffset = 0,
 }: EllieChatFlowProps) {
   const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
+  const iosKeyboardVerticalOffset = insets.top + keyboardAvoidingExtraOffset;
   const scrollRef = useRef<ScrollView>(null);
   const initialMessagesRef = useRef<ChatItem[]>([]);
 
@@ -264,6 +283,13 @@ export function EllieChatFlow({
   const scrollToEnd = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
   }, []);
+
+  const questionChrome: "rich" | "minimal" | undefined =
+    promptType === "question"
+      ? phase === "prompt"
+        ? "rich"
+        : "minimal"
+      : undefined;
 
   useEffect(() => {
     if (promptType !== "photo") {
@@ -390,9 +416,10 @@ export function EllieChatFlow({
   useEffect(() => () => stopTimer(), [stopTimer]);
 
   useEffect(() => {
-    const event = Platform.OS === "ios" ? "keyboardDidShow" : "keyboardDidShow";
-    const sub = Keyboard.addListener(event, () => {
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const sub = Keyboard.addListener(showEvent, () => {
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 280);
     });
     return () => sub.remove();
   }, []);
@@ -418,6 +445,29 @@ export function EllieChatFlow({
     setPhase("mic");
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 400);
   }, [startTimer, onFlowStarted]);
+
+  const autoStartConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStartInputMethod) {
+      autoStartConsumedRef.current = false;
+      return;
+    }
+    if (autoStartConsumedRef.current) return;
+    if (phase !== "prompt") return;
+    if (!welcomeStageReady) return;
+    if (promptType === "photo" && !photoFirstViewportReady) return;
+    autoStartConsumedRef.current = true;
+    if (autoStartInputMethod === "speaking") handleStartSpeaking();
+    else handleStartTyping();
+  }, [
+    autoStartInputMethod,
+    phase,
+    welcomeStageReady,
+    photoFirstViewportReady,
+    promptType,
+    handleStartTyping,
+    handleStartSpeaking,
+  ]);
 
   const showPreview = useCallback(
     (title: string, body: string) => {
@@ -1007,7 +1057,11 @@ export function EllieChatFlow({
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
-          contentContainerStyle={{ padding: 20, paddingBottom: 20 }}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingTop: 4,
+            paddingBottom: 20,
+          }}
         >
           {messages.map((msg) => {
             if (msg.type === "ellie") return <EllieMessage key={msg.id} content={msg.content!} showAvatar={msg.showAvatar} />;
@@ -1023,6 +1077,10 @@ export function EllieChatFlow({
                 photoControlVariant={photoControlVariant}
                 instruction={promptInstruction}
                 hideHelperText={hideHelperText}
+                photoEllieFollowUp={photoEllieFollowUp}
+                promptAccent={promptAccent}
+                questionChrome={questionChrome}
+                questionOrdinal={questionOrdinal}
               />
             );
             return null;
@@ -1064,12 +1122,18 @@ export function EllieChatFlow({
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 0}
+      keyboardVerticalOffset={
+        Platform.OS === "ios" ? iosKeyboardVerticalOffset : 0
+      }
     >
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 20, paddingBottom: 20 }}
+        contentContainerStyle={{
+          paddingHorizontal: 20,
+          paddingTop: 4,
+          paddingBottom: showInputBar ? 140 : 20,
+        }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
@@ -1101,6 +1165,10 @@ export function EllieChatFlow({
                   onPhotoAccessWordFallback={onPhotoAccessWordFallback}
                   onPhotoViewportReady={handlePhotoViewportReady}
                   photoEllieTypingDelayMs={photoEllieTypingDelayMs}
+                  photoEllieFollowUp={photoEllieFollowUp}
+                  promptAccent={promptAccent}
+                  questionChrome={questionChrome}
+                  questionOrdinal={questionOrdinal}
                 />
               );
             case "thinking":
@@ -1252,7 +1320,7 @@ export function EllieChatFlow({
             backgroundColor: colors.background,
             paddingHorizontal: 16,
             paddingTop: 8,
-            paddingBottom: 8,
+            paddingBottom: Math.max(insets.bottom, 10),
           }}
         >
           {phase === "recording" && (

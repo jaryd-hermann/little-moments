@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -12,9 +12,9 @@ import Animated, {
 } from "react-native-reanimated";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { format } from "date-fns";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { entryMomentDayHeadingText } from "@/lib/reflectionTarget";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryPinToggle } from "@/components/common/EntryPinToggle";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
@@ -37,13 +37,15 @@ function firstSentence(text: string): string {
   return (m?.[0] ?? trimmed).trim();
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+/** Same ordering as Capsule list “newest” sort: `entry_date` desc, then `created_at`. */
+function compareMomentsListOrder(a: Entry, b: Entry): number {
+  const da = a.entry_date ?? "";
+  const db = b.entry_date ?? "";
+  const byDay = db.localeCompare(da);
+  if (byDay !== 0) return byDay;
+  return (
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 }
 
 interface CapsuleFlipbookViewProps {
@@ -67,12 +69,17 @@ export function CapsuleFlipbookView({
     [entries]
   );
 
-  // Shuffle once per mount of this component for "feels fresh" randomness on landing.
-  const shuffled = useMemo(() => shuffle(moments), [moments]);
-
-  const [history, setHistory] = useState<Entry[]>(() =>
-    shuffled[0] ? [shuffled[0]] : []
+  const orderedMoments = useMemo(
+    () => [...moments].sort(compareMomentsListOrder),
+    [moments]
   );
+
+  const momentsKey = useMemo(
+    () => orderedMoments.map((e) => e.id).join(","),
+    [orderedMoments]
+  );
+
+  const [history, setHistory] = useState<Entry[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [shareEntry, setShareEntry] = useState<Entry | null>(null);
 
@@ -88,6 +95,29 @@ export function CapsuleFlipbookView({
     void AsyncStorage.setItem(ONBOARDING_STORAGE_KEY, "true");
   }, []);
 
+  useLayoutEffect(() => {
+    if (orderedMoments.length === 0) {
+      setHistory([]);
+      setCurrentIdx(0);
+      return;
+    }
+    setHistory((prev) => {
+      if (prev.length === 0) return [orderedMoments[0]];
+      const ids = new Set(orderedMoments.map((e) => e.id));
+      const pruned = prev.filter((e) => ids.has(e.id));
+      if (pruned.length === 0) return [orderedMoments[0]];
+      const rank = (id: string) =>
+        orderedMoments.findIndex((e) => e.id === id);
+      return [...pruned].sort((a, b) => rank(a.id) - rank(b.id));
+    });
+  }, [momentsKey]);
+
+  useEffect(() => {
+    setCurrentIdx((i) =>
+      Math.min(Math.max(0, i), Math.max(0, history.length - 1))
+    );
+  }, [history.length]);
+
   const cardOpacity = useSharedValue(1);
   const cardTranslateY = useSharedValue(0);
   const cardStyle = useAnimatedStyle(() => ({
@@ -96,12 +126,13 @@ export function CapsuleFlipbookView({
   }));
 
   const pickNext = useCallback((): Entry | null => {
-    if (shuffled.length === 0) return null;
+    if (orderedMoments.length === 0) return null;
     const seen = new Set(history.map((h) => h.id));
-    const fresh = shuffled.filter((e) => !seen.has(e.id));
-    if (fresh.length === 0) return null;
-    return fresh[0] ?? null;
-  }, [shuffled, history]);
+    for (const e of orderedMoments) {
+      if (!seen.has(e.id)) return e;
+    }
+    return null;
+  }, [orderedMoments, history]);
 
   const handleSwipeUp = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -192,19 +223,8 @@ export function CapsuleFlipbookView({
 
   const firstMedia = current.media?.[0];
   const sentence = firstSentence(stripHtml(current.body));
-  // Prefer the photo's original capture time (EXIF / MediaLibrary creationTime
-  // recorded when the moment was saved) over the date the entry was logged.
-  const dateSource = firstMedia?.taken_at
-    ? new Date(firstMedia.taken_at)
-    : current.entry_date
-      ? new Date(`${current.entry_date}T00:00:00`)
-      : null;
-  const dateStr =
-    dateSource && !Number.isNaN(dateSource.getTime())
-      ? format(dateSource, "MMM d, yyyy")
-      : current.entry_year
-        ? `${current.entry_year}`
-        : "";
+  const momentDayLabel = entryMomentDayHeadingText(current);
+  const promptOnlyCardBg = "#414141";
 
   return (
     <View
@@ -222,7 +242,9 @@ export function CapsuleFlipbookView({
               flex: 1,
               borderRadius: 18,
               overflow: "hidden",
-              backgroundColor: colors.surfaceSecondary,
+              backgroundColor: firstMedia
+                ? colors.surfaceSecondary
+                : promptOnlyCardBg,
             },
             cardStyle,
           ]}
@@ -249,7 +271,7 @@ export function CapsuleFlipbookView({
                   style={{
                     fontFamily: "LibreBaskerville-Italic",
                     fontSize: 60,
-                    color: "rgba(0,0,0,0.55)",
+                    color: "rgba(255,255,255,0.22)",
                   }}
                 >
                   {current.word_of_day.toLowerCase()}
@@ -257,42 +279,47 @@ export function CapsuleFlipbookView({
               ) : null}
             </View>
           )}
-          {/* Top gradient for legibility behind date / actions */}
-          <LinearGradient
-            colors={["rgba(0,0,0,0.5)", "rgba(0,0,0,0)"]}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 0.5 }}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: 0,
-              height: "30%",
-            }}
-            pointerEvents="none"
-          />
-          {/* Bottom gradient for legibility on photo backgrounds */}
-          <LinearGradient
-            colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"]}
-            start={{ x: 0.5, y: 0.5 }}
-            end={{ x: 0.5, y: 1 }}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: "55%",
-            }}
-            pointerEvents="none"
-          />
+          {firstMedia ? (
+            <>
+              {/* Top gradient for legibility behind date / actions */}
+              <LinearGradient
+                colors={["rgba(0,0,0,0.5)", "rgba(0,0,0,0)"]}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 0.5 }}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: "30%",
+                }}
+                pointerEvents="none"
+              />
+              {/* Bottom gradient for legibility on photo backgrounds */}
+              <LinearGradient
+                colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"]}
+                start={{ x: 0.5, y: 0.5 }}
+                end={{ x: 0.5, y: 1 }}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: "55%",
+                }}
+                pointerEvents="none"
+              />
+            </>
+          ) : null}
 
-          {/* Top-left date */}
-          {dateStr ? (
+          {/* Top-left: calendar day this moment is *for* (not photo EXIF / save time). */}
+          {momentDayLabel ? (
             <View
               style={{
                 position: "absolute",
                 top: 16,
                 left: 16,
+                maxWidth: "72%",
               }}
               pointerEvents="none"
             >
@@ -301,11 +328,11 @@ export function CapsuleFlipbookView({
                   fontFamily: "Roboto-Medium",
                   fontSize: 11,
                   color: "rgba(255,255,255,0.85)",
-                  letterSpacing: 1,
-                  textTransform: "uppercase",
+                  letterSpacing: 0.6,
                 }}
+                numberOfLines={2}
               >
-                {dateStr}
+                {momentDayLabel}
               </Text>
             </View>
           ) : null}

@@ -93,6 +93,18 @@ export default function RevealScreen() {
         >
           Your first moment is saved!
         </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 15,
+            lineHeight: 22,
+            color: colors.textSecondary,
+            marginTop: 10,
+          }}
+        >
+          Keep going — these capsules can become a beautiful printed journal of
+          your year.
+        </Text>
       </View>
 
       <View style={{ flex: 1 }}>

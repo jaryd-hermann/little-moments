@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
+import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { useStreak } from "@/hooks/useStreak";
 import { useChapters } from "@/hooks/useChapters";
 
@@ -25,6 +26,7 @@ const PREMIUM_CTA_BG = "#FECFB4";
 
 export default function UpgradeScreen() {
   const { colors } = useTheme();
+  const { fromOnboarding } = useLocalSearchParams<{ fromOnboarding?: string }>();
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
   const { totalMoments } = useStreak();
@@ -34,13 +36,18 @@ export default function UpgradeScreen() {
     posthog.capture("paywall_features_viewed", {
       total_moments: totalMoments,
       total_chapters: chapters.length,
+      from_onboarding: fromOnboarding === "1",
+      ...(fromOnboarding === "1" ? onboardingEventProps(7) : {}),
     });
-  }, []);
+  }, [chapters.length, fromOnboarding, posthog, totalMoments]);
 
   const handleContinue = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     posthog.capture("paywall_features_continue_tapped");
-    router.push("/paywall/cause");
+    router.push({
+      pathname: "/paywall/cause",
+      params: { fromOnboarding: fromOnboarding === "1" ? "1" : "0" },
+    });
   };
 
   return (
@@ -48,7 +55,15 @@ export default function UpgradeScreen() {
       <Pressable
         onPress={() => {
           posthog.capture("paywall_dismissed", { step: "features" });
-          router.back();
+          if (fromOnboarding === "1") {
+            posthog.capture(
+              "onboarding_paywall_skipped",
+              onboardingEventProps(7, { dismiss_step: "features" })
+            );
+            router.replace("/(tabs)/today");
+          } else {
+            router.back();
+          }
         }}
         style={{ position: "absolute", right: 16, top: 56, zIndex: 10 }}
         hitSlop={8}

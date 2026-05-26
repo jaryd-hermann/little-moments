@@ -26,10 +26,11 @@ import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
 import { useTheme } from "@/hooks/useTheme";
-import { routeAfterAuth } from "@/lib/onboardingRoute";
+import { routeAfterAuth, healProfileIfStuckAfterCapture } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
+import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 
 const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
 const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
@@ -118,15 +119,16 @@ export default function SignInScreen() {
       await new Promise((r) => setTimeout(r, 120));
     }
 
-    setProfile(profile);
-    if (profile) {
-      applyNotificationTimeFromProfile(profile.notification_time);
-      applyThemeFromProfile(profile.color_theme, profile);
+    let healed = healProfileIfStuckAfterCapture(profile);
+    setProfile(healed);
+    if (healed) {
+      applyNotificationTimeFromProfile(healed.notification_time);
+      applyThemeFromProfile(healed.color_theme, healed);
     }
 
     if (
-      profile?.created_at &&
-      Date.now() - new Date(profile.created_at).getTime() < 60_000
+      healed?.created_at &&
+      Date.now() - new Date(healed.created_at).getTime() < 60_000
     ) {
       posthog.capture(
         "created_account",
@@ -134,7 +136,33 @@ export default function SignInScreen() {
       );
     }
 
-    routeAfterAuth(profile);
+    // Flush the pre-auth quiz answers onto the profile so downstream
+    // screens (notifications-prompt pre-fill, paywall value-anchor mirror)
+    // can read them via `profile.quiz_answers`. Best-effort — if it fails
+    // the lazy retry in app/index.tsx picks it up on next app open.
+    const quizState = useOnboardingQuizStore.getState();
+    const localAnswerCount = Object.keys(quizState.answers).length;
+    const profileAnswerCount = Object.keys(healed?.quiz_answers ?? {}).length;
+    if (localAnswerCount > 0 && profileAnswerCount === 0) {
+      const flush = await quizState.flushToProfile(user.id);
+      if (flush.ok) {
+        posthog.capture(
+          "quiz_flushed_to_profile",
+          onboardingEventProps(0, { answer_count: flush.answerCount })
+        );
+        const { data: refreshed } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
+        if (refreshed) {
+          healed = refreshed as Profile;
+          setProfile(healed);
+        }
+      }
+    }
+
+    routeAfterAuth(healed);
   };
 
   return (
@@ -185,20 +213,8 @@ export default function SignInScreen() {
               paddingHorizontal: 8,
             }}
           >
-            Sign in and{" "}
-            <Text style={{ fontFamily: "Roboto-Bold" }}>
-              see what your first photo is
-            </Text>
-            . We&apos;ll help you{" "}
-            <Text
-              style={{
-                fontFamily: "Roboto-Bold",
-                color: theme === "dark" ? colors.primary : "#024F46",
-              }}
-            >
-              capture it in under 60s
-            </Text>
-            .
+            Sign in and we&apos;ll help you capture your first moment in under
+            60s
           </Text>
         </View>
         {/* Benefit carousel commented out

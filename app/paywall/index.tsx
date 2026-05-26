@@ -7,12 +7,13 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { usePostHog } from "posthog-react-native";
 import { useSubscription } from "@/hooks/useSubscription";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
+import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { Colors } from "@/constants/Colors";
 import { supabase } from "@/lib/supabase";
 import type { PurchasesPackage } from "react-native-purchases";
@@ -56,6 +57,7 @@ export default function PaywallScreen() {
   const setProfile = useAuthStore((s) => s.setProfile);
   const { colors, theme } = useTheme();
   const posthog = usePostHog();
+  const { fromOnboarding } = useLocalSearchParams<{ fromOnboarding?: string }>();
 
   const [selectedPlan, setSelectedPlan] = useState<PlanType>("annual");
   const [isLoading, setIsLoading] = useState(false);
@@ -63,10 +65,35 @@ export default function PaywallScreen() {
 
   const canDismiss = true;
 
+  const exitToHomeIfOnboardingPaywall = () => {
+    if (fromOnboarding !== "1") return false;
+    router.replace({
+      pathname: "/(tabs)/today",
+      params: { capture: "1", onboardingFirstMoment: "1" },
+    });
+    return true;
+  };
+
+  const dismissOnboardingPaywall = (step: string) => {
+    if (fromOnboarding !== "1") return false;
+    posthog.capture(
+      "onboarding_paywall_skipped",
+      onboardingEventProps(8, { dismiss_step: step })
+    );
+    router.replace({
+      pathname: "/(tabs)/today",
+      params: { capture: "1", onboardingFirstMoment: "1" },
+    });
+    return true;
+  };
+
   useEffect(() => {
-    posthog.capture("paywall_subscribe_viewed");
+    posthog.capture("paywall_subscribe_viewed", {
+      from_onboarding: fromOnboarding === "1",
+      ...(fromOnboarding === "1" ? onboardingEventProps(8) : {}),
+    });
     loadOfferings();
-  }, []);
+  }, [fromOnboarding, posthog, loadOfferings]);
 
   if (useNativePaywall && RevenueCatUI) {
     try {
@@ -76,7 +103,10 @@ export default function PaywallScreen() {
         <Paywall
           onDismiss={() => {
             posthog.capture("paywall_dismissed", { step: "revenuecat" });
-            router.dismiss(3);
+            if (!dismissOnboardingPaywall("revenuecat")) {
+              if (router.canDismiss()) router.dismiss();
+              else router.back();
+            }
           }}
           onPurchaseCompleted={async () => {
             posthog.capture("paywall_subscribed", { source: "native" });
@@ -87,7 +117,7 @@ export default function PaywallScreen() {
                 .eq("id", user.id);
               setProfile({ ...profile, subscription_status: "active" });
             }
-            router.back();
+            if (!exitToHomeIfOnboardingPaywall()) router.back();
           }}
           onRestoreCompleted={async () => {
             posthog.capture("paywall_restored", { source: "native" });
@@ -98,7 +128,7 @@ export default function PaywallScreen() {
                 .eq("id", user.id);
               setProfile({ ...profile, subscription_status: "active" });
             }
-            router.back();
+            if (!exitToHomeIfOnboardingPaywall()) router.back();
           }}
           onPurchaseError={() => {
             posthog.capture("paywall_purchase_error", { source: "native" });
@@ -134,7 +164,7 @@ export default function PaywallScreen() {
           source: "fallback",
           plan: selectedPlan,
         });
-        router.back();
+        if (!exitToHomeIfOnboardingPaywall()) router.back();
       } else if (!result.cancelled) {
         posthog.capture("paywall_purchase_error", { source: "fallback" });
         Alert.alert("Error", "Purchase failed. Please try again.");
@@ -155,7 +185,7 @@ export default function PaywallScreen() {
     if (restored) {
       posthog.capture("paywall_restored", { source: "fallback" });
       Alert.alert("Restored!", "Your subscription has been restored.");
-      router.back();
+      if (!exitToHomeIfOnboardingPaywall()) router.back();
     } else {
       Alert.alert(
         "No Subscription Found",
@@ -170,7 +200,10 @@ export default function PaywallScreen() {
         <Pressable
           onPress={() => {
             posthog.capture("paywall_dismissed", { step: "subscribe" });
-            router.dismiss(3);
+            if (!dismissOnboardingPaywall("subscribe")) {
+              if (router.canDismiss()) router.dismiss();
+              else router.back();
+            }
           }}
           style={{
             position: "absolute",

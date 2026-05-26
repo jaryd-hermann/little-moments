@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
+import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { CauseGrid } from "@/components/donation/CauseGrid";
 import { AboutCauseModal } from "@/components/donation/AboutCauseModal";
 import { supabase } from "@/lib/supabase";
@@ -17,6 +18,7 @@ const CONTINUE_CTA_BG = "#FECFB4";
 
 export default function CauseScreen() {
   const { colors } = useTheme();
+  const { fromOnboarding } = useLocalSearchParams<{ fromOnboarding?: string }>();
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
   const user = useAuthStore((s) => s.user);
@@ -60,7 +62,10 @@ export default function CauseScreen() {
     }
 
     setSaving(false);
-    router.push("/paywall");
+    router.push({
+      pathname: "/paywall",
+      params: { fromOnboarding: fromOnboarding === "1" ? "1" : "0" },
+    });
   };
 
   const handleLearnMore = () => {
@@ -83,7 +88,15 @@ export default function CauseScreen() {
       <Pressable
         onPress={() => {
           posthog.capture("paywall_dismissed", { step: "cause" });
-          router.dismiss(2);
+          if (fromOnboarding === "1") {
+            posthog.capture(
+              "onboarding_paywall_skipped",
+              onboardingEventProps(7, { dismiss_step: "cause" })
+            );
+            router.replace("/(tabs)/today");
+          } else {
+            router.dismiss(2);
+          }
         }}
         style={{ position: "absolute", right: 16, top: 16, zIndex: 10 }}
         hitSlop={8}

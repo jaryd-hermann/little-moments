@@ -91,8 +91,29 @@ function AppInner() {
     const sub = Notifications.addNotificationResponseReceivedListener(
       (response) => {
         const data = response.notification.request.content.data as
-          | { type?: string; chapterId?: string }
+          | {
+              type?: string;
+              chapterId?: string;
+            }
           | undefined;
+        if (data?.type === "daily_nudge") {
+          InteractionManager.runAfterInteractions(() => {
+            router.replace("/(tabs)/today?capture=1");
+          });
+          return;
+        }
+        if (data?.type === "welcome_first_capture") {
+          InteractionManager.runAfterInteractions(() => {
+            router.replace("/(tabs)/today?capture=1");
+          });
+          return;
+        }
+        if (data?.type === "midday_camera_nudge") {
+          InteractionManager.runAfterInteractions(() => {
+            router.replace("/(tabs)/today?capture=1&openCamera=1");
+          });
+          return;
+        }
         if (data?.type === "chapter" && data.chapterId) {
           useChapterNotifStore.getState().setPendingChapterId(data.chapterId);
           // Land the user on the Chapters tab; the screen consumes the
@@ -138,11 +159,27 @@ function AppInner() {
         });
       };
 
+      // Entry screens must be pushed (not replace) so the navigation stack
+      // retains the tabs underneath and Back works after opening from a push.
+      const goEntry = (entryId: string) => {
+        InteractionManager.runAfterInteractions(() => {
+          router.push(`/entry/${entryId}`);
+        });
+      };
+
       switch (data.type) {
         // Habit / activation pushes — all land on the capture screen.
         case "daily_nudge":
         case "weekly_chapter_intro":
         case "streak_milestone":
+          go("/(tabs)/today?capture=1");
+          return;
+
+        case "midday_camera_nudge":
+          go("/(tabs)/today?capture=1&openCamera=1");
+          return;
+
+        case "welcome_first_capture":
           go("/(tabs)/today?capture=1");
           return;
 
@@ -174,7 +211,7 @@ function AppInner() {
         case "on_this_day":
         case "share_created":
           if (data.entry_id) {
-            go(`/entry/${data.entry_id}`);
+            goEntry(data.entry_id);
           } else {
             go("/(tabs)/memories");
           }
@@ -185,7 +222,7 @@ function AppInner() {
         // an id, otherwise land on Capsule (the user's flipbook).
         case "moment_saved":
           if (data.entry_id) {
-            go(`/entry/${data.entry_id}`);
+            goEntry(data.entry_id);
           } else {
             go("/(tabs)/memories");
           }
@@ -288,6 +325,10 @@ function AppInner() {
         />
         <Stack.Screen
           name="paywall/cause"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen
+          name="paywall/value"
           options={{ presentation: "modal" }}
         />
         <Stack.Screen

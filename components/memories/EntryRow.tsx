@@ -7,6 +7,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
+import { entryMomentDayHeadingText } from "@/lib/reflectionTarget";
 
 function firstSentence(text: string): string {
   const trimmed = text.trim();
@@ -19,6 +20,9 @@ const CHAPTER_BG = "#024F46";
 const CHAPTER_BORDER = "#FFFFEB";
 const CHAPTER_TEXT = "#FFFFEB";
 const CHAPTER_MUTED = "rgba(255,255,235,0.7)";
+
+/** List thumbnail — sized to align with title + preview + moment-day label. */
+const ENTRY_ROW_THUMB = 72;
 
 function stripHtml(html: string): string {
   return html
@@ -117,23 +121,24 @@ export function EntryRow({
   const firstMedia = entry.media?.[0];
   const isWordEntry = !firstMedia && Boolean(entry.word_of_day);
   const sentence = firstSentence(stripHtml(entry.body));
+  const momentForDayLabel = entryMomentDayHeadingText(entry);
 
   return (
     <Pressable
       onPress={handlePress}
       style={{
         flexDirection: "row",
-        alignItems: "center",
-        paddingVertical: 4,
+        alignItems: "flex-start",
+        paddingVertical: 6,
       }}
     >
       {firstMedia ? (
         <EntryMediaImage
           media={firstMedia}
           style={{
-            width: 56,
-            height: 56,
-            borderRadius: 8,
+            width: ENTRY_ROW_THUMB,
+            height: ENTRY_ROW_THUMB,
+            borderRadius: 10,
             marginRight: 14,
             backgroundColor: colors.surfaceSecondary,
           }}
@@ -141,9 +146,9 @@ export function EntryRow({
       ) : (
         <View
           style={{
-            width: 56,
-            height: 56,
-            borderRadius: 8,
+            width: ENTRY_ROW_THUMB,
+            height: ENTRY_ROW_THUMB,
+            borderRadius: 10,
             marginRight: 14,
             backgroundColor: colors.surfaceSecondary,
             borderWidth: 1,
@@ -155,7 +160,7 @@ export function EntryRow({
           <Text
             style={{
               fontFamily: "LibreBaskerville-Italic",
-              fontSize: 22,
+              fontSize: 26,
               color: colors.text,
             }}
           >
@@ -163,7 +168,7 @@ export function EntryRow({
           </Text>
         </View>
       )}
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
         {entry.title ? (
           <Text
             style={{
@@ -177,7 +182,7 @@ export function EntryRow({
           </Text>
         ) : null}
         {sentence ? (
-          <View style={{ position: "relative", marginTop: 2 }}>
+          <View style={{ position: "relative", marginTop: 4 }}>
             <Text
               style={{
                 fontFamily: "Roboto-Regular",
@@ -197,11 +202,24 @@ export function EntryRow({
                 right: 0,
                 top: 0,
                 bottom: 0,
-                width: 70,
+                width: 56,
               }}
               pointerEvents="none"
             />
           </View>
+        ) : null}
+        {momentForDayLabel ? (
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 11,
+              color: colors.textMuted,
+              marginTop: 6,
+            }}
+            numberOfLines={2}
+          >
+            {momentForDayLabel}
+          </Text>
         ) : null}
       </View>
     </Pressable>

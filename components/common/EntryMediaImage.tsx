@@ -5,6 +5,8 @@ import {
   type StyleProp,
   type ViewStyle,
   type ImageStyle,
+  type NativeSyntheticEvent,
+  type ImageLoadEventData as RNImageLoadEventData,
   StyleSheet,
 } from "react-native";
 import * as FileSystem from "expo-file-system";
@@ -23,6 +25,8 @@ interface EntryMediaImageProps {
   recyclingKey?: string;
   /** Defaults to cover. Use contain for letterboxed full-screen previews. */
   contentFit?: "cover" | "contain" | "fill" | "scale-down";
+  /** Called with decoded pixel size when the image loads (both expo-image and RN fallback). */
+  onLoad?: (size: { width: number; height: number }) => void;
 }
 
 type SourceShape = { uri: string; headers?: Record<string, string> };
@@ -47,6 +51,7 @@ export function EntryMediaImage({
   style,
   recyclingKey,
   contentFit = "cover",
+  onLoad,
 }: EntryMediaImageProps) {
   const [displayUri, setDisplayUri] = useState<string | null>(null);
   const [useRnFallback, setUseRnFallback] = useState(false);
@@ -124,12 +129,20 @@ export function EntryMediaImage({
           ? "center"
           : "cover";
 
+  const emitLoad = (width: number, height: number) => {
+    if (width > 0 && height > 0) onLoad?.({ width, height });
+  };
+
   if (useRnFallback) {
     return (
       <RNImage
         source={rnSource}
         style={flatStyle}
         resizeMode={rnResizeMode}
+        onLoad={(e: NativeSyntheticEvent<RNImageLoadEventData>) => {
+          const { width, height } = e.nativeEvent.source;
+          emitLoad(width, height);
+        }}
         onError={(e) => {
           if (__DEV__) {
             console.warn(
@@ -150,6 +163,11 @@ export function EntryMediaImage({
       contentFit={contentFit}
       cachePolicy="memory-disk"
       recyclingKey={recyclingKey ?? media.id}
+      onLoad={(e) => {
+        const w = e.source?.width ?? 0;
+        const h = e.source?.height ?? 0;
+        emitLoad(w, h);
+      }}
       onError={(e) => {
         if (__DEV__) {
           console.warn(

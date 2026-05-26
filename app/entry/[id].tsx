@@ -47,6 +47,44 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+function MomentDetailStillImage({
+  media,
+  maxWidth,
+  placeholderBg,
+  onPress,
+}: {
+  media: EntryMedia;
+  maxWidth: number;
+  placeholderBg: string;
+  onPress: () => void;
+}) {
+  const [aspect, setAspect] = useState(4 / 3);
+  const mediaStyle = useMemo(
+    () => ({
+      width: maxWidth,
+      aspectRatio: aspect,
+      borderRadius: 12,
+      backgroundColor: placeholderBg,
+      alignSelf: "center" as const,
+    }),
+    [maxWidth, aspect, placeholderBg]
+  );
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="View full screen"
+    >
+      <EntryMediaImage
+        media={media}
+        style={mediaStyle}
+        contentFit="cover"
+        onLoad={({ width, height }) => setAspect(width / height)}
+      />
+    </Pressable>
+  );
+}
 
 export default function EntryDetailScreen() {
   const { colors } = useTheme();
@@ -132,6 +170,17 @@ export default function EntryDetailScreen() {
     }
   }, [id, entries]);
 
+  const handleBack = useCallback(() => {
+    // Cold opens from push deep links use `router.replace` / a minimal stack,
+    // so `router.back()` is a no-op. Fall back to Capsule (flipbook), which
+    // matches copy like "view in your Flipbook".
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)/memories");
+    }
+  }, []);
+
   const handleDelete = () => {
     Alert.alert(
       "Delete Entry",
@@ -144,7 +193,7 @@ export default function EntryDetailScreen() {
           onPress: async () => {
             if (id) {
               await deleteEntry(id);
-              router.back();
+              handleBack();
             }
           },
         },
@@ -208,7 +257,7 @@ export default function EntryDetailScreen() {
         }}
       >
         <Pressable
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={{ flexDirection: "row", alignItems: "center" }}
         >
           <Ionicons name="chevron-back" size={24} color={colors.icon} />
@@ -232,14 +281,14 @@ export default function EntryDetailScreen() {
               <Ionicons
                 name="share-outline"
                 size={20}
-                color="rgba(255, 255, 255, 0.4)"
+                color={colors.icon}
               />
             </Pressable>
             <Pressable onPress={handleDelete}>
               <Ionicons
                 name="trash-outline"
                 size={20}
-                color="rgba(255, 255, 255, 0.4)"
+                color={colors.icon}
               />
             </Pressable>
             <Pressable
@@ -325,25 +374,24 @@ export default function EntryDetailScreen() {
         {entry.media && entry.media.length > 0 ? (
           <View style={{ marginTop: 24, gap: 12 }}>
             {entry.media.map((m) => {
-              const mediaStyle = {
+              const videoStyle = {
                 width: windowWidth - 40,
-                aspectRatio: 4 / 3,
+                aspectRatio: 16 / 9,
                 borderRadius: 12,
                 backgroundColor: colors.surfaceSecondary,
                 alignSelf: "center" as const,
               };
               if (m.media_type === "video") {
-                return <EntryMediaVideo key={m.id} media={m} style={mediaStyle} />;
+                return <EntryMediaVideo key={m.id} media={m} style={videoStyle} />;
               }
               return (
-                <Pressable
+                <MomentDetailStillImage
                   key={m.id}
+                  media={m}
+                  maxWidth={windowWidth - 40}
+                  placeholderBg={colors.surfaceSecondary}
                   onPress={() => setFullScreenMedia(m)}
-                  accessibilityRole="button"
-                  accessibilityLabel="View full screen"
-                >
-                  <EntryMediaImage media={m} style={mediaStyle} />
-                </Pressable>
+                />
               );
             })}
           </View>

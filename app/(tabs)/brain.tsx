@@ -4,7 +4,6 @@ import {
   Text,
   Pressable,
   SafeAreaView,
-  ScrollView,
   ActivityIndicator,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -18,7 +17,6 @@ import { useGraph } from "@/hooks/useGraph";
 import { useEntries } from "@/hooks/useEntries";
 import { useSettingsStore } from "@/store/settingsStore";
 import { ThreadFlipbookView } from "@/components/threads/ThreadFlipbookView";
-import { EllieMessage } from "@/components/ellie/EllieMessage";
 import {
   GraphWebView,
   EMPTY_FILTER,
@@ -403,8 +401,118 @@ function BrainGraphPlaceholder() {
   );
 }
 
-export default function ThreadsScreen() {
+function ConnectThreadsEmptyPlaceholder() {
   const { colors, theme } = useTheme();
+  return (
+    <View
+      style={{
+        flex: 1,
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 100,
+      }}
+    >
+      <View
+        style={{
+          flex: 1,
+          borderRadius: 24,
+          borderWidth: 1.5,
+          borderStyle: "dashed",
+          borderColor: colors.border,
+          padding: 28,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <View
+          style={{
+            width: 200,
+            height: 100,
+            marginBottom: 28,
+            position: "relative",
+          }}
+        >
+          {[
+            { left: 14, top: 52, size: 24 },
+            { left: 86, top: 12, size: 28 },
+            { left: 148, top: 48, size: 22 },
+          ].map((d, i) => (
+            <View
+              key={i}
+              style={{
+                position: "absolute",
+                left: d.left,
+                top: d.top,
+                width: d.size,
+                height: d.size,
+                borderRadius: 9999,
+                backgroundColor: colors.primary,
+                borderWidth: 1,
+                borderColor: colors.text,
+              }}
+            />
+          ))}
+        </View>
+        <Text
+          style={{
+            fontFamily: "LibreBaskerville-Bold",
+            fontSize: 18,
+            lineHeight: 26,
+            color: colors.text,
+            textAlign: "center",
+            marginBottom: 10,
+          }}
+        >
+          Your threads will appear here
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 14,
+            lineHeight: 22,
+            color: colors.textSecondary,
+            textAlign: "center",
+            marginBottom: 24,
+            paddingHorizontal: 8,
+          }}
+        >
+          Keep capturing moments. When we find unexpected patterns, themes, or
+          insights across your days, you&apos;ll see them here.
+        </Text>
+        <Pressable
+          onPress={() => router.push("/(tabs)/today")}
+          style={{
+            height: 56,
+            paddingHorizontal: 28,
+            borderRadius: 9999,
+            backgroundColor: colors.primary,
+            borderWidth: 2,
+            borderColor: PINK_CTA_BORDER,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            ...bevelShadow(theme),
+          }}
+        >
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 15,
+              color: PINK_CTA_INK,
+              letterSpacing: 0.8,
+              textTransform: "uppercase",
+            }}
+          >
+            Capture a moment
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export default function ThreadsScreen() {
+  const { colors } = useTheme();
   const {
     visibleThreads,
     isLoading,
@@ -504,46 +612,7 @@ export default function ThreadsScreen() {
         <GraphTab />
       ) : listThreads.length === 0 ? (
         !isLoading ? (
-          <ScrollView
-            contentContainerStyle={{
-              paddingHorizontal: 20,
-              paddingBottom: 40,
-              paddingTop: 8,
-            }}
-          >
-            <EllieMessage
-              content="Keep capturing moments. When I find you unexpected patterns, themes, or insights across your moments I'll let you know here"
-              showAvatar
-            />
-            <Pressable
-              onPress={() => router.push("/(tabs)/today")}
-              style={{
-                marginTop: 20,
-                height: 56,
-                paddingHorizontal: 28,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                borderWidth: 2,
-                borderColor: PINK_CTA_BORDER,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                ...bevelShadow(theme),
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: PINK_CTA_INK,
-                  letterSpacing: 0.8,
-                  textTransform: "uppercase",
-                }}
-              >
-                Capture a moment
-              </Text>
-            </Pressable>
-          </ScrollView>
+          <ConnectThreadsEmptyPlaceholder />
         ) : null
       ) : (
         // CustomTabBar overlays the bottom of the screen, so reserve the

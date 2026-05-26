@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { useAuthStore } from "@/store/authStore";
 import { useStreak } from "@/hooks/useStreak";
 import { useChapters } from "@/hooks/useChapters";
+import { consumePaywallTriggerSkip } from "@/lib/onboardingPaywallSession";
 
 /**
  * Checks whether the paywall upgrade flow should be triggered.
@@ -24,6 +25,7 @@ export function usePaywallTrigger() {
     (streakCount >= 7 || !!latestChapter);
 
   const triggerPaywall = useCallback(() => {
+    if (consumePaywallTriggerSkip()) return;
     if (!shouldTrigger) return;
     router.push("/paywall/upgrade");
   }, [shouldTrigger]);

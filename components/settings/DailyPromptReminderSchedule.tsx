@@ -14,7 +14,7 @@ import { useTheme } from "@/hooks/useTheme";
 import {
   type ReminderSlot,
   REMINDER_SLOT_DEFAULTS,
-  inferReminderSlotFromTime,
+  inferMorningEveningSlotFromTime,
 } from "@/lib/notificationTimeSync";
 
 const SLOT_LABEL: Record<ReminderSlot, string> = {
@@ -22,6 +22,12 @@ const SLOT_LABEL: Record<ReminderSlot, string> = {
   afternoon: "Afternoon",
   evening: "Evening",
 };
+
+const DEFAULT_VISIBLE_SLOTS: ReminderSlot[] = [
+  "morning",
+  "afternoon",
+  "evening",
+];
 
 function formatHm(hour: number, minute: number): string {
   const d = setMinutes(setHours(new Date(), hour), minute);
@@ -35,6 +41,8 @@ export interface DailyPromptReminderScheduleProps {
   times: TimesState;
   onSelectSlot: (slot: ReminderSlot) => void;
   onChangeTimeForSlot: (slot: ReminderSlot, hour: number, minute: number) => void;
+  /** Defaults to morning / afternoon / evening. Settings uses morning / evening only. */
+  visibleSlots?: ReminderSlot[];
   /** When set, shows a primary Continue CTA (onboarding). */
   continueLabel?: string;
   onContinue?: () => void;
@@ -46,12 +54,15 @@ export function DailyPromptReminderSchedule({
   times,
   onSelectSlot,
   onChangeTimeForSlot,
+  visibleSlots = DEFAULT_VISIBLE_SLOTS,
   continueLabel = "Continue",
   onContinue,
   continueDisabled,
 }: DailyPromptReminderScheduleProps) {
   const { colors } = useTheme();
   const [editingSlot, setEditingSlot] = useState<ReminderSlot | null>(null);
+
+  const slots = visibleSlots;
 
   const editingDate = useMemo(() => {
     if (!editingSlot) return new Date();
@@ -102,7 +113,7 @@ export function DailyPromptReminderSchedule({
 
   return (
     <View style={{ marginTop: 8 }}>
-      {(Object.keys(SLOT_LABEL) as ReminderSlot[]).map((slot) => {
+      {slots.map((slot) => {
         const on = selectedSlot === slot;
         const { hour, minute } = times[slot];
         const dimmed = !on;
@@ -155,9 +166,8 @@ export function DailyPromptReminderSchedule({
                     onSelectSlot(slot);
                     return;
                   }
-                  const order: ReminderSlot[] = ["morning", "afternoon", "evening"];
-                  const idx = order.indexOf(slot);
-                  const next = order[(idx + 1) % 3];
+                  const idx = slots.indexOf(slot);
+                  const next = slots[(idx + 1) % slots.length];
                   onSelectSlot(next);
                 }}
                 trackColor={{
@@ -323,12 +333,20 @@ export function DailyPromptReminderSchedule({
   );
 }
 
-export function useReminderScheduleState(initialFromSettings?: {
-  hour: number;
-  minute: number;
-}) {
+export function useReminderScheduleState(
+  initialFromSettings?: { hour: number; minute: number },
+  options?: {
+    captureRhythm?: "morning" | "evening" | null;
+  }
+) {
+  const captureRhythm = options?.captureRhythm;
   const base = initialFromSettings ?? REMINDER_SLOT_DEFAULTS.morning;
-  const initialSlot = inferReminderSlotFromTime(base.hour, base.minute);
+  const initialSlot = ((): ReminderSlot => {
+    if (captureRhythm === "morning" || captureRhythm === "evening") {
+      return captureRhythm;
+    }
+    return inferMorningEveningSlotFromTime(base.hour, base.minute);
+  })();
   const [selectedSlot, setSelectedSlot] = useState<ReminderSlot>(initialSlot);
   const [times, setTimes] = useState<TimesState>(() => ({
     morning: { ...REMINDER_SLOT_DEFAULTS.morning },
@@ -339,10 +357,13 @@ export function useReminderScheduleState(initialFromSettings?: {
 
   useEffect(() => {
     if (!initialFromSettings) return;
-    const slot = inferReminderSlotFromTime(
-      initialFromSettings.hour,
-      initialFromSettings.minute
-    );
+    const slot =
+      captureRhythm === "morning" || captureRhythm === "evening"
+        ? captureRhythm
+        : inferMorningEveningSlotFromTime(
+            initialFromSettings.hour,
+            initialFromSettings.minute
+          );
     setSelectedSlot(slot);
     setTimes({
       morning: { ...REMINDER_SLOT_DEFAULTS.morning },
@@ -353,7 +374,7 @@ export function useReminderScheduleState(initialFromSettings?: {
         minute: initialFromSettings.minute,
       },
     });
-  }, [initialFromSettings?.hour, initialFromSettings?.minute]);
+  }, [initialFromSettings?.hour, initialFromSettings?.minute, captureRhythm]);
 
   const selectSlot = useCallback((slot: ReminderSlot) => {
     setSelectedSlot(slot);
