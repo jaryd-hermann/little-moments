@@ -32,6 +32,8 @@ interface ChapterStoryViewerProps {
   visible: boolean;
   chapter: ChapterRecord | null;
   onClose: () => void;
+  /** Optional handler for the in-completion "Share chapter" CTA. */
+  onShare?: (chapter: ChapterRecord) => void;
 }
 
 function RichBody({ text, color }: { text: string; color: string }) {
@@ -64,6 +66,7 @@ export function ChapterStoryViewer({
   visible,
   chapter,
   onClose,
+  onShare,
 }: ChapterStoryViewerProps) {
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
@@ -445,6 +448,44 @@ export function ChapterStoryViewer({
               </Text>
 
               <View style={{ marginTop: 28, gap: 12 }}>
+                {onShare && (
+                  <Pressable
+                    onPress={() => {
+                      if (!chapter) return;
+                      const c = chapter;
+                      setShowComplete(false);
+                      onShare(c);
+                    }}
+                    style={{
+                      height: 48,
+                      borderRadius: 9999,
+                      backgroundColor: CTA_BG,
+                      borderWidth: 2,
+                      borderColor: PINK_CTA_BORDER,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexDirection: "row",
+                      gap: 8,
+                    }}
+                  >
+                    <Ionicons
+                      name="share-outline"
+                      size={16}
+                      color={PINK_CTA_INK}
+                    />
+                    <Text
+                      style={{
+                        fontFamily: "Roboto-Medium",
+                        fontSize: 14,
+                        color: PINK_CTA_INK,
+                        letterSpacing: 0.6,
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      Share chapter
+                    </Text>
+                  </Pressable>
+                )}
                 <Pressable
                   onPress={() => {
                     handleClose();
@@ -453,9 +494,9 @@ export function ChapterStoryViewer({
                   style={{
                     height: 48,
                     borderRadius: 9999,
-                    backgroundColor: CTA_BG,
-                    borderWidth: 2,
-                    borderColor: PINK_CTA_BORDER,
+                    backgroundColor: onShare ? "transparent" : CTA_BG,
+                    borderWidth: onShare ? 1.5 : 2,
+                    borderColor: onShare ? colors.border : PINK_CTA_BORDER,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
@@ -464,9 +505,9 @@ export function ChapterStoryViewer({
                     style={{
                       fontFamily: "Roboto-Medium",
                       fontSize: 14,
-                      color: PINK_CTA_INK,
-                      letterSpacing: 0.6,
-                      textTransform: "uppercase",
+                      color: onShare ? colors.text : PINK_CTA_INK,
+                      letterSpacing: onShare ? 0.4 : 0.6,
+                      textTransform: onShare ? "none" : "uppercase",
                     }}
                   >
                     Capture a moment

@@ -69,3 +69,33 @@ export async function resolveEntryMediaUriAsync(
   }
   return getEntryMediaDisplayUri(media);
 }
+
+/** Display URL for a Live Photo paired video clip. */
+export function getPairedVideoDisplayUri(media: EntryMedia): string {
+  const raw = media.paired_video_storage_url?.trim();
+  if (raw && /^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+  if (media.paired_video_storage_path) {
+    const { data } = supabase.storage
+      .from("entry-media")
+      .getPublicUrl(media.paired_video_storage_path);
+    return data.publicUrl;
+  }
+  return "";
+}
+
+/** Signed URL for paired Live Photo video (private buckets). */
+export async function resolvePairedVideoUriAsync(
+  media: EntryMedia
+): Promise<string> {
+  if (media.paired_video_storage_path) {
+    const { data, error } = await supabase.storage
+      .from("entry-media")
+      .createSignedUrl(media.paired_video_storage_path, 60 * 60 * 24);
+    if (!error && data?.signedUrl) {
+      return data.signedUrl;
+    }
+  }
+  return getPairedVideoDisplayUri(media);
+}

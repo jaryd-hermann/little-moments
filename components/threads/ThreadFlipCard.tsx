@@ -176,7 +176,7 @@ export function ThreadFlipCard({
       >
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Regular",
+            fontFamily: "PMGothicLudington-Text110",
             fontSize: 26,
             lineHeight: 32,
             color: TITLE_TINT,
@@ -247,7 +247,7 @@ export function ThreadFlipCard({
       >
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
+            fontFamily: "PMGothicLudington-Text110",
             fontSize: 22,
             lineHeight: 28,
             color: bottomTextColor,

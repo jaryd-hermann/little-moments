@@ -4,8 +4,7 @@ import * as Haptics from "expo-haptics";
 import { useEntries } from "@/hooks/useEntries";
 import { useEntryStore } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
-import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
-import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
+import { CoreMemoryIcon } from "@/components/common/CoreMemoryIcon";
 
 type SlideToPinMomentProps = {
   entryId: string;
@@ -14,18 +13,18 @@ type SlideToPinMomentProps = {
 export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
   const { colors } = useTheme();
   const { editEntry } = useEntries();
-  const isPinned = useEntryStore(
+  const isCore = useEntryStore(
     (s) => s.entries.find((e) => e.id === entryId)?.is_pinned ?? false
   );
 
   const toggle = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const next = !isPinned;
+    const next = !isCore;
     if (next) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
     void editEntry(entryId, { is_pinned: next });
-  }, [editEntry, entryId, isPinned]);
+  }, [editEntry, entryId, isCore]);
 
   return (
     <View style={styles.wrap}>
@@ -50,7 +49,9 @@ export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
         <Pressable
           onPress={toggle}
           accessibilityRole="button"
-          accessibilityLabel={isPinned ? "Unpin moment" : "Pin moment"}
+          accessibilityLabel={
+            isCore ? "Remove core memory" : "Mark as core memory"
+          }
           android_ripple={{ color: "rgba(0,0,0,0.08)", foreground: true }}
           style={({ pressed }) => [
             styles.pressableFill,
@@ -63,33 +64,20 @@ export function SlideToPinMoment({ entryId }: SlideToPinMomentProps) {
                 style={[styles.title, { color: colors.text }]}
                 selectable={false}
               >
-                {isPinned ? "Moment Pinned" : "Pin this moment"}
+                {isCore ? "Core Memory" : "Make this a Core Memory"}
               </Text>
               <Text
                 style={[styles.subtitle, { color: colors.textSecondary }]}
                 selectable={false}
               >
-                {isPinned
+                {isCore
                   ? "View this in your Flipbook"
                   : "Save moments that feel extra special."}
               </Text>
             </View>
 
-            <View
-              style={[
-                styles.pill,
-                {
-                  borderColor: isPinned ? PINK_CTA_BORDER : colors.text,
-                  backgroundColor: isPinned ? colors.primary : colors.surface,
-                },
-              ]}
-              pointerEvents="none"
-            >
-              <ThumbtackIcon
-                size={20}
-                color={isPinned ? PINK_CTA_INK : colors.text}
-                weight={isPinned ? "solid" : "regular"}
-              />
+            <View pointerEvents="none">
+              <CoreMemoryIcon size={36} active={isCore} />
             </View>
           </View>
         </Pressable>
@@ -137,14 +125,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginTop: 6,
-  },
-  pill: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
   },
 });

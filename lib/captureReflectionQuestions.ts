@@ -3,7 +3,8 @@ export type ReflectionQuestionId =
   | "hardest"
   | "regret"
   | "win"
-  | "noticed";
+  | "noticed"
+  | "remember";
 
 export interface ReflectionQuestionItem {
   id: ReflectionQuestionId;
@@ -43,6 +44,12 @@ export const REFLECTION_QUESTIONS: ReflectionQuestionItem[] = [
     tagLabel: "Something I noticed",
     prompt: "What's something small you noticed today that stuck with you?",
     promptAccent: "small",
+  },
+  {
+    id: "remember",
+    tagLabel: "Worth remembering",
+    prompt: "What's a little moment from the day you don't want to forget?",
+    promptAccent: "little moment",
   },
 ];
 

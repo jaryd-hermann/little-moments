@@ -14,6 +14,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuthStore } from "@/store/authStore";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
+import { routeToFirstMomentScreen } from "@/lib/onboardingRoute";
 import { Colors } from "@/constants/Colors";
 import { supabase } from "@/lib/supabase";
 import type { PurchasesPackage } from "react-native-purchases";
@@ -67,10 +68,7 @@ export default function PaywallScreen() {
 
   const exitToHomeIfOnboardingPaywall = () => {
     if (fromOnboarding !== "1") return false;
-    router.replace({
-      pathname: "/(tabs)/today",
-      params: { capture: "1", onboardingFirstMoment: "1" },
-    });
+    routeToFirstMomentScreen();
     return true;
   };
 
@@ -80,10 +78,7 @@ export default function PaywallScreen() {
       "onboarding_paywall_skipped",
       onboardingEventProps(8, { dismiss_step: step })
     );
-    router.replace({
-      pathname: "/(tabs)/today",
-      params: { capture: "1", onboardingFirstMoment: "1" },
-    });
+    routeToFirstMomentScreen();
     return true;
   };
 

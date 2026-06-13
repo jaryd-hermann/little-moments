@@ -191,7 +191,7 @@ async function handleFirstPin(
     oneShot: true,
     push: {
       title: "You just started your album",
-      body: "Pinned moments become your printed book. Keep choosing.",
+      body: "Core memories become your printed book. Keep choosing.",
       data: { type: "first_pin" },
     },
   });

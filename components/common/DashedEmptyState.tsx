@@ -75,9 +75,9 @@ export function DashedEmptyState({
         </View>
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: singleLineTitle ? 17 : 18,
-            lineHeight: singleLineTitle ? 24 : 26,
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: singleLineTitle ? 22 : 24,
+            lineHeight: singleLineTitle ? 28 : 30,
             color: colors.text,
             textAlign: "center",
             marginBottom: 10,
@@ -85,7 +85,7 @@ export function DashedEmptyState({
           }}
           numberOfLines={singleLineTitle ? 1 : undefined}
           adjustsFontSizeToFit={singleLineTitle}
-          minimumFontScale={singleLineTitle ? 0.82 : 1}
+          minimumFontScale={singleLineTitle ? 0.78 : 1}
         >
           {title}
         </Text>

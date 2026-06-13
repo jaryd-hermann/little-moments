@@ -5,6 +5,7 @@ import { useAuthStore } from "@/store/authStore";
 import { updateStreakAfterEntry } from "@/lib/streak";
 import { format } from "date-fns";
 import { scheduleReviewAfterMomentMilestone } from "@/lib/ratingPrompt";
+import { enqueueEntriesForPrefetch } from "@/lib/mediaPrefetch";
 
 export function useEntries() {
   const {
@@ -53,6 +54,13 @@ export function useEntries() {
       const today = format(new Date(), "yyyy-MM-dd");
       const todayE = merged.find((e) => e.entry_date === today) ?? null;
       setTodayEntry(todayE);
+
+      // Warm the media cache in the background. The prefetcher is a singleton
+      // priority worker (lib/mediaPrefetch.ts) — calling this from every
+      // `fetchEntries` is cheap because completed items are de-duped. By
+      // doing this as soon as entries land we give the Chapters grid the
+      // best chance of hitting the disk cache on first paint.
+      enqueueEntriesForPrefetch(merged);
     }
     setIsLoading(false);
   }, [userId]);
@@ -95,14 +103,26 @@ export function useEntries() {
 
   const editEntry = useCallback(
     async (id: string, updates: Partial<Entry>) => {
+      const prev = useEntryStore.getState().entries.find((e) => e.id === id);
+      updateEntry(id, updates);
       const { error } = await supabase
         .from("entries")
         .update(updates)
         .eq("id", id);
-      if (error) throw error;
-      updateEntry(id, updates);
+      if (error) {
+        if (prev) {
+          const revert = Object.fromEntries(
+            Object.keys(updates).map((key) => [
+              key,
+              prev[key as keyof Entry],
+            ])
+          ) as Partial<Entry>;
+          updateEntry(id, revert);
+        }
+        throw error;
+      }
     },
-    []
+    [updateEntry]
   );
 
   const deleteEntry = useCallback(

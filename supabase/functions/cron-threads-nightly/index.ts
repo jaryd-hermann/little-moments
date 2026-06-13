@@ -8,11 +8,20 @@
  *   - Free users still get threads stored, but push/email is gated by
  *     `FREE_THREAD_LIMIT` so we don't spam them past the paywall
  *
+ * Pacing (applies to every invocation, including backfill):
+ *   - At most ONE new thread per user per invocation. Once the anchor
+ *     loop creates a thread, we move on to the next user.
+ *   - Cron-sourced threads are capped at `CRON_WEEKLY_THREAD_LIMIT`
+ *     per rolling 7-day window per user. Real-time threads written
+ *     by process-threads (source='realtime') do not count.
+ *
  * Manual / backfill invocation (POST body):
  *   { user_id?: string, entries_per_user?: number }
  *   - `user_id`: limit to a single user (also bypasses the 14-day filter)
  *   - `entries_per_user`: override the per-user anchor cap. Pass a large number
- *     (e.g. 1000) for a one-shot backfill across all entries.
+ *     (e.g. 1000) for a one-shot backfill across all entries. The per-user
+ *     thread cap still applies — backfill never writes more than 1 thread
+ *     per user per call.
  *
  * Auth: Authorization: Bearer <CRON_SECRET>
  */
@@ -23,13 +32,17 @@ import { threadEmail } from "../_shared/email-templates/thread.ts";
 import { observationPlainPreview } from "../_shared/thread-text.ts";
 import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 import { createPostHogLogger } from "../_shared/posthog-logs.ts";
+import { BATCH_SYSTEM_PROMPT } from "../_shared/thread-prompts.ts";
+import {
+  CRON_PER_RUN_THREAD_LIMIT,
+  CRON_WEEKLY_THREAD_LIMIT,
+  MAX_CANDIDATES,
+  MIN_CONFIDENCE,
+  MIN_DAY_GAP,
+  MIN_SIMILARITY,
+} from "../_shared/thread-thresholds.ts";
 
 
-// Tuned against real data on 2026-05-03 — see process-threads/index.ts for
-// the rationale. Keep these in sync with that file.
-const MIN_SIMILARITY = 0.45;
-const MIN_CONFIDENCE = 0.6;
-const MAX_CANDIDATES = 15;
 const ENTRIES_PER_USER_DEFAULT = 30;
 // Tiered free-tier model. See process-threads/index.ts for the long
 // explanation. Keep in sync with that file and hooks/useThreads.ts.
@@ -39,32 +52,6 @@ const FREE_PROCESS_LIMIT = 10;
 const anthropic = new Anthropic({
   apiKey: Deno.env.get("ANTHROPIC_API_KEY"),
 });
-
-const BATCH_SYSTEM_PROMPT = `You are Ellie, a thoughtful memory companion for the Little Moments app.
-You have been given a user's entry alongside several other past entries from their archive that are semantically similar.
-
-Your job: identify genuinely meaningful connections — focusing especially on:
-- Longitudinal patterns: a word, phrase, or feeling that clusters around a time of year or life period
-- Evolution / contradiction: a belief or feeling that has visibly changed over time
-- Recurring themes the user returns to without realizing it
-
-Be selective. Most entries will not have a real connection. Do not force one.
-
-For each real connection found, return:
-{
-  "has_connection": true,
-  "entry_id_a": "[anchor entry id]",
-  "entry_id_b": "[past entry id]",
-  "connection_type": "pattern | evolution | thematic | emotional | person | place",
-  "confidence": 0.0-1.0,
-  "ellie_observation": "2–4 short sentences, first person as Ellie, warm and vivid. Put your sharpest takeaway in **double asterisks** for bold, then 1–2 sentences with specific color from the entries (images, phrases, how the pattern evolves). Not generic.",
-  "questions": ["One thoughtful question for the user to sit with."]
-}
-
-If no real connection exists:
-{ "has_connection": false }
-
-Return JSON only.`;
 
 function stripCodeFences(text: string): string {
   return text
@@ -175,6 +162,32 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // Weekly pacing cap: count cron-sourced threads created for this
+        // user in the last 7 days. Real-time threads (source='realtime')
+        // are intentionally excluded — they're naturally rate-limited
+        // (1 per save) and should not erode the cron budget.
+        const sevenDaysAgoIso = new Date(
+          Date.now() - 7 * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        const { count: cronThreadsLast7d, error: cronCountErr } =
+          await serviceSupabase
+            .from("threads")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .gte("created_at", sevenDaysAgoIso);
+        if (cronCountErr) {
+          console.error(
+            `Weekly cap query failed for ${user.id}:`,
+            cronCountErr,
+          );
+          continue;
+        }
+        if ((cronThreadsLast7d ?? 0) >= CRON_WEEKLY_THREAD_LIMIT) {
+          continue;
+        }
+
+        let threadsCreatedThisRun = 0;
+
         const { data: recentEntries } = await serviceSupabase
           .from("entries")
           .select("id, title, body, ai_enhanced_body, entry_date, created_at")
@@ -186,6 +199,15 @@ Deno.serve(async (req) => {
         if (!recentEntries?.length) continue;
 
         for (const entry of recentEntries) {
+          // Per-user, per-run cap. We deliberately stop after the first
+          // successful thread for this user — no matter how many anchors
+          // remain — to keep nightly delivery quiet and to spread analysis
+          // out across multiple runs. Checked at the top of the loop so it
+          // can't be sidestepped by a downstream `continue` (e.g. the
+          // pastVisibleLimit branch).
+          if (threadsCreatedThisRun >= CRON_PER_RUN_THREAD_LIMIT) {
+            break;
+          }
           // Mid-run cap check: a previous anchor in this run may have pushed
           // the user over FREE_PROCESS_LIMIT. Stop before spending more money.
           if (!hasUnlimitedThreads && currentCount >= FREE_PROCESS_LIMIT) {
@@ -200,7 +222,7 @@ Deno.serve(async (req) => {
             {
               source_entry_id: entry.id,
               match_user_id: user.id,
-              min_day_gap: 7,
+              min_day_gap: MIN_DAY_GAP,
               similarity_threshold: MIN_SIMILARITY,
               match_count: MAX_CANDIDATES,
             }
@@ -279,6 +301,7 @@ Deno.serve(async (req) => {
                 ? result.questions
                 : [],
               confidence,
+              source: "cron",
             })
             .select("id")
             .single();
@@ -294,6 +317,7 @@ Deno.serve(async (req) => {
           });
           currentCount++;
           totalThreadsCreated++;
+          threadsCreatedThisRun++;
 
           // Gate notifications: free users past the visible limit get the
           // thread stored (so the UI can show a locked teaser and unlock on

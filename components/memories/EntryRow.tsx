@@ -6,6 +6,7 @@ import { usePostHog } from "posthog-react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { momentTitleStyle } from "@/lib/momentTypography";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { entryMomentDayHeadingText } from "@/lib/reflectionTarget";
 
@@ -122,6 +123,7 @@ export function EntryRow({
   const isWordEntry = !firstMedia && Boolean(entry.word_of_day);
   const sentence = firstSentence(stripHtml(entry.body));
   const momentForDayLabel = entryMomentDayHeadingText(entry);
+  const locationName = firstMedia?.location_name ?? null;
 
   return (
     <Pressable
@@ -171,11 +173,10 @@ export function EntryRow({
       <View style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
         {entry.title ? (
           <Text
-            style={{
-              fontFamily: "LibreBaskerville-Bold",
+            style={momentTitleStyle({
               fontSize: 16,
               color: colors.text,
-            }}
+            })}
             numberOfLines={1}
           >
             {entry.title}
@@ -220,6 +221,32 @@ export function EntryRow({
           >
             {momentForDayLabel}
           </Text>
+        ) : null}
+        {locationName ? (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 3,
+              marginTop: 4,
+            }}
+          >
+            <Ionicons
+              name="location-sharp"
+              size={10}
+              color={colors.textMuted}
+            />
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 11,
+                color: colors.textMuted,
+              }}
+              numberOfLines={1}
+            >
+              {locationName}
+            </Text>
+          </View>
         ) : null}
       </View>
     </Pressable>

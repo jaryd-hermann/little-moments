@@ -1,0 +1,126 @@
+<!--
+  Catch-all fallback served by the marketing site at /app and /app/*
+  when the device does NOT have the Little Moments app installed
+  (Universal Links / App Links resolve to this HTML instead of opening
+  the app).
+
+  Render this for ANY path matching /app or /app/*. It does not need
+  to know which subpath the user hit — at this point the goal is just
+  to get them to install the app from the right store. Once they
+  install, future taps on the same email link will open the app
+  directly via the entitlement.
+
+  Set <title> and OG tags however the marketing site likes. The
+  important parts are:
+    - The two store-link <a> tags
+    - The UA-sniffing script so iPhone users see the App Store CTA
+      surfaced first (mirrors what the OneSignal landing does today)
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFEB" />
+  <title>Open Little Moments</title>
+  <style>
+    :root { color-scheme: light only; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #FFFFEB;
+      color: #1A1A1A;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .wordmark {
+      width: 180px;
+      height: auto;
+      margin-bottom: 32px;
+    }
+    h1 {
+      font-family: "Libre Baskerville", Georgia, serif;
+      font-weight: 700;
+      font-size: 24px;
+      margin: 0 0 12px;
+    }
+    p {
+      max-width: 22rem;
+      margin: 0 0 24px;
+      line-height: 1.5;
+      color: rgba(0, 0, 0, 0.65);
+    }
+    .store-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 14px 28px;
+      border-radius: 9999px;
+      background: #F0D7FF;
+      color: #1A1A1A;
+      border: 2px solid #1A1A1A;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 15px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .btn.secondary {
+      background: transparent;
+      border-color: rgba(0, 0, 0, 0.2);
+      color: #1A1A1A;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 14px;
+    }
+    .order-android .ios-btn { order: 2; }
+    .order-android .android-btn { order: 1; }
+  </style>
+</head>
+<body>
+  <img
+    class="wordmark"
+    src="https://smwmkeoljqnifaoqzemb.supabase.co/storage/v1/object/public/brand/wordmark-little-moments-black.png"
+    alt="Little Moments"
+  />
+  <h1>Open Little Moments</h1>
+  <p>
+    Install the app to read this — or open it directly if you already have it.
+  </p>
+  <div class="store-buttons" id="store-buttons">
+    <a
+      class="btn ios-btn"
+      href="https://apps.apple.com/us/app/little-moments-a-2min-journal/id6761054988"
+      data-platform="ios"
+    >Get it on the App Store</a>
+    <a
+      class="btn android-btn"
+      href="https://play.google.com/store/apps/details?id=com.jarydhermann.littlemoments"
+      data-platform="android"
+    >Get it on Google Play</a>
+    <a class="btn secondary" href="/">Back to getlittlemoments.com</a>
+  </div>
+
+  <script>
+    (function () {
+      var ua = (navigator.userAgent || "").toLowerCase();
+      var isAndroid = /android/.test(ua);
+      if (isAndroid) {
+        document.getElementById("store-buttons").classList.add("order-android");
+      }
+    })();
+  </script>
+</body>
+</html>

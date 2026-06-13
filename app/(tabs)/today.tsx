@@ -11,17 +11,24 @@ import {
   Alert,
   Image,
   Animated,
+  AppState,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router, useLocalSearchParams } from "expo-router";
 import { usePostHog } from "posthog-react-native";
-import { format, subDays } from "date-fns";
+import { format, subDays, isSameDay, parseISO } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { PremiumInlineCard } from "@/components/common/PremiumInlineCard";
+import { MembershipCard } from "@/components/common/MembershipCard";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { TryPremiumPill } from "@/components/common/TryPremiumPill";
+import { MagicFillBanner } from "@/components/magic-fill/MagicFillBanner";
+import {
+  resolveCaptureMagicFillBanner,
+} from "@/components/magic-fill/CaptureMagicFillOnboardingBanner";
+import { useMagicFillGapCount } from "@/hooks/useMagicFillGapCount";
 import { CongratsCard } from "@/components/ellie/CongratsCard";
 import {
   EllieChatFlow,
@@ -29,6 +36,7 @@ import {
   type MomentCaptureAnalytics,
 } from "@/components/ellie/EllieChatFlow";
 import { EllieMessage } from "@/components/ellie/EllieMessage";
+import { useChapters } from "@/hooks/useChapters";
 import { useEntries } from "@/hooks/useEntries";
 import {
   useStreak,
@@ -42,18 +50,32 @@ import { useTheme } from "@/hooks/useTheme";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import {
+  getAssetGeoLocation,
+  getLivePhotoVideoUri,
   hasFullPhotoLibraryAccess,
   queryCameraPhotosForLocalDay,
   useMediaLibrary,
   type MediaAsset,
 } from "@/hooks/useMediaLibrary";
+import { reverseGeocode } from "@/lib/reverseGeocode";
 import {
   categorizePhotoBucket,
   photoAgeDays,
   type PhotoBucket,
 } from "@/lib/photoBucket";
-import { CaptureBrowseHeading } from "@/components/capture/CaptureBrowseHeading";
+import {
+  CaptureBrowseHeading,
+  CaptureStatsCarousel,
+  MomentCountPill,
+} from "@/components/capture/CaptureBrowseHeading";
+import {
+  ChapterCoverCard,
+  ChapterCoverShimmer,
+  ChapterLockedOverlay,
+} from "@/components/chapters/ChapterCoverCard";
 import { CuratorBrowsePanel } from "@/components/capture/CuratorBrowsePanel";
+import { CaptureDaySection } from "@/components/capture/CaptureDaySection";
+import { ProgressCapsule } from "@/components/common/ProgressCapsule";
 import {
   CaptureDayPickerSheet,
   type DayPickerRow,
@@ -62,6 +84,7 @@ import {
   calendarDateForReflectionTarget,
   captureScreenHeading,
   defaultReflectionTarget,
+  parseCaptureDayYmd,
 } from "@/lib/reflectionTarget";
 import type { ReflectionQuestionItem } from "@/lib/captureReflectionQuestions";
 import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
@@ -76,6 +99,7 @@ import {
   getNotificationPermissionGranted,
   requestNotificationPermissions,
 } from "@/lib/notifications";
+import { scheduleMashupStartedNotificationsIfNeeded } from "@/lib/mashupNotifications";
 import { notifyLifecycleEvent } from "@/lib/lifecycleEvent";
 import { syncPushRegistration } from "@/lib/pushRegistration";
 import {
@@ -85,10 +109,22 @@ import {
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useTabBarStore } from "@/store/tabBarStore";
-import { useFirstMomentOnboardingSheetStore } from "@/store/firstMomentOnboardingSheetStore";
+import { CaptureFirstMomentCoachmarks } from "@/components/capture/CaptureFirstMomentCoachmarks";
+import { consumeFirstCaptureAsset } from "@/lib/onboardingHandoff";
+import { useCaptureFirstMomentCoachmarkStore } from "@/store/captureFirstMomentCoachmarkStore";
+import { useSecondMomentPaywallStore } from "@/store/secondMomentPaywallStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import type { PromptType } from "@/lib/momentAssist";
 import { type Entry } from "@/store/entryStore";
+import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
+import {
+  bucketMomentsByMonth,
+  bucketMomentsByWeek,
+  bucketMomentsByYear,
+} from "@/lib/mashupBuckets";
+import { launchPremiumFlow } from "@/lib/premiumFlow";
+import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
+import { momentTitleStyle } from "@/lib/momentTypography";
 
 const CREAM = "#F7F2E6";
 
@@ -142,17 +178,53 @@ function CaptureTabTopBar({ showPremium }: { showPremium: boolean }) {
 
 export default function TodayScreen() {
   const { colors, theme } = useTheme();
-  const { profile, fetchProfile } = useAuth();
+  const { profile, fetchProfile, user } = useAuth();
+  const userId = user?.id ?? null;
   const setNotificationEnabled = useSettingsStore((s) => s.setNotificationEnabled);
   const notificationTime = useSettingsStore((s) => s.notificationTime);
+  const hasCompletedMagicFill = useSettingsStore((s) => s.hasCompletedMagicFill);
+  const { count: magicFillGapCount } = useMagicFillGapCount(15);
   const posthog = usePostHog();
   const { entries, fetchEntries, saveEntry } = useEntries();
   const momentCount = useMemo(
     () => entries.filter((e) => e.entry_type === "moment").length,
     [entries]
   );
-  const userId = useAuthStore((s) => s.user?.id ?? null);
-  const { streakCount } = useStreak();
+  // "Days captured" = unique calendar days with at least one moment entry.
+  // A day with multiple moments still counts once, matching the user's
+  // expectation that this stat reflects how many distinct days they showed
+  // up rather than total moment volume.
+  const daysCapturedCount = useMemo(() => {
+    const days = new Set<string>();
+    for (const e of entries) {
+      if (e.entry_type !== "moment") continue;
+      const day = e.entry_date;
+      if (!day) continue;
+      days.add(day);
+    }
+    return days.size;
+  }, [entries]);
+  const { streakCount, totalMoments } = useStreak();
+  const { chapters: capturedChapters, isChapterLocked } = useChapters();
+  const chapterCount = capturedChapters.length;
+
+  const coreMemoryCount = useMemo(
+    () =>
+      entries.filter((e) => e.entry_type === "moment" && e.is_pinned).length,
+    [entries]
+  );
+
+  const movieCount = useMemo(() => {
+    const weeks = bucketMomentsByWeek(entries);
+    const months = bucketMomentsByMonth(entries);
+    const years = bucketMomentsByYear(entries);
+    return weeks.length + months.length + years.length;
+  }, [entries]);
+
+  const setOpenChapterId = useTabViewIntentStore((s) => s.setOpenChapterId);
+  const setOpenMashupKey = useTabViewIntentStore((s) => s.setOpenMashupKey);
+  const setChaptersView = useTabViewIntentStore((s) => s.setChaptersView);
+
   const {
     requestPermission,
     checkPermission,
@@ -164,8 +236,26 @@ export default function TodayScreen() {
     requestPermission,
   });
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
-  const { todayThreads, fetchAll: fetchThreads, totalConnections } = useThreads();
+  const { threads, fetchAll: fetchThreads, totalConnections, isThreadLocked } = useThreads();
   const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+
+  const threadOrdinalMap = useMemo(
+    () => threadOrdinalByIdMap(threads),
+    [threads]
+  );
+
+  const todaysChapters = useMemo(() => {
+    const today = new Date();
+    return capturedChapters.filter((c) =>
+      isSameDay(parseISO(c.created_at), today)
+    );
+  }, [capturedChapters]);
+
+  const todaysThreads = useMemo(() => {
+    const today = new Date();
+    return threads.filter((t) => isSameDay(parseISO(t.created_at), today));
+  }, [threads]);
+
   const dummyNotificationNudgeEnabled = useTodayNotifDevStore(
     (s) => s.dummyNotificationNudgeEnabled
   );
@@ -173,6 +263,8 @@ export default function TodayScreen() {
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoDate, setPhotoDate] = useState<number | undefined>();
   const [photoBucket, setPhotoBucket] = useState<PhotoBucket | undefined>();
+  /** MediaLibrary asset id used to look up the Live Photo paired video at save time. */
+  const [photoAssetId, setPhotoAssetId] = useState<string | undefined>();
   const [shuffleCount, setShuffleCount] = useState(0);
   const [pinnedQuestion, setPinnedQuestion] =
     useState<ReflectionQuestionItem | null>(null);
@@ -186,7 +278,6 @@ export default function TodayScreen() {
   const [dayPickerPhotoCounts, setDayPickerPhotoCounts] = useState<
     Record<string, number>
   >({});
-  const [questionBrowseNonce, setQuestionBrowseNonce] = useState(0);
   const [wantsNewMoment, setWantsNewMoment] = useState(false);
   const captureDateInitializedRef = useRef(false);
   const [captureTargetDate, setCaptureTargetDate] = useState<Date>(() => {
@@ -195,15 +286,36 @@ export default function TodayScreen() {
   });
   const [lastSavedEntryId, setLastSavedEntryId] = useState<string | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
+  // Capture is single-day: the page shows only the day matching
+  // `captureTargetDate`. Day changes happen via the picker sheet ("Other
+  // days" CTA or the chevron) or via the `?day=` deep link from Capsule.
   const [justSaved, setJustSaved] = useState(false);
-  const { capture: captureParam, onboardingFirstMoment: onboardingFirstMomentParam, openCamera: openCameraParam } =
-    useLocalSearchParams<{
-      capture?: string;
-      onboardingFirstMoment?: string;
-      openCamera?: string;
-    }>();
+  const {
+    capture: captureParam,
+    onboardingFirstMoment: onboardingFirstMomentParam,
+    openCamera: openCameraParam,
+    day: dayParam,
+  } = useLocalSearchParams<{
+    capture?: string;
+    onboardingFirstMoment?: string;
+    openCamera?: string;
+    /** `yyyy-MM-dd` — seed `captureTargetDate` (e.g. from Capsule grid). */
+    day?: string;
+  }>();
   const inputMethodRef = useRef<InputMethod | null>(null);
+  const pendingCoachmarks = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.pendingAfterFirstCapture
+  );
+  const coachmarksCompleted = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.completedAfterFirstCapture
+  );
+  const coachmarksVisible = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.visible
+  );
   const expectOnboardingFirstCaptureRef = useRef(false);
+  const secondMomentPaywallShown = useSecondMomentPaywallStore(
+    (s) => s.hasShown
+  );
   const [awaitingFirstOnboardingCapture, setAwaitingFirstOnboardingCapture] =
     useState(false);
   const postSaveOpacity = useRef(new Animated.Value(1)).current;
@@ -227,13 +339,30 @@ export default function TodayScreen() {
     [captureTargetDate]
   );
 
+  const isCaptureToday = useMemo(
+    () => targetDayYmd === format(new Date(), "yyyy-MM-dd"),
+    [targetDayYmd]
+  );
+
+  const viewMonthWipBucket = useMemo(() => {
+    const key = `${captureTargetDate.getFullYear()}-${String(captureTargetDate.getMonth() + 1).padStart(2, "0")}`;
+    return (
+      bucketMomentsByMonth(entries).find((b) => b.key === key && b.count > 0) ??
+      null
+    );
+  }, [entries, captureTargetDate]);
+
   useEffect(() => {
     if (!profile || captureDateInitializedRef.current) return;
     captureDateInitializedRef.current = true;
+    if (dayParam || onboardingFirstMomentParam === "1") {
+      // Onboarding handoff or `?day=` deep link owns the initial capture day.
+      return;
+    }
     setCaptureTargetDate(
       calendarDateForReflectionTarget(defaultReflectionTarget(profile))
     );
-  }, [profile]);
+  }, [profile, dayParam, onboardingFirstMomentParam]);
 
   const targetDayEntries: Entry[] = useMemo(
     () =>
@@ -242,6 +371,28 @@ export default function TodayScreen() {
       ),
     [entries, targetDayYmd]
   );
+
+  const captureMagicFillOnboardingVariant = useMemo(
+    () =>
+      resolveCaptureMagicFillBanner({
+        totalMomentCount: totalMoments,
+        hasCompletedMagicFill,
+        viewingDayHasMoment: targetDayEntries.length > 0,
+      }),
+    [
+      hasCompletedMagicFill,
+      totalMoments,
+      targetDayEntries.length,
+    ]
+  );
+
+  useEffect(() => {
+    if (!captureMagicFillOnboardingVariant) return;
+    posthog.capture("magic_fill_onboarding_banner_viewed", {
+      variant: captureMagicFillOnboardingVariant,
+      total_moments: totalMoments,
+    });
+  }, [captureMagicFillOnboardingVariant, posthog, totalMoments]);
 
   const isPinnedForEllie =
     pinnedQuestion != null || (photoUri != null && photoDate != null);
@@ -323,6 +474,24 @@ export default function TodayScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (coachmarksCompleted || !pendingCoachmarks || coachmarksVisible) {
+        return;
+      }
+      if (targetDayEntries.length === 0) return;
+      const timer = setTimeout(() => {
+        useCaptureFirstMomentCoachmarkStore.getState().start();
+      }, 700);
+      return () => clearTimeout(timer);
+    }, [
+      coachmarksCompleted,
+      pendingCoachmarks,
+      coachmarksVisible,
+      targetDayEntries.length,
+    ])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
       fetchEntries();
       fetchThreads();
       setLastSavedEntryId(null);
@@ -382,11 +551,42 @@ export default function TodayScreen() {
     setPhotoUri(undefined);
     setPhotoDate(undefined);
     setPhotoBucket(undefined);
+    setPhotoAssetId(undefined);
     setPinnedQuestion(null);
     setShuffleCount(0);
     setQuestionAutoStart(null);
     inputMethodRef.current = null;
   }, []);
+
+  // Reset to the default reflection day when the calendar day rolls over
+  // while the app is backgrounded. Without this, foregrounding the next
+  // morning would still show the stale `captureTargetDate` (e.g. heading
+  // says "Today" but the day, entries and dayPhotos are all from
+  // yesterday) until the user cold-starts the app.
+  const lastActiveDayYmdRef = useRef<string>(format(new Date(), "yyyy-MM-dd"));
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next !== "active") return;
+      const currentYmd = format(new Date(), "yyyy-MM-dd");
+      const previousYmd = lastActiveDayYmdRef.current;
+      lastActiveDayYmdRef.current = currentYmd;
+      if (currentYmd === previousYmd) return;
+      // Day rolled over. Refresh server data unconditionally; only
+      // reset capture state when the user isn't mid-flow with a pinned
+      // photo or question (otherwise we'd discard their in-progress
+      // work).
+      void fetchEntries();
+      void fetchThreads();
+      if (isPinnedForEllie) return;
+      setCaptureTargetDate(
+        calendarDateForReflectionTarget(defaultReflectionTarget(profile))
+      );
+      clearPinState();
+      setLastSavedEntryId(null);
+      setWantsNewMoment(false);
+    });
+    return () => sub.remove();
+  }, [profile, isPinnedForEllie, clearPinState, fetchEntries, fetchThreads]);
 
   const handleReturnToPhotoPicker = useCallback(() => {
     clearPinState();
@@ -394,33 +594,20 @@ export default function TodayScreen() {
     setWantsNewMoment(true);
   }, [clearPinState, setTabBarHidden]);
 
-  const handleUsePromptInsteadFromPhoto = useCallback(() => {
-    clearPinState();
-    setTabBarHidden(false);
-    setWantsNewMoment(true);
-    setQuestionBrowseNonce((n) => n + 1);
-  }, [clearPinState, setTabBarHidden]);
-
   useEffect(() => {
-    if (captureParam !== "1" && onboardingFirstMomentParam !== "1") return;
-
-    if (captureParam === "1") {
-      clearPinState();
-      setLastSavedEntryId(null);
-      setWantsNewMoment(true);
+    if (!dayParam) return;
+    if (onboardingFirstMomentParam === "1") return;
+    const targetDate = parseCaptureDayYmd(dayParam);
+    if (!targetDate) {
+      router.setParams({ day: undefined });
+      return;
     }
-    if (onboardingFirstMomentParam === "1") {
-      expectOnboardingFirstCaptureRef.current = true;
-      setAwaitingFirstOnboardingCapture(true);
-    }
-
-    router.setParams({
-      ...(captureParam === "1" ? { capture: undefined } : {}),
-      ...(onboardingFirstMomentParam === "1"
-        ? { onboardingFirstMoment: undefined }
-        : {}),
-    });
-  }, [captureParam, onboardingFirstMomentParam, clearPinState]);
+    jumpToDay(targetDate);
+    clearPinState();
+    setLastSavedEntryId(null);
+    setWantsNewMoment(true);
+    router.setParams({ day: undefined });
+  }, [dayParam, onboardingFirstMomentParam, clearPinState, jumpToDay]);
 
   useEffect(() => {
     if (openCameraParam !== "1") return;
@@ -518,6 +705,7 @@ export default function TodayScreen() {
       setPhotoUri(asset.uri);
       setPhotoDate(asset.creationTime);
       setPhotoBucket(bucket);
+      setPhotoAssetId(asset.id);
       setShuffleCount(0);
       posthog.capture("photo_pinned", {
         target_ymd: targetDayYmd,
@@ -564,14 +752,9 @@ export default function TodayScreen() {
     for (let i = 0; i < 21; i++) {
       const d = subDays(new Date(), i);
       const ymd = format(d, "yyyy-MM-dd");
-      const isToday = i === 0;
       rows.push({
         ymd,
-        titleLine: isToday
-          ? "Today"
-          : i === 1
-            ? "Yesterday"
-            : format(d, "EEEE"),
+        titleLine: format(d, "EEE"),
         subtitle: format(d, "MMM d, yyyy"),
         hasMoment: momentDates.has(ymd),
         isDefaultRow: ymd === defaultDayYmd,
@@ -581,10 +764,21 @@ export default function TodayScreen() {
     return rows;
   }, [entries, defaultDayYmd, dayPickerPhotoCounts]);
 
+  /**
+   * Set the active capture day. Used by both the picker sheet and the
+   * `?day=` deep link — single source of truth for switching days.
+   */
+  const jumpToDay = useCallback((targetDate: Date) => {
+    const target = new Date(targetDate);
+    target.setHours(0, 0, 0, 0);
+    setCaptureTargetDate(target);
+  }, []);
+
   const handleSelectDayFromPicker = useCallback(
     (ymd: string) => {
       const [y, m, d] = ymd.split("-").map(Number);
-      setCaptureTargetDate(new Date(y, m - 1, d));
+      const target = new Date(y, m - 1, d);
+      jumpToDay(target);
       clearPinState();
       setLastSavedEntryId(null);
       const hasMomentForDay = entries.some(
@@ -593,7 +787,208 @@ export default function TodayScreen() {
       setWantsNewMoment(!hasMomentForDay);
       posthog.capture("capture_day_selected", { ymd, had_moment: hasMomentForDay });
     },
-    [clearPinState, posthog, entries]
+    [clearPinState, posthog, entries, jumpToDay]
+  );
+
+  const handleCaptureAnotherForTargetDay = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    posthog.capture("capture_another_same_day_tapped", {
+      ymd: targetDayYmd,
+      existing_moment_count: targetDayEntries.length,
+    });
+    setDayPickerOpen(false);
+    setDayPickerSkipFilledDays(false);
+    clearPinState();
+    setLastSavedEntryId(null);
+    setWantsNewMoment(true);
+  }, [clearPinState, posthog, targetDayEntries.length, targetDayYmd]);
+
+  // Rolling "time left in the year" — ticks every second so users see
+  // a live h/m/s countdown on the year-captured progress bar's right
+  // segment (e.g. `4928h 17m 03s`). Sized to fit beside the % label
+  // even when the violet fill is short.
+  const [yearTickNow, setYearTickNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setYearTickNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  // Minutes until local midnight — how long the user has left to capture today.
+  const minutesLeftToCapture = useMemo(() => {
+    const d = new Date(yearTickNow);
+    const endOfDay = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + 1,
+      0,
+      0,
+      0,
+      0
+    ).getTime();
+    const msLeft = Math.max(0, endOfDay - yearTickNow);
+    return Math.max(1, Math.ceil(msLeft / (1000 * 60)));
+  }, [yearTickNow]);
+
+  const captureTimeLeftLabel = useMemo(() => {
+    const n = minutesLeftToCapture;
+    return `${n.toLocaleString()} minute${n === 1 ? "" : "s"} left for today`;
+  }, [minutesLeftToCapture]);
+
+  /** Year progress: distinct days with at least one moment in the current
+   *  calendar year ÷ days elapsed so far in the same year. Drives the bar
+   *  at the bottom of the day section. */
+  const yearProgress = useMemo(() => {
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const daysElapsed = Math.max(
+      1,
+      Math.round((today.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24)) +
+        1
+    );
+    const yearPrefix = String(now.getFullYear());
+    const captured = new Set<string>();
+    for (const e of entries) {
+      if (e.entry_type !== "moment" || !e.entry_date) continue;
+      if (!e.entry_date.startsWith(yearPrefix)) continue;
+      captured.add(e.entry_date);
+    }
+    const capturedDays = captured.size;
+    return {
+      capturedDays,
+      daysElapsed,
+      ratio: capturedDays / daysElapsed,
+      year: now.getFullYear(),
+    };
+  }, [entries]);
+
+  /** Entries indexed by `entry_date` for fast per-day lookup in feed sections. */
+  const entriesByYmd = useMemo(() => {
+    const map = new Map<string, Entry[]>();
+    for (const e of entries) {
+      if (e.entry_type !== "moment" || !e.entry_date) continue;
+      const prev = map.get(e.entry_date) ?? [];
+      prev.push(e);
+      map.set(e.entry_date, prev);
+    }
+    return map;
+  }, [entries]);
+
+  /** Per-day pin handlers (used by `CaptureDaySection`). Set the target day
+   *  first so the rest of the pipeline (save, `entry_date`) lands correctly. */
+  const handlePinPhotoForDay = useCallback(
+    (asset: MediaAsset, dayDate: Date) => {
+      setCaptureTargetDate(dayDate);
+      const bucket = categorizePhotoBucket(asset.creationTime);
+      setPinnedQuestion(null);
+      setQuestionAutoStart(null);
+      setPhotoUri(asset.uri);
+      setPhotoDate(asset.creationTime);
+      setPhotoBucket(bucket);
+      setPhotoAssetId(asset.id);
+      setShuffleCount(0);
+      posthog.capture("photo_pinned", {
+        target_ymd: format(dayDate, "yyyy-MM-dd"),
+        photo_bucket: bucket,
+        photo_age_days: photoAgeDays(asset.creationTime),
+        source: "feed",
+      });
+    },
+    [posthog]
+  );
+
+  useEffect(() => {
+    if (captureParam !== "1" && onboardingFirstMomentParam !== "1") return;
+
+    if (captureParam === "1") {
+      clearPinState();
+      setLastSavedEntryId(null);
+      setWantsNewMoment(true);
+    }
+    if (onboardingFirstMomentParam === "1") {
+      expectOnboardingFirstCaptureRef.current = true;
+      setAwaitingFirstOnboardingCapture(true);
+      const asset = consumeFirstCaptureAsset();
+      const dayFromParam = dayParam ? parseCaptureDayYmd(dayParam) : null;
+      let pinDay = dayFromParam ?? captureTargetDate;
+      if (!dayFromParam && asset) {
+        const taken = new Date(asset.creationTime);
+        pinDay = new Date(
+          taken.getFullYear(),
+          taken.getMonth(),
+          taken.getDate()
+        );
+      }
+      if (asset) {
+        handlePinPhotoForDay(asset, pinDay);
+      } else if (dayFromParam) {
+        jumpToDay(dayFromParam);
+      }
+    }
+
+    router.setParams({
+      ...(captureParam === "1" ? { capture: undefined } : {}),
+      ...(onboardingFirstMomentParam === "1"
+        ? { onboardingFirstMoment: undefined, day: undefined }
+        : {}),
+    });
+  }, [
+    captureParam,
+    onboardingFirstMomentParam,
+    dayParam,
+    clearPinState,
+    captureTargetDate,
+    handlePinPhotoForDay,
+    jumpToDay,
+  ]);
+
+  const handleStartQuestionForDay = useCallback(
+    (
+      q: ReflectionQuestionItem,
+      method: "speaking" | "typing",
+      dayDate: Date
+    ) => {
+      setCaptureTargetDate(dayDate);
+      setPhotoUri(undefined);
+      setPhotoDate(undefined);
+      setPhotoBucket(undefined);
+      setPinnedQuestion(q);
+      setShuffleCount(0);
+      setQuestionAutoStart(method);
+      posthog.capture("question_pinned", {
+        target_ymd: format(dayDate, "yyyy-MM-dd"),
+        question_id: q.id,
+        input_method: method,
+        source: "feed",
+      });
+    },
+    [posthog]
+  );
+
+  /** "Today In Your Past" carousel — the moment lands on the photo's date,
+   *  so a 2018 photo creates a moment in 2018, not the current year. */
+  const handleLogPastMoment = useCallback(
+    (asset: MediaAsset) => {
+      const takenDate = new Date(asset.creationTime);
+      const dayDate = new Date(
+        takenDate.getFullYear(),
+        takenDate.getMonth(),
+        takenDate.getDate()
+      );
+      setCaptureTargetDate(dayDate);
+      const bucket = categorizePhotoBucket(asset.creationTime);
+      setPinnedQuestion(null);
+      setQuestionAutoStart(null);
+      setPhotoUri(asset.uri);
+      setPhotoDate(asset.creationTime);
+      setPhotoBucket(bucket);
+      setPhotoAssetId(asset.id);
+      setShuffleCount(0);
+      posthog.capture("today_in_past_photo_pinned", {
+        target_ymd: format(dayDate, "yyyy-MM-dd"),
+        photo_year: takenDate.getFullYear(),
+      });
+    },
+    [posthog]
   );
 
   const handleRequestPhotoAccess = useCallback(async () => {
@@ -643,6 +1038,7 @@ export default function TodayScreen() {
         entry.attachedPhotoTakenAtMs != null
           ? photoAgeDays(entry.attachedPhotoTakenAtMs)
           : null;
+      const totalMomentsBeforeSave = momentCount;
       const saved = await saveEntry({
         title: entry.title,
         body: entry.body,
@@ -676,6 +1072,7 @@ export default function TodayScreen() {
         const takenAtIso = entry.attachedPhotoTakenAtMs
           ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
           : null;
+        const assetIdAtSave = photoAssetId;
         void (async () => {
           try {
             const { publicUrl, storagePath } = await uploadEntryMedia(
@@ -684,6 +1081,52 @@ export default function TodayScreen() {
               entry.attachedPhotoUri!,
               "image"
             );
+
+            // Live Photo: upload the paired video so we can loop it inline.
+            let pairedVideoStoragePath: string | null = null;
+            let pairedVideoStorageUrl: string | null = null;
+            // EXIF geo → "City, Country" label, persisted on the media row
+            // so every render of this moment can show the location pill
+            // without a fresh reverse-geocode call.
+            let locationName: string | null = null;
+            let locationLatitude: number | null = null;
+            let locationLongitude: number | null = null;
+            if (assetIdAtSave) {
+              try {
+                const paired = await getLivePhotoVideoUri(assetIdAtSave);
+                if (paired?.uri) {
+                  const upload = await uploadEntryMedia(
+                    userId,
+                    entryId,
+                    paired.uri,
+                    "video"
+                  );
+                  pairedVideoStoragePath = upload.storagePath;
+                  pairedVideoStorageUrl = upload.publicUrl;
+                  posthog.capture("live_photo_uploaded", {
+                    entry_id: entryId,
+                    duration_ms: paired.durationMs,
+                  });
+                }
+              } catch (err) {
+                console.warn("[TodayScreen] Live Photo upload failed:", err);
+              }
+
+              try {
+                const info = await getAssetGeoLocation(assetIdAtSave);
+                if (info) {
+                  locationLatitude = info.latitude;
+                  locationLongitude = info.longitude;
+                  locationName = await reverseGeocode(
+                    info.latitude,
+                    info.longitude
+                  );
+                }
+              } catch (err) {
+                console.warn("[TodayScreen] Location lookup failed:", err);
+              }
+            }
+
             await supabase.from("entry_media").insert({
               entry_id: entryId,
               user_id: userId,
@@ -692,6 +1135,11 @@ export default function TodayScreen() {
               media_type: "image",
               display_order: 0,
               taken_at: takenAtIso,
+              paired_video_storage_path: pairedVideoStoragePath,
+              paired_video_storage_url: pairedVideoStorageUrl,
+              location_name: locationName,
+              location_latitude: locationLatitude,
+              location_longitude: locationLongitude,
             });
             console.log("[TodayScreen] Photo uploaded and linked");
             await fetchEntries(entryId);
@@ -711,6 +1159,13 @@ export default function TodayScreen() {
       }
 
       await fetchEntries(saved?.id);
+
+      if (saved?.id && entry.attachedPhotoUri) {
+        void scheduleMashupStartedNotificationsIfNeeded({
+          entryDateYmd: memoryYmd,
+          momentsBeforeSave: entries.filter((e) => e.entry_type === "moment"),
+        });
+      }
 
       // Animated transition back to the post-save Capture view: fade in + success haptic.
       setWantsNewMoment(false);
@@ -735,10 +1190,28 @@ export default function TodayScreen() {
       // can ship the public storage URL as the rich image. Text-only
       // saves fire it inline (no media to wait for).
 
-      if (expectOnboardingFirstCaptureRef.current && saved?.id) {
+      if (expectOnboardingFirstCaptureRef.current) {
         expectOnboardingFirstCaptureRef.current = false;
         setAwaitingFirstOnboardingCapture(false);
-        useFirstMomentOnboardingSheetStore.getState().show(saved.id);
+      }
+
+      if (saved?.id && totalMomentsBeforeSave === 0) {
+        useCaptureFirstMomentCoachmarkStore.getState().queueAfterFirstCapture();
+        setTimeout(() => {
+          useCaptureFirstMomentCoachmarkStore.getState().start();
+        }, 900);
+      }
+
+      if (
+        saved?.id &&
+        totalMomentsBeforeSave === 1 &&
+        profile?.subscription_status === "free" &&
+        !secondMomentPaywallShown
+      ) {
+        useSecondMomentPaywallStore.getState().markShown();
+        setTimeout(() => {
+          router.push("/paywall");
+        }, 1200);
       }
 
       return saved ?? null;
@@ -752,6 +1225,11 @@ export default function TodayScreen() {
       postSaveOpacity,
       setTabBarHidden,
       captureTargetDate,
+      photoAssetId,
+      momentCount,
+      entries,
+      profile?.subscription_status,
+      secondMomentPaywallShown,
     ]
   );
 
@@ -992,9 +1470,254 @@ export default function TodayScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       {fullPhotoAccessModal}
-      <CaptureTabTopBar showPremium={momentCount > 0} />
+      <CaptureTabTopBar showPremium={false} />
 
-      {showHome ? (
+      {!isPinnedForEllie ? (
+        <Animated.ScrollView
+          style={{ flex: 1, opacity: postSaveOpacity }}
+          contentContainerStyle={{ paddingTop: 4, paddingBottom: 140 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View
+            style={{
+              backgroundColor: colors.background,
+              marginBottom: targetDayEntries.length > 0 ? 18 : 0,
+            }}
+          >
+            <CaptureBrowseHeading
+              upperLabel={
+                targetDayEntries.length > 0
+                  ? "YOU CAPTURED"
+                  : isCaptureToday
+                    ? "CAPTURE TODAY!"
+                    : "CAPTURING FOR"
+              }
+              title={captureHeading.title}
+              titleSecondary={captureHeading.titleSecondary}
+              statsRow={
+                <CaptureStatsCarousel
+                  moments={momentCount}
+                  chapters={chapterCount}
+                  coreMemories={coreMemoryCount}
+                  movies={movieCount}
+                  currentStreak={streakCount}
+                />
+              }
+              onPressChangeDay={() => {
+                setDayPickerSkipFilledDays(false);
+                setDayPickerOpen(true);
+              }}
+            />
+          </View>
+
+          {showHome && todaysChapters.length + todaysThreads.length > 0 ? (
+            <View style={{ paddingHorizontal: 20, gap: 12, marginBottom: 16 }}>
+              {todaysChapters.map((chapter) => {
+                const locked = isChapterLocked(chapter);
+                return (
+                  <Pressable
+                    key={chapter.id}
+                    onPress={() => {
+                      if (locked) {
+                        launchPremiumFlow(posthog, "capture_chapter_banner", {
+                          bump: { surface: "chapter", refId: chapter.id },
+                        });
+                        return;
+                      }
+                      setOpenChapterId(chapter.id);
+                      router.push("/(tabs)/chapters");
+                    }}
+                    style={{
+                      height: 220,
+                      borderRadius: 18,
+                      overflow: "hidden",
+                      backgroundColor: colors.surfaceSecondary,
+                    }}
+                  >
+                    <ChapterCoverCard chapter={chapter} />
+                    <ChapterCoverShimmer
+                      chapterId={chapter.id}
+                      viewedAt={chapter.viewed_at}
+                    />
+                    {locked ? <ChapterLockedOverlay /> : null}
+                  </Pressable>
+                );
+              })}
+              {todaysThreads.map((thread) => (
+                <ThreadCard
+                  key={thread.id}
+                  thread={thread}
+                  locked={isThreadLocked(
+                    thread,
+                    threads.findIndex((t) => t.id === thread.id)
+                  )}
+                  headline="1 New Thread found"
+                  ordinalRank={threadOrdinalMap.get(thread.id)}
+                />
+              ))}
+            </View>
+          ) : null}
+
+          <CaptureDaySection
+            date={captureTargetDate}
+            ymd={targetDayYmd}
+            entriesForDay={targetDayEntries}
+            permissionStatus={permissionStatus}
+            accessPrivileges={accessPrivileges}
+            onPinPhoto={handlePinPhotoForDay}
+            onStartQuestion={handleStartQuestionForDay}
+            onLogPastMoment={handleLogPastMoment}
+            onOpenEntry={(entry) => {
+              posthog.capture("today_entry_tapped", {
+                entry_id: entry.id,
+                source: "single_day",
+              });
+              router.push(`/entry/${entry.id}`);
+            }}
+            onShareEntry={(entry) => {
+              setLastSavedEntryId(entry.id);
+              setShareModalVisible(true);
+              posthog.capture("today_entry_share_tapped", {
+                entry_id: entry.id,
+                source: "single_day",
+              });
+            }}
+            onDigDeeper={(entry) => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push({
+                pathname: "/dig-deeper",
+                params: {
+                  entryId: entry.id,
+                  title: entry.title ?? "",
+                  body: entry.body ?? "",
+                  photoUri: entry.media?.[0]?.storage_url ?? "",
+                },
+              });
+            }}
+            monthWipBucket={viewMonthWipBucket}
+            onOpenMonthWip={(bucket) => {
+              setChaptersView("grid");
+              setOpenMashupKey(bucket.key);
+              router.push("/(tabs)/chapters");
+            }}
+            reportCoachmarkTarget={(key, layout) => {
+              useCaptureFirstMomentCoachmarkStore.getState().setTargets({
+                [key]: layout,
+              });
+            }}
+            magicFillOnboardingVariant={captureMagicFillOnboardingVariant}
+          />
+
+          {hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges) ? (
+            <View style={{ marginTop: 20 }}>
+              <MagicFillBanner
+                source="capture_banner"
+                gapCount={magicFillGapCount ?? undefined}
+                prominent
+              />
+            </View>
+          ) : null}
+
+          {profile?.subscription_status === "free" ? (
+            <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
+              <MembershipCard
+                colors={colors}
+                subscriptionStatus={profile.subscription_status}
+                createdAt={profile.created_at ?? null}
+                onManage={() => router.push("/paywall")}
+                onExplore={() => {
+                  posthog.capture("premium_card_tapped", {
+                    source: "capture_footer",
+                  });
+                  launchPremiumFlow(posthog, "capture_footer_banner");
+                }}
+              />
+            </View>
+          ) : null}
+
+          {/* Year-captured nudge — lowest content in the scroll */}
+          <View
+            style={{
+              marginTop: 28,
+              paddingHorizontal: 20,
+              marginBottom: 8,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 11,
+                letterSpacing: 1.2,
+                color: colors.textMuted,
+                marginBottom: 8,
+              }}
+            >
+              {`Your ${yearProgress.year} captured (so far)`}
+            </Text>
+            <ProgressCapsule
+              progress={yearProgress.ratio}
+              labelFilled={`${(yearProgress.ratio * 100).toFixed(2)}%`}
+              labelRight={captureTimeLeftLabel}
+              labelFilledColor="#1A1A1A"
+              labelRightColor="#1A1A1A"
+              height={32}
+            />
+          </View>
+
+          {/* Other days CTA — restyled to match the "Capture with a
+              question instead" secondary button: a single horizontal
+              row (icon · label · chevron) inside a rounded outlined chip. */}
+          <View style={{ alignItems: "center", marginTop: 20, marginBottom: 8 }}>
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setDayPickerSkipFilledDays(false);
+                setDayPickerOpen(true);
+                posthog.capture("capture_other_days_tapped");
+              }}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+              hitSlop={6}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  borderRadius: 9999,
+                  borderWidth: 1.5,
+                  borderColor: colors.border,
+                }}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={colors.text}
+                  style={{ marginRight: 8 }}
+                />
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 14,
+                    color: colors.text,
+                    marginRight: 8,
+                  }}
+                >
+                  Other days
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={colors.textMuted}
+                />
+              </View>
+            </Pressable>
+          </View>
+        </Animated.ScrollView>
+      ) : null}
+
+      {/* Legacy showHome path kept for fallback during transition — never reached. */}
+      {false ? (
         <Animated.ScrollView
           style={{ flex: 1, opacity: postSaveOpacity }}
           contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 100 }}
@@ -1004,6 +1727,12 @@ export default function TodayScreen() {
             <CaptureBrowseHeading
               upperLabel="YOU CAPTURED"
               title={captureHeading.title}
+              titleSecondary={captureHeading.titleSecondary}
+              tagBubble={
+                targetDayEntries.length > 0 ? (
+                  <MomentCountPill count={targetDayEntries.length} />
+                ) : undefined
+              }
               onPressChangeDay={() => {
                 setDayPickerSkipFilledDays(false);
                 setDayPickerOpen(true);
@@ -1019,7 +1748,7 @@ export default function TodayScreen() {
               />
             </View>
           )}
-          {todayThreads().map((thread) => (
+          {threads.map((thread) => (
             <View key={thread.id} style={{ marginBottom: 16 }}>
               <ThreadCard thread={thread} headline="1 New Thread found" />
             </View>
@@ -1098,12 +1827,11 @@ export default function TodayScreen() {
                       <View style={{ padding: 16 }}>
                         {item.title && (
                           <Text
-                            style={{
-                              fontFamily: "LibreBaskerville-Bold",
+                            style={momentTitleStyle({
                               fontSize: 16,
                               color: colors.text,
                               marginBottom: 6,
-                            }}
+                            })}
                           >
                             {item.title}
                           </Text>
@@ -1158,7 +1886,7 @@ export default function TodayScreen() {
                         gap: 8,
                       }}
                     >
-                      <EntryPinToggle entryId={item.id} size={20} />
+                      <EntryPinToggle entryId={item.id} />
                       <Pressable
                         onPress={() => {
                           void Haptics.impactAsync(
@@ -1366,6 +2094,7 @@ export default function TodayScreen() {
             <Pressable
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (!successHighlightEntry) return;
                 router.push({
                   pathname: "/dig-deeper",
                   params: {
@@ -1436,17 +2165,6 @@ export default function TodayScreen() {
               ? "OPEN SETTINGS"
               : "CONTINUE"
           }
-          onPhotoAccessWordFallback={
-            todayPhotoPermissionBlocked
-              ? () => {
-                  posthog.capture("home_photo_nudge_tapped", {
-                    action: "word_fallback",
-                    surface: "today",
-                  });
-                  router.push("/capture/word");
-                }
-              : undefined
-          }
           ensureFullPhotoLibraryAccess={ensureFullPhotoAccess}
           afterSaveNode={afterSaveNode}
           welcomeMessages={[]}
@@ -1477,28 +2195,16 @@ export default function TodayScreen() {
             <View style={{ marginHorizontal: -20 }}>
               <CaptureBrowseHeading
                 title={captureHeading.title}
+                titleSecondary={captureHeading.titleSecondary}
+                tagBubble={
+                  targetDayEntries.length > 0 ? (
+                    <MomentCountPill count={targetDayEntries.length} />
+                  ) : undefined
+                }
                 onPressChangeDay={() => {
                   setDayPickerSkipFilledDays(false);
                   setDayPickerOpen(true);
                 }}
-                titleAccessory={
-                  promptType === "photo" ? (
-                    <Pressable
-                      onPress={handleUsePromptInsteadFromPhoto}
-                      hitSlop={8}
-                    >
-                      <Text
-                        style={{
-                          fontFamily: "Roboto-Medium",
-                          fontSize: 14,
-                          color: colors.textSecondary,
-                        }}
-                      >
-                        Do a prompt instead
-                      </Text>
-                    </Pressable>
-                  ) : undefined
-                }
               />
             </View>
           }
@@ -1514,36 +2220,9 @@ export default function TodayScreen() {
           skipPreview
         />
         </Animated.View>
-      ) : (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 120 }}
-          showsVerticalScrollIndicator={false}
-        >
-          <CuratorBrowsePanel
-            key={targetDayYmd}
-            headingTitle={captureHeading.title}
-            onPressChangeDay={() => {
-              setDayPickerSkipFilledDays(false);
-              setDayPickerOpen(true);
-            }}
-            dayPhotos={dayPhotos}
-            loadingPhotos={loadingDayPhotos}
-            onChoosePhoto={handlePinPhotoFromBrowse}
-            onStartQuestionCapture={handleStartQuestionFromBrowse}
-            forceQuestionModeNonce={questionBrowseNonce}
-            ellieNoPhotosFirstCapture={
-              awaitingFirstOnboardingCapture &&
-              !loadingDayPhotos &&
-              dayPhotos.length === 0
-            }
-            analyticsContext={{
-              target_ymd: targetDayYmd,
-              surface: "today",
-            }}
-          />
-        </ScrollView>
-      )}
+      ) : null}
+
+      <CaptureFirstMomentCoachmarks />
 
       <CaptureDayPickerSheet
         visible={dayPickerOpen}
@@ -1555,6 +2234,15 @@ export default function TodayScreen() {
         selectedYmd={targetDayYmd}
         onSelectYmd={handleSelectDayFromPicker}
         disableDaysWithMoments={dayPickerSkipFilledDays}
+        primaryAction={
+          dayPickerSkipFilledDays && targetDayEntries.length > 0
+            ? {
+                label: `Capture another for ${captureHeading.title.toLowerCase()}`,
+                onPress: handleCaptureAnotherForTargetDay,
+                iconName: "add-circle-outline",
+              }
+            : undefined
+        }
       />
 
       <ShareMomentModal

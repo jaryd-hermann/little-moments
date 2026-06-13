@@ -58,6 +58,10 @@ export interface Profile {
   reflection_target_default?: "yesterday" | "today" | null;
   /** Local YYYY-MM-DD: last midday “snap a pic” nudge sent (server cron). */
   last_midday_photo_nudge_local_date?: string | null;
+  has_completed_magic_fill?: boolean;
+  magic_fill_started_at?: string | null;
+  last_magic_fill_nudge_at?: string | null;
+  magic_fill_nudge_count?: number;
   last_daily_push_local_date?: string | null;
   last_streak_risk_push_local_date?: string | null;
   created_at: string;

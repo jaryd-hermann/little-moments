@@ -26,7 +26,10 @@ import {
   syncOneSignalUser,
 } from "@/lib/onesignal";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
+import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 import { registerPostHogClient } from "@/lib/errors";
+import { useEntries } from "@/hooks/useEntries";
+import { useChapters } from "@/hooks/useChapters";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -37,6 +40,16 @@ function AppInner() {
   const setIsLoading = useAuthStore((s) => s.setIsLoading);
   const { theme, colors } = useTheme();
   const posthog = usePostHog();
+  const { fetchEntries } = useEntries();
+  const { fetchChapters } = useChapters();
+
+  // Warm entries + media cache at app open so Capsule grid/list and Chapters
+  // covers are ready before the user navigates to those tabs.
+  useEffect(() => {
+    if (!user?.id) return;
+    void fetchEntries();
+    void fetchChapters();
+  }, [user?.id, fetchEntries, fetchChapters]);
 
   // Keep the OS root background (visible briefly during navigation
   // transitions and modal presentations) in sync with the resolved theme.
@@ -94,6 +107,7 @@ function AppInner() {
           | {
               type?: string;
               chapterId?: string;
+              mashup_key?: string;
             }
           | undefined;
         if (data?.type === "daily_nudge") {
@@ -108,9 +122,23 @@ function AppInner() {
           });
           return;
         }
+        if (data?.type === "mashup_started" && data.mashup_key) {
+          useTabViewIntentStore.getState().setChaptersView("grid");
+          useTabViewIntentStore.getState().setOpenMashupKey(data.mashup_key);
+          InteractionManager.runAfterInteractions(() => {
+            router.replace("/(tabs)/chapters");
+          });
+          return;
+        }
         if (data?.type === "midday_camera_nudge") {
           InteractionManager.runAfterInteractions(() => {
             router.replace("/(tabs)/today?capture=1&openCamera=1");
+          });
+          return;
+        }
+        if (data?.type === "magic_fill_nudge") {
+          InteractionManager.runAfterInteractions(() => {
+            router.replace("/magic-fill?source=push");
           });
           return;
         }
@@ -179,6 +207,10 @@ function AppInner() {
           go("/(tabs)/today?capture=1&openCamera=1");
           return;
 
+        case "magic_fill_nudge":
+          go("/magic-fill?source=push");
+          return;
+
         case "welcome_first_capture":
           go("/(tabs)/today?capture=1");
           return;
@@ -205,7 +237,7 @@ function AppInner() {
         case "first_pin":
           // Pinned filter on Capsule — they should see the album
           // forming in real time.
-          go("/(tabs)/memories?filter=pinned");
+          go("/(tabs)/memories?filter=core");
           return;
 
         case "on_this_day":
@@ -292,7 +324,10 @@ function AppInner() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="splash" />
-        <Stack.Screen name="(auth)" />
+        <Stack.Screen
+          name="(auth)"
+          options={{ animation: "none" }}
+        />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="composer/index"
@@ -339,6 +374,11 @@ function AppInner() {
           name="threads/[id]"
           options={{ presentation: "modal" }}
         />
+        <Stack.Screen
+          name="dig-deeper/index"
+          options={{ presentation: "modal" }}
+        />
+        <Stack.Screen name="magic-fill" />
       </Stack>
     </GestureHandlerRootView>
   );

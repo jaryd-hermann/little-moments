@@ -22,7 +22,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import {
   requestNotificationPermissions,
-  fireWelcomeFirstCaptureNotification,
+  scheduleWelcomeFirstCaptureNotification,
 } from "@/lib/notifications";
 import { syncPushRegistration } from "@/lib/pushRegistration";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -30,6 +30,11 @@ import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { formatNotificationTimeForDb } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
+import {
+  ONBOARDING_QUIZ_FLAG_KEY,
+  shouldSkipOnboardingPaywall,
+} from "@/lib/onboardingQuizFlag";
+import { routeToFirstMomentScreen } from "@/lib/onboardingRoute";
 import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 import { deriveCaptureRhythmFromAnswers } from "@/lib/onboardingQuiz";
 import type { ReflectionTarget } from "@/lib/reflectionTarget";
@@ -63,7 +68,7 @@ export default function NotificationsPromptScreen() {
   const seededRhythm: CaptureRhythm | null =
     profile?.capture_rhythm ?? localQuizRhythm;
   const initialRhythm: CaptureRhythm =
-    seededRhythm === "evening" ? "evening" : "morning";
+    seededRhythm === "morning" ? "morning" : "evening";
   const quizSeededRhythm = seededRhythm != null;
 
   const [rhythm, setRhythm] = useState<CaptureRhythm>(initialRhythm);
@@ -101,9 +106,12 @@ export default function NotificationsPromptScreen() {
     return format(d, "h:mm a");
   }, [notifHour, notifMinute]);
 
-  const goToPaywallValue = useCallback(() => {
-    // value-anchor screen handles its own paywall-trigger skip on mount.
+  const goToNextStep = useCallback(() => {
     posthog.capture("onboarding_first_capture_routed", onboardingEventProps(6));
+    if (shouldSkipOnboardingPaywall(posthog.getFeatureFlag(ONBOARDING_QUIZ_FLAG_KEY))) {
+      routeToFirstMomentScreen();
+      return;
+    }
     router.replace({
       pathname: "/paywall/value",
       params: { fromOnboarding: "1" },
@@ -195,10 +203,18 @@ export default function NotificationsPromptScreen() {
     );
 
     if (params.enabled) {
-      void fireWelcomeFirstCaptureNotification();
+      // Fire ~2 min after permission grant (so it doesn't pop OVER the
+      // paywall the user is staring at), and key the copy off whether
+      // they already captured during onboarding (activation flags on
+      // the freshly-updated profile).
+      const hasCapturedToday = Boolean(
+        (fresh as Profile).activation_photo_completed ||
+          (fresh as Profile).activation_word_completed
+      );
+      void scheduleWelcomeFirstCaptureNotification({ hasCapturedToday });
     }
 
-    goToPaywallValue();
+    goToNextStep();
   };
 
   const handleTurnOn = async () => {
@@ -252,7 +268,7 @@ export default function NotificationsPromptScreen() {
         <View style={{ marginTop: 4 }}>
           <Text
             style={{
-              fontFamily: "LibreBaskerville-Bold",
+              fontFamily: "PMGothicLudington-Text110",
               fontSize: 26,
               lineHeight: 32,
               color: colors.text,
@@ -364,27 +380,6 @@ export default function NotificationsPromptScreen() {
               WHAT WE&apos;LL ASK ABOUT
             </Text>
           </View>
-          <Text
-            style={{
-              fontFamily: "Roboto-Regular",
-              fontSize: 15,
-              lineHeight: 22,
-              color: colors.text,
-              marginTop: 10,
-            }}
-          >
-            Because you reflect in the{" "}
-            {rhythm === "morning" ? "morning" : "evening"}, we&apos;ll ask about{" "}
-            <Text
-              style={{
-                color: colors.text,
-                fontFamily: "Roboto-Bold",
-              }}
-            >
-              {reflectionTarget === "yesterday" ? "Yesterday" : "Today"}
-            </Text>
-            .
-          </Text>
           <View
             style={{
               flexDirection: "row",
@@ -553,7 +548,7 @@ export default function NotificationsPromptScreen() {
           >
             <Text
               style={{
-                fontFamily: "LibreBaskerville-Bold",
+                fontFamily: "PMGothicLudington-Text110",
                 fontSize: 18,
                 color: colors.text,
                 marginBottom: 16,

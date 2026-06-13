@@ -31,7 +31,6 @@ import {
   useThreadDevStore,
 } from "@/store/threadDevStore";
 import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
-
 function GraphTab() {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -346,9 +345,9 @@ function BrainGraphPlaceholder() {
         </View>
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 18,
-            lineHeight: 26,
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: 24,
+            lineHeight: 30,
             color: colors.text,
             textAlign: "center",
             marginBottom: 10,
@@ -455,9 +454,9 @@ function ConnectThreadsEmptyPlaceholder() {
         </View>
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 18,
-            lineHeight: 26,
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: 24,
+            lineHeight: 30,
             color: colors.text,
             textAlign: "center",
             marginBottom: 10,
@@ -572,39 +571,41 @@ export default function ThreadsScreen() {
         >
           Connections
         </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: colors.surfaceSecondary,
-            borderRadius: 9999,
-            padding: 3,
-          }}
-        >
-          {(["ellie", "graph"] as const).map((tab) => (
-            <Pressable
-              key={tab}
-              onPress={() => setActiveTab(tab)}
-              style={{
-                paddingVertical: 6,
-                paddingHorizontal: 14,
-                borderRadius: 9999,
-                backgroundColor:
-                  activeTab === tab ? colors.primary : "transparent",
-              }}
-            >
-              <Text
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: colors.surfaceSecondary,
+              borderRadius: 9999,
+              padding: 3,
+            }}
+          >
+            {(["ellie", "graph"] as const).map((tab) => (
+              <Pressable
+                key={tab}
+                onPress={() => setActiveTab(tab)}
                 style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 12,
-                  color: activeTab === tab ? "#1A1A1A" : colors.textMuted,
-                  letterSpacing: 0.3,
+                  paddingVertical: 6,
+                  paddingHorizontal: 14,
+                  borderRadius: 9999,
+                  backgroundColor:
+                    activeTab === tab ? colors.primary : "transparent",
                 }}
               >
-                {tab === "ellie" ? "Threads" : "Graph"}
-              </Text>
-            </Pressable>
-          ))}
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 12,
+                    color: activeTab === tab ? "#1A1A1A" : colors.textMuted,
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  {tab === "ellie" ? "Threads" : "Graph"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       </View>
 

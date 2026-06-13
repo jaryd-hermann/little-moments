@@ -1,7 +1,24 @@
-import { ExpoConfig, ConfigContext } from "expo/config";
+import { ConfigContext, ExpoConfig } from "expo/config";
 
 const IOS_BUNDLE_ID = "com.jarydhermann.littlemoments";
 const ANDROID_PACKAGE = "com.jarydhermann.littlemoments";
+
+/**
+ * Universal Links / Android App Links host.
+ *
+ * Owner: the marketing site on Vercel (separate repo). That site MUST serve
+ * the two static files that pair with the entitlements below — otherwise iOS
+ * / Android will silently ignore the deep-link claim and fall back to opening
+ * the URL in the browser:
+ *
+ *   https://<host>/.well-known/apple-app-site-association
+ *   https://<host>/.well-known/assetlinks.json
+ *
+ * See `marketing-site/universal-links/README.md` in this repo for the exact
+ * file contents the marketing site needs to publish, plus the Apple Team ID
+ * and Android signing fingerprint placeholders that need filling in.
+ */
+const UNIVERSAL_LINK_HOST = "getlittlemoments.com";
 
 /** Public listing — used by `expo-store-review` (`hasAction` / store fallback). */
 const APP_STORE_URL =
@@ -54,7 +71,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
   slug: "little-moments",
-  version: "2.2.0",
+  version: "2.3.1",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "littlemoments",
@@ -69,6 +86,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // EAS auto-bumps it on every production build so we never have to
     // remember to. Keep this field out of the config so the two sources
     // can't drift.
+    associatedDomains: [`applinks:${UNIVERSAL_LINK_HOST}`],
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSPhotoLibraryUsageDescription:
@@ -98,6 +116,26 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     predictiveBackGestureEnabled: false,
     // `versionCode` is managed by EAS (same remote/autoIncrement contract
     // documented above on the iOS side). Omitted here on purpose.
+    //
+    // App Links: `autoVerify: true` tells Android to fetch
+    // `https://<host>/.well-known/assetlinks.json` at install time and, on
+    // success, default-handle these URLs in the app without the disambig
+    // chooser. Without the assetlinks.json the system silently demotes these
+    // to a regular intent (chooser prompt) — same UX as `autoVerify: false`.
+    intentFilters: [
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [
+          {
+            scheme: "https",
+            host: UNIVERSAL_LINK_HOST,
+            pathPrefix: "/app",
+          },
+        ],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+    ],
   },
   web: {
     output: "single" as const,
@@ -149,7 +187,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     googleSignInPlugin,
+    "./plugins/withGoogleModularHeaders.js",
     "expo-localization",
+    "expo-video",
   ],
   experiments: {
     typedRoutes: true,

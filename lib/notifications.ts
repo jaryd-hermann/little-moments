@@ -173,17 +173,43 @@ export async function fireMomentSavedNotification(opts: {
   });
 }
 
-/** One-shot welcome nudge after onboarding when notifications are enabled. */
-export async function fireWelcomeFirstCaptureNotification(): Promise<void> {
+/**
+ * Schedule the welcome push for ~2 minutes after onboarding finishes
+ * (after the OS permission is granted, i.e. once we have a token).
+ *
+ * - If the user already captured during onboarding (`hasCapturedToday`),
+ *   the body congratulates them and nudges a second moment.
+ * - Otherwise it nudges them to capture their first moment.
+ *
+ * Decision is baked in at schedule time (we know capture state from the
+ * profile flags right then), so the alert that fires 2 min later will
+ * match the truth at the moment of scheduling. Small edge case: a user
+ * who captures DURING those 2 min sees the "first moment" copy — fine
+ * for v1, and rare in practice (they'd have to leave the paywall, hit
+ * Today, capture, all inside two minutes).
+ *
+ * Called once per onboarding completion. Safe to call without a granted
+ * permission — it no-ops.
+ */
+const WELCOME_DELAY_SECONDS = 120;
+
+export async function scheduleWelcomeFirstCaptureNotification(opts: {
+  hasCapturedToday: boolean;
+}): Promise<void> {
   await ensureAndroidNotificationChannel();
   const granted = await getNotificationPermissionGranted();
   if (!granted) return;
 
   const content: Notifications.NotificationContentInput = {
-    title: "Welcome!",
-    body: "Let's capture your first moment quickly.",
+    title: "Welcome to Little Moments!",
+    body: opts.hasCapturedToday
+      ? "You've captured your first moment already — try one more."
+      : "Let's capture your first moment, quickly.",
     sound: true,
-    data: { type: "welcome_first_capture" },
+    data: {
+      type: "welcome_first_capture",
+      has_captured_today: opts.hasCapturedToday,
+    },
     ...(Platform.OS === "android"
       ? { channelId: ANDROID_DEFAULT_CHANNEL_ID }
       : {}),
@@ -191,6 +217,17 @@ export async function fireWelcomeFirstCaptureNotification(): Promise<void> {
 
   await Notifications.scheduleNotificationAsync({
     content,
-    trigger: null,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: WELCOME_DELAY_SECONDS,
+      repeats: false,
+    },
   });
+}
+
+/** @deprecated use scheduleWelcomeFirstCaptureNotification instead. Kept as a
+ *  thin wrapper so any older callers (e.g. in-flight branches) still compile,
+ *  but they'll now also get the 2-minute delay + capture-aware copy. */
+export async function fireWelcomeFirstCaptureNotification(): Promise<void> {
+  await scheduleWelcomeFirstCaptureNotification({ hasCapturedToday: false });
 }

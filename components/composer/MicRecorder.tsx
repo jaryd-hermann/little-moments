@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
 import { transcribeAudio } from "@/lib/whisper";
 import { useTheme } from "@/hooks/useTheme";
+import { CountdownProgressBar } from "@/components/ellie/CountdownProgressBar";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -29,7 +30,7 @@ interface MicRecorderProps {
   onTranscription: (text: string) => void;
   fullscreen?: boolean;
   onCancel?: () => void;
-  /** Total recording window in seconds; defaults to 120 (2 min). The timer below the waveform counts down from this. */
+  /** Total recording window in seconds; defaults to 60. The progress bar below the waveform tracks elapsed time. */
   durationSeconds?: number;
 }
 
@@ -114,24 +115,14 @@ export function MicRecorder({
   onTranscription,
   fullscreen,
   onCancel,
-  durationSeconds = 120,
+  durationSeconds = 60,
 }: MicRecorderProps) {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [duration, setDuration] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const remainingSeconds = durationSeconds - duration;
-  const isOvertime = remainingSeconds < 0;
-  const formatRemaining = (secs: number) => {
-    const abs = Math.abs(secs);
-    const m = Math.floor(abs / 60);
-    const s = abs % 60;
-    const sign = secs < 0 ? "-" : "";
-    return `${sign}${m}:${s.toString().padStart(2, "0")}`;
-  };
 
   const startRecording = async () => {
     try {
@@ -249,24 +240,11 @@ export function MicRecorder({
             </Pressable>
 
             {isRecording && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <View
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: 6,
-                    backgroundColor: "#EF4444",
-                  }}
+              <View style={{ flex: 1, marginHorizontal: 16 }}>
+                <CountdownProgressBar
+                  elapsed={duration}
+                  durationSeconds={durationSeconds}
                 />
-                <Text
-                  style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 32,
-                    color: isOvertime ? "#EF4444" : colors.text,
-                  }}
-                >
-                  {formatRemaining(remainingSeconds)}
-                </Text>
               </View>
             )}
 
@@ -388,24 +366,11 @@ export function MicRecorder({
             </Pressable>
 
             {isRecording && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <View
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: 6,
-                    backgroundColor: "#EF4444",
-                  }}
+              <View style={{ flex: 1, marginHorizontal: 16 }}>
+                <CountdownProgressBar
+                  elapsed={duration}
+                  durationSeconds={durationSeconds}
                 />
-                <Text
-                  style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 32,
-                    color: isOvertime ? "#EF4444" : colors.text,
-                  }}
-                >
-                  {formatRemaining(remainingSeconds)}
-                </Text>
               </View>
             )}
 

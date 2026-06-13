@@ -75,12 +75,17 @@ function palette(theme: "light" | "dark") {
     return {
       bg: "#E8DDD0",
       nodeStroke: "rgba(0,0,0,0.25)",
-      edgeBase: "rgba(0,0,0,0.25)",
+      /** Edges sit BEHIND nodes — they're connective tissue, not the lead. */
+      edgeBase: "rgba(35,28,22,0.30)",
+      /** Even fainter than edges — they're aids, not lines. */
+      spokeBase: "rgba(35,28,22,0.10)",
+      /** Halo color for text labels — matches bg so text rests on a clear band. */
+      labelHalo: "#E8DDD0",
       hullLabelFill: "rgba(0,0,0,0.55)",    // subtle — node title labels
       hullLabelStrong: "rgba(0,0,0,0.82)", // bold — cluster/theme labels
       /** Per-node moment titles (right of circles) — must stay dark on paper-toned bg */
       nodeTitleFill: "#1A1A1A",
-      nodeTitleOpacity: 0.88,
+      nodeTitleOpacity: 0.95,
       hullOpacity: 0.03,                   // hulls are labels-only by default
       introBg: "rgba(232,221,208,0.97)",
       introText: "#1A1A1A",
@@ -90,11 +95,13 @@ function palette(theme: "light" | "dark") {
   return {
     bg: "#000000",
     nodeStroke: "rgba(255,255,255,0.2)",
-    edgeBase: "rgba(255,255,255,0.25)",
+    edgeBase: "rgba(255,255,255,0.28)",
+    spokeBase: "rgba(255,255,255,0.08)",
+    labelHalo: "#000000",
     hullLabelFill: "rgba(255,255,255,0.6)",
     hullLabelStrong: "rgba(255,255,255,0.92)",
     nodeTitleFill: "#FFFFFF",
-    nodeTitleOpacity: 0.7,
+    nodeTitleOpacity: 0.95,
     hullOpacity: 0.04,  // labels-only — fills barely register
     introBg: "rgba(0,0,0,0.92)",
     introText: "#FFFFFF",
@@ -304,14 +311,20 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         var dy = Math.max(maxY - minY, 1);
         var cx = (maxX + minX) / 2;
         var cy = (maxY + minY) / 2;
-        var padding = 16;
+        // Generous margins — the graph should feel like it has room
+        // to breathe, not packed wall-to-wall. With the new looser
+        // simulation, the natural bounding box is bigger; we let it
+        // settle inside ~78% of the viewport so groups have negative
+        // space around them.
+        var padding = 36;
         var scale = Math.min(
           (width  - padding * 2) / dx,
           (height - padding * 2) / dy
         );
-        // Then tighten further — the fit should feel confidently filled,
-        // not cautiously framed.
-        scale *= 1.15;
+        // Slight extra slack so the fit never crops nodes (previous
+        // 1.15 multiplier actively zoomed past the bounding box, which
+        // pushed edge nodes off-screen).
+        scale *= 0.95;
         // Clamp to our scaleExtent: 0.25x..4x.
         scale = Math.max(0.25, Math.min(scale, 4));
         var tx = width / 2 - scale * cx;
@@ -341,35 +354,110 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         });
       }
 
+      // Labels we're allowed to show concurrently. The original code
+      // showed every label within a ~38% viewport radius, which on a
+      // dense brain dumped 10–15 overlapping titles. Capping at top-K
+      // by focus keeps the screen calm and lets the user always read
+      // what's right under their gaze.
+      var MAX_VISIBLE_LABELS = 5;
+      var LABEL_SCREEN_FONT_PX = 12;
+      var LABEL_SCREEN_HALO_PX = 3.5;
+      var LABEL_VERT_SPACING_PX = 16; // collision band — labels nudged in this step
+
       function applyFocal() {
         focalFramePending = false;
         var t = lastTransform;
         var cx = width / 2;
         var cy = height / 2;
-        var focusRadius = Math.min(width, height) * 0.38;
+        // Tighter focus zone (was 0.38). Combined with the K-cap below
+        // it means only the dots clearly under the gaze claim labels.
+        var focusRadius = Math.min(width, height) * 0.26;
 
+        // Pass 1 — compute focus + inflated radius for every node, and
+        // collect labelable candidates (nodes with titles + meaningful
+        // focus). We also stash the screen-space position so the second
+        // pass can collision-resolve in pixel space.
+        var candidates = [];
         node.each(function(d) {
           var sx = d.x * t.k + t.x;
           var sy = d.y * t.k + t.y;
           var dist = Math.hypot(sx - cx, sy - cy);
-          var focus = Math.max(0, 1 - dist / focusRadius);  // 1 at centre, 0 at edge
+          var focus = Math.max(0, 1 - dist / focusRadius); // 1 at centre, 0 at edge
 
           // Bubble effect — focused nodes inflate ~90%, giving them a
           // gentle pop feel as the user pans across the graph. CSS
           // transition on the radius smooths the change.
           var baseR = nodeRadius(d);
-          d3.select(this).attr('r', baseR * (1 + focus * 0.9));
+          var focusedR = baseR * (1 + focus * 0.9);
+          d3.select(this).attr('r', focusedR);
 
-          // Labels appear purely based on focus. Positioned near the
-          // (now larger) focused node's right edge so they don't sit
-          // on top of the dot.
+          if (focus > 0.12 && labelByEntryId[d.id]) {
+            candidates.push({
+              id: d.id,
+              x: d.x,
+              y: d.y,
+              sx: sx,
+              sy: sy,
+              focusedR: focusedR,
+              focus: focus,
+            });
+          }
+        });
+
+        // Pass 2 — keep the top-K by focus, then collision-resolve in
+        // screen space. Greedy: if a label's screen-Y overlaps one we've
+        // already placed, nudge it down a band at a time until it doesn't.
+        candidates.sort(function(a, b) { return b.focus - a.focus; });
+        var visible = candidates.slice(0, MAX_VISIBLE_LABELS);
+
+        var placedScreenY = [];
+        var resolvedById = {};
+        for (var i = 0; i < visible.length; i++) {
+          var v = visible[i];
+          var labelScreenX = v.sx + v.focusedR * t.k + 6;
+          var labelScreenY = v.sy;
+          var iter = 8;
+          while (iter-- > 0) {
+            var hit = false;
+            for (var j = 0; j < placedScreenY.length; j++) {
+              if (Math.abs(placedScreenY[j] - labelScreenY) < LABEL_VERT_SPACING_PX) {
+                hit = true;
+                break;
+              }
+            }
+            if (!hit) break;
+            labelScreenY += LABEL_VERT_SPACING_PX;
+          }
+          placedScreenY.push(labelScreenY);
+          // Convert back into world coords for SVG placement inside the
+          // zoomed <g>. We keep label X anchored to the inflated node's
+          // right edge but Y reflects the staggered screen position.
+          var worldY = (labelScreenY - t.y) / t.k;
+          resolvedById[v.id] = {
+            worldX: v.x + v.focusedR + 6 / t.k,
+            worldY: worldY,
+            focus: v.focus,
+          };
+        }
+
+        // Counter-scale font + halo so labels look identical at every
+        // zoom — same as updateHullLabelSize does for cluster labels.
+        var k = Math.max(t.k, 0.25);
+        var worldFontPx = LABEL_SCREEN_FONT_PX / k;
+        var worldHaloPx = LABEL_SCREEN_HALO_PX / k;
+
+        // Pass 3 — push positions and opacity. Anything not in the
+        // top-K hides; visible labels fade in past focus 0.12.
+        node.each(function(d) {
           var labelEl = labelByEntryId[d.id];
           if (!labelEl) return;
-          if (focus > 0.22) {
-            var lo = Math.min(1, (focus - 0.22) / 0.35);
-            var focusedR = baseR * (1 + focus * 0.9);
-            labelEl.setAttribute('x', d.x + focusedR + 3);
-            labelEl.setAttribute('y', d.y);
+          var r = resolvedById[d.id];
+          if (r) {
+            var lo = Math.min(1, (r.focus - 0.12) / 0.30);
+            labelEl.setAttribute('x', r.worldX);
+            labelEl.setAttribute('y', r.worldY);
+            labelEl.setAttribute('font-size', worldFontPx);
+            labelEl.setAttribute('stroke-width', worldHaloPx);
             labelEl.setAttribute('opacity', lo);
           } else {
             labelEl.setAttribute('opacity', 0);
@@ -426,7 +514,7 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         });
       }
 
-      var CLUSTER_STRENGTH = 0.14;
+      var CLUSTER_STRENGTH = 0.28;
 
       function forceCluster(alpha) {
         if (clusterMode === 'none') return;
@@ -446,25 +534,27 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         });
       }
 
-      // Dense "brain" layout: weak charge so nodes don't fling apart,
-      // tight collision so they pack without overlap, soft x/y springs
-      // pulling every node toward centre, and a cluster force pulling
-      // same-theme / same-person nodes toward one another.
+      // Roomier "brain" layout — earlier params packed every node into a
+      // tight ball in the centre of the viewport, leaving big empty
+      // margins. We now: pull edges to ~2x the distance, push nodes
+      // apart ~4x harder, and slacken the x/y recall so groups can fan
+      // out into the canvas. Collision padding is also bumped so dots
+      // stop kissing.
       var sim = d3.forceSimulation(data.nodes)
-        .force('link', d3.forceLink(data.edges).id(function(d) { return d.id; }).distance(40).strength(0.65))
-        .force('charge', d3.forceManyBody().strength(-65))
+        .force('link', d3.forceLink(data.edges).id(function(d) { return d.id; }).distance(80).strength(0.35))
+        .force('charge', d3.forceManyBody().strength(-240).distanceMax(450))
         .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('x', d3.forceX(width  / 2).strength(0.04))
-        .force('y', d3.forceY(height / 2).strength(0.04))
+        .force('x', d3.forceX(width  / 2).strength(0.018))
+        .force('y', d3.forceY(height / 2).strength(0.018))
         .force('cluster', forceCluster)
-        .force('collision', d3.forceCollide().radius(function(d) { return nodeRadius(d) + 3; }))
-        .alpha(cachedPositions ? 0.4 : 1)
-        .alphaDecay(0.028);
+        .force('collision', d3.forceCollide().radius(function(d) { return nodeRadius(d) + 8; }))
+        .alpha(cachedPositions ? 0.6 : 1)
+        .alphaDecay(0.024);
 
-      // Thread edges — solid white, bright, visible against the dark
-      // canvas. No glow layer: halos were spilling past node edges and
-      // reading as "lines covering dots." Nodes render on a layer above
-      // these, so line endpoints are fully tucked under each dot.
+      // Thread edges — connective tissue, NOT the lead. Earlier they
+      // shipped at 0.85 opacity solid white, which dominated the canvas
+      // and made the whole map read as a tangle. Dots and labels should
+      // carry the eye; edges fade into a soft web behind them.
       var linkGlow = linkLayer.selectAll('line.link-glow')
         .data([])                 // glow retired; keep handle so filter / tick code stays consistent
         .enter()
@@ -475,9 +565,9 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         .enter()
         .append('line')
         .attr('class', 'edge')
-        .attr('stroke', '#FFFFFF')
-        .attr('stroke-width', function(d) { return 1.1 + (d.confidence || 0.5) * 0.9; })
-        .attr('stroke-opacity', 0.85)
+        .attr('stroke', theme.edgeBase)
+        .attr('stroke-width', function(d) { return 0.7 + (d.confidence || 0.5) * 0.6; })
+        .attr('stroke-opacity', 1)
         .attr('stroke-linecap', 'butt')
         .style('cursor', 'pointer')
         .on('click', function(event, d) {
@@ -508,9 +598,9 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         spokes.exit().remove();
         spokes = spokes.enter()
           .append('line')
-          .attr('stroke', '#FFFFFF')
+          .attr('stroke', theme.spokeBase)
           .attr('stroke-width', 0.5)
-          .attr('stroke-opacity', 0.2)
+          .attr('stroke-opacity', 1)
           .attr('stroke-linecap', 'butt')
           .attr('pointer-events', 'none')
           .merge(spokes);
@@ -584,15 +674,25 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         return s.length > 32 ? s.slice(0, 32) + '…' : s;
       }
 
+      // Node title labels are drawn last so they sit on top of edges +
+      // hull labels. Each label has a halo (stroke painted BEHIND fill in
+      // bg color) so it stays legible no matter what it crosses. Font
+      // size and stroke width are counter-scaled per frame in applyFocal
+      // to keep them a constant size on screen at every zoom level.
       var labels = nodeLabelLayer.selectAll('text')
         .data(data.nodes.filter(function(d) { return !!d.title; }))
         .enter()
         .append('text')
         .attr('class', 'node-label')
-        .attr('font-size', 6)
+        .attr('font-size', 11)
+        .attr('font-weight', 600)
         .attr('font-family', 'Helvetica, Arial, sans-serif')
         .attr('fill', theme.nodeTitleFill)
         .attr('fill-opacity', theme.nodeTitleOpacity)
+        .attr('stroke', theme.labelHalo)
+        .attr('stroke-width', 3.5)
+        .attr('stroke-linejoin', 'round')
+        .attr('paint-order', 'stroke fill')
         .attr('opacity', 0)
         .attr('pointer-events', 'none')
         .attr('dominant-baseline', 'middle')
@@ -662,10 +762,41 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         return Math.min(24, Math.max(11, 8 + Math.sqrt(count) * 2.6));
       }
 
+      // Smoothing curve used to turn a convex hull polygon into a soft
+      // organic territory blob (instead of a spiky polygon).
+      var hullCurve = d3.line()
+        .curve(d3.curveCatmullRomClosed.alpha(0.5))
+        .x(function(p) { return p[0]; })
+        .y(function(p) { return p[1]; });
+
+      var hullPath = null;
+
       function renderHulls() {
         var groups = currentHullMode === 'none' ? [] : hullGroups(currentHullMode);
 
-        // Labels only — no paths. Spatial clustering conveys the grouping.
+        // Soft territory shapes — convex hull of each cluster, padded
+        // outward and smoothed into a closed curve. Filled with the
+        // theme's own color at ~10% alpha so groups read as gentle
+        // regions without overwhelming the dots that sit on top.
+        // Earlier we tried label-only clustering, but with looser
+        // forces the eye lost the "pockets". A subtle wash brings the
+        // grouping back without the heavy fills of the original design.
+        hullPath = hullLayer.selectAll('path.hull').data(groups, function(d) { return d.key; });
+        hullPath.exit().remove();
+        hullPath = hullPath.enter()
+          .append('path')
+          .attr('class', 'hull')
+          .attr('pointer-events', 'none')
+          .attr('stroke-linejoin', 'round')
+          .merge(hullPath)
+          .attr('fill', function(d) { return hullColor(d, currentHullMode); })
+          .attr('fill-opacity', 0.11)
+          .attr('stroke', function(d) { return hullColor(d, currentHullMode); })
+          .attr('stroke-opacity', 0.22)
+          .attr('stroke-width', 1);
+
+        // Halo (paint-order: stroke fill in bg color) keeps labels
+        // readable even when they sit on top of dots, edges, or other text.
         hullLabel = hullLabelLayer.selectAll('text').data(groups, function(d) { return d.key; });
         hullLabel.exit().remove();
         hullLabel = hullLabel.enter()
@@ -673,6 +804,9 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
           .attr('text-anchor', 'middle')
           .attr('pointer-events', 'none')
           .attr('fill', theme.hullLabelStrong)
+          .attr('stroke', theme.labelHalo)
+          .attr('stroke-linejoin', 'round')
+          .attr('paint-order', 'stroke fill')
           .attr('font-weight', 700)
           .attr('letter-spacing', 0.4)
           .attr('font-family', 'Helvetica, Arial, sans-serif')
@@ -681,15 +815,51 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         updateHullLabelSize();
       }
 
+      function positionHulls() {
+        if (!hullPath || !hullPath.size()) return;
+        hullPath.attr('d', function(g) {
+          // Need at least 3 distinct points for a polygon hull. Two-node
+          // clusters skip the blob — their label alone conveys the group.
+          if (!g.nodes || g.nodes.length < 3) return null;
+          var pts = g.nodes.map(function(n) { return [n.x, n.y]; });
+          var hull = d3.polygonHull(pts);
+          if (!hull || hull.length < 3) return null;
+          // Pad outward so the blob extends comfortably past the outer
+          // dots, giving each pocket some breathing room around its edge.
+          var padded = expandHull(hull, 28);
+          return hullCurve(padded);
+        });
+      }
+
       function updateHullLabelSize() {
-        // Counter-scale font-size to the current zoom so labels stay
-        // a consistent screen size whether zoomed out or deep in.
+        // Counter-scale font-size and halo to the current zoom so labels
+        // stay a consistent screen size whether zoomed out or deep in.
+        // Also fade hull labels as the user zooms past ~1.4x — at that
+        // point individual node titles are doing the talking and cluster
+        // names are just visual noise.
         if (!hullLabel || !hullLabel.size()) return;
         var t = (typeof lastTransform !== 'undefined' && lastTransform) ? lastTransform : { k: 1 };
         var k = Math.max(t.k || 1, 0.25);
-        hullLabel.attr('font-size', function(d) {
-          return hullLabelScreenPx(d.nodes.length) / k;
-        });
+        // Linear fade from full opacity at k<=1.4 to 0.18 at k>=2.4.
+        var fadeStart = 1.4;
+        var fadeEnd = 2.4;
+        var fade;
+        if (k <= fadeStart) {
+          fade = 1;
+        } else if (k >= fadeEnd) {
+          fade = 0.18;
+        } else {
+          fade = 1 - ((k - fadeStart) / (fadeEnd - fadeStart)) * (1 - 0.18);
+        }
+        hullLabel
+          .attr('font-size', function(d) {
+            return hullLabelScreenPx(d.nodes.length) / k;
+          })
+          .attr('stroke-width', function(d) {
+            // Halo scales lightly with font so it never overpowers the text.
+            return Math.max(2, hullLabelScreenPx(d.nodes.length) * 0.18) / k;
+          })
+          .attr('opacity', fade);
       }
 
       renderHulls();
@@ -714,6 +884,7 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
         positionLinkEnds(linkGlow);
         positionLinkEnds(link);
         positionSpokes();
+        positionHulls();
         node
           .attr('cx', function(d) { return d.x; })
           .attr('cy', function(d) { return d.y; });
@@ -744,7 +915,7 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
 
         if (!anyActive) {
           node.attr('opacity', 1);
-          link.attr('stroke-opacity', 0.85);
+          link.attr('stroke-opacity', 1);
           return;
         }
 
@@ -774,7 +945,7 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
           var tid = typeof d.target === 'object' ? d.target.id : d.target;
           return (matchSet.has(sid) && matchSet.has(tid)) ? hi : lo;
         }
-        link.attr('stroke-opacity',     function(d) { return edgeOpacity(d, 0.92, 0.07); });
+        link.attr('stroke-opacity',     function(d) { return edgeOpacity(d, 1, 0.18); });
         linkGlow.attr('stroke-opacity', function(d) { return edgeOpacity(d, 0.25, 0.02); });
       };
 
@@ -881,7 +1052,7 @@ export function graphWebContent(opts: GraphWebContentOpts): string {
                      revealedIds[sid] && revealedIds[tid];
             })
               .transition().duration(200)
-              .attr('stroke-opacity', 0.7);
+              .attr('stroke-opacity', 1);
           }, i * perNodeDelay);
         });
 

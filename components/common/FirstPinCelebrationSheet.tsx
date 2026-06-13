@@ -36,7 +36,7 @@ interface FirstPinCelebrationSheetProps {
 }
 
 /**
- * Slide-up celebration sheet that fires the first time a user pins a moment.
+ * Slide-up celebration sheet that fires the first time a user marks a core memory.
  * Hosted at the (tabs) layout via `FirstPinCelebrationHost` so it stays
  * mounted across tab switches and composer dismissal.
  *
@@ -129,7 +129,7 @@ export function FirstPinCelebrationSheet({
               marginTop: 22,
             }}
           >
-            You pinned your first moment
+            You saved your first core memory
           </Text>
 
           <Text
@@ -143,7 +143,7 @@ export function FirstPinCelebrationSheet({
               paddingHorizontal: 8,
             }}
           >
-            Pinning your favorites helps with selection for your high-quality annual
+            Core memories help with selection for your high-quality annual
             printed album
           </Text>
 

@@ -32,36 +32,68 @@ export function wordmarkUrl(): string {
 }
 
 /**
- * Primary CTA target for transactional emails.
+ * Universal Link host. CTA URLs targeting `/app/*` under this host are
+ * claimed by the native app via Associated Domains (iOS) / App Links
+ * (Android) — see `app.config.ts` for the entitlement + intent filter,
+ * and `marketing-site/universal-links/README.md` for the static files the
+ * marketing site needs to publish.
  *
- * - In Supabase Edge Functions, `SUPABASE_URL` is set → CTAs use
- *   `{SUPABASE_URL}/functions/v1/open-app` (bridge page → `littlemoments://`).
- * - Override with `EMAIL_APP_OPEN_URL` (e.g. after you add `/open` on getlittlemoments.com).
- * - Local `npm run email:preview`: set `SUPABASE_URL` or `EMAIL_APP_OPEN_URL` in `.env` for correct links.
+ * Override with `EMAIL_UNIVERSAL_LINK_HOST` if you ever move domains. We
+ * intentionally do NOT fall back to the Supabase open-app bridge anymore —
+ * in-app email browsers (Gmail iOS, Outlook, LinkedIn) silently block the
+ * JS-initiated `littlemoments://` redirect that bridge relied on, which is
+ * the root cause of the white-page email CTA bug. Universal Links open
+ * the app directly (no bridge page) and degrade to the marketing site's
+ * fallback HTML when the app isn't installed.
  */
-export function resolveEmailAppOpenUrl(): string {
+function universalLinkHost(): string {
   const fromProcess =
-    typeof process !== "undefined" && process.env?.EMAIL_APP_OPEN_URL?.trim()
-      ? process.env.EMAIL_APP_OPEN_URL.trim()
+    typeof process !== "undefined" &&
+    process.env?.EMAIL_UNIVERSAL_LINK_HOST?.trim()
+      ? process.env.EMAIL_UNIVERSAL_LINK_HOST.trim()
       : undefined;
   if (fromProcess) return fromProcess;
 
-  const Deno_ = (globalThis as { Deno?: { env: { get: (k: string) => string | undefined } } }).Deno;
-  const fromDeno = Deno_?.env?.get("EMAIL_APP_OPEN_URL")?.trim();
+  const Deno_ = (
+    globalThis as { Deno?: { env: { get: (k: string) => string | undefined } } }
+  ).Deno;
+  const fromDeno = Deno_?.env?.get("EMAIL_UNIVERSAL_LINK_HOST")?.trim();
   if (fromDeno) return fromDeno;
 
-  const supabaseFromProcess =
-    typeof process !== "undefined" && process.env?.SUPABASE_URL?.trim()
-      ? process.env.SUPABASE_URL.trim()
-      : undefined;
-  const supabaseUrl = supabaseFromProcess ?? Deno_?.env?.get("SUPABASE_URL")?.trim();
-  if (supabaseUrl) {
-    const base = supabaseUrl.replace(/\/$/, "");
-    return `${base}/functions/v1/open-app`;
-  }
-
-  return "https://getlittlemoments.com/open";
+  return "getlittlemoments.com";
 }
+
+function buildUniversalLink(subpath: string): string {
+  const host = universalLinkHost().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const clean = subpath.startsWith("/") ? subpath : `/${subpath}`;
+  return `https://${host}${clean}`;
+}
+
+/**
+ * Generic "open the app" Universal Link — opens the app on the user's
+ * resolved home screen (Today, mid-onboarding step, etc.). The marketing
+ * site is expected to serve a "Get the app" fallback at this URL for
+ * users who don't have the app installed.
+ */
+export function resolveEmailAppOpenUrl(): string {
+  return buildUniversalLink("/app");
+}
+
+/**
+ * Per-feature deep-link builders. Each one maps to a route handler in
+ * `app/+native-intent.tsx`. Keep these in sync with that file.
+ */
+export const emailDeepLinks = {
+  open: (): string => buildUniversalLink("/app"),
+  today: (): string => buildUniversalLink("/app/today"),
+  capture: (): string => buildUniversalLink("/app/today/capture"),
+  chapter: (chapterId: string): string =>
+    buildUniversalLink(`/app/chapter/${encodeURIComponent(chapterId)}`),
+  chapters: (): string => buildUniversalLink("/app/chapters"),
+  threads: (): string => buildUniversalLink("/app/threads"),
+  memories: (): string => buildUniversalLink("/app/memories"),
+  paywall: (): string => buildUniversalLink("/app/paywall"),
+};
 
 const BG = "#FFFFEB";
 const FG = "#1A1A1A";

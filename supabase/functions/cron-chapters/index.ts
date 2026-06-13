@@ -319,6 +319,7 @@ Deno.serve(async (req) => {
               weekLabel,
               momentCount: weekEntries.length,
               chapterNumber,
+              chapterId: chapter.id,
             });
             await dispatch(supabase, {
               userId: p.id,

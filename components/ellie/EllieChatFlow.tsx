@@ -1,5 +1,6 @@
 import { MicRecorder } from "@/components/composer/MicRecorder";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
+import { CountdownProgressBar } from "@/components/ellie/CountdownProgressBar";
 import { useTheme } from "@/hooks/useTheme";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import {
@@ -179,15 +180,7 @@ interface ChatItem {
   showAvatar?: boolean;
 }
 
-const DURATION_SECONDS = 120;
-
-function formatTimer(remaining: number): string {
-  const abs = Math.abs(remaining);
-  const m = Math.floor(abs / 60);
-  const s = abs % 60;
-  const sign = remaining < 0 ? "-" : "";
-  return `${sign}${m}:${s.toString().padStart(2, "0")}`;
-}
+const DURATION_SECONDS = 60;
 
 function countWords(text: string): number {
   const trimmed = text.trim();
@@ -283,6 +276,15 @@ export function EllieChatFlow({
   const scrollToEnd = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
   }, []);
+
+  /**
+   * Tracks whether any content has been added past the initial prompt card
+   * (user reply, Ellie follow-up, preview, etc.). Until that's true, we skip
+   * the auto-scroll-to-end on phase changes, keyboard show events, and
+   * `onContentSizeChange` so the question / photo prompt stays visible at the
+   * top of the chat instead of getting pushed off-screen.
+   */
+  const hasContentBeyondPromptRef = useRef(false);
 
   const questionChrome: "rich" | "minimal" | undefined =
     promptType === "question"
@@ -407,18 +409,34 @@ export function EllieChatFlow({
     setGoingDeeper(false);
     setDeeperCount(0);
     followUpAskedRef.current = false;
+    hasContentBeyondPromptRef.current = false;
     setWelcomeStageReady(true);
     setMessages(initialMessagesRef.current.map((m) => ({ ...m })));
     onAbortFlow?.();
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 100);
   }, [stopTimer, onAbortFlow]);
 
   useEffect(() => () => stopTimer(), [stopTimer]);
+
+  /**
+   * Once the chat has more than the initial seed messages (welcome + prompt
+   * + extraGuidance), let scroll-to-end fire normally so follow-up replies
+   * stay in view. We compare against the seeded length captured by
+   * `initialMessagesRef`.
+   */
+  useEffect(() => {
+    const baseline = initialMessagesRef.current.length;
+    if (baseline === 0) return;
+    if (messages.length > baseline) {
+      hasContentBeyondPromptRef.current = true;
+    }
+  }, [messages.length]);
 
   useEffect(() => {
     const showEvent =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const sub = Keyboard.addListener(showEvent, () => {
+      if (!hasContentBeyondPromptRef.current) return;
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 280);
     });
     return () => sub.remove();
@@ -432,7 +450,6 @@ export function EllieChatFlow({
     onFlowStarted?.("typing");
     setPhase("recording");
     startTimer();
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 400);
   }, [startTimer, onFlowStarted]);
 
   const handleStartSpeaking = useCallback(() => {
@@ -443,7 +460,6 @@ export function EllieChatFlow({
     onFlowStarted?.("speaking");
     startTimer();
     setPhase("mic");
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 400);
   }, [startTimer, onFlowStarted]);
 
   const autoStartConsumedRef = useRef(false);
@@ -1136,7 +1152,10 @@ export function EllieChatFlow({
         }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={() => {
+          if (!hasContentBeyondPromptRef.current) return;
+          scrollRef.current?.scrollToEnd({ animated: true });
+        }}
       >
         {headerNode}
         {messages.map((msg) => {
@@ -1209,7 +1228,7 @@ export function EllieChatFlow({
                       color: colors.textMuted,
                     }}
                   >
-                    {timerHintOverride ?? "You'll have 2 minutes to share"}
+                    {timerHintOverride ?? "You'll have 60 seconds to share"}
                   </Text>
                 </View>
               )}
@@ -1331,20 +1350,15 @@ export function EllieChatFlow({
                   alignItems: "center",
                   marginBottom: 8,
                   paddingHorizontal: 4,
+                  gap: 10,
                 }}
               >
-                <View style={{ width: 40 }} />
-                <Text
-                  style={{
-                    flex: 1,
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: isOvertime ? "#EF4444" : colors.text,
-                    textAlign: "center",
-                  }}
-                >
-                  {formatTimer(remaining)}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <CountdownProgressBar
+                    elapsed={elapsed}
+                    durationSeconds={DURATION_SECONDS}
+                  />
+                </View>
                 <View style={{ width: 40, alignItems: "center", justifyContent: "center" }}>
                   <Pressable
                     onPress={handleAbortFlow}
@@ -1364,17 +1378,11 @@ export function EllieChatFlow({
                 </View>
               </View>
             ) : (
-              <View style={{ alignItems: "center", marginBottom: 8 }}>
-                <Text
-                  style={{
-                    fontFamily: "LibreBaskerville-Bold",
-                    fontSize: 28,
-                    color: isOvertime ? "#EF4444" : colors.text,
-                    textAlign: "center",
-                  }}
-                >
-                  {formatTimer(remaining)}
-                </Text>
+              <View style={{ marginBottom: 8 }}>
+                <CountdownProgressBar
+                  elapsed={elapsed}
+                  durationSeconds={DURATION_SECONDS}
+                />
               </View>
             )
           )}

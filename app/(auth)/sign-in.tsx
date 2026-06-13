@@ -31,6 +31,10 @@ import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
+import {
+  clearLoginFromPreQuizWelcomeIntent,
+  getLoginFromPreQuizWelcomeIntent,
+} from "@/lib/onboardingLoginIntent";
 
 const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
 const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
@@ -143,6 +147,10 @@ export default function SignInScreen() {
     const quizState = useOnboardingQuizStore.getState();
     const localAnswerCount = Object.keys(quizState.answers).length;
     const profileAnswerCount = Object.keys(healed?.quiz_answers ?? {}).length;
+    // Stale intent: user tapped Login on pre-quiz welcome then went back and completed the quiz.
+    if (localAnswerCount > 0) {
+      await clearLoginFromPreQuizWelcomeIntent();
+    }
     if (localAnswerCount > 0 && profileAnswerCount === 0) {
       const flush = await quizState.flushToProfile(user.id);
       if (flush.ok) {
@@ -159,6 +167,33 @@ export default function SignInScreen() {
           healed = refreshed as Profile;
           setProfile(healed);
         }
+      }
+    } else {
+      const loginFromPreQuizWelcome = await getLoginFromPreQuizWelcomeIntent();
+      if (
+        loginFromPreQuizWelcome &&
+        localAnswerCount === 0 &&
+        profileAnswerCount === 0
+      ) {
+        const flush = await quizState.flushSkipQuizDefaultsToProfile(user.id);
+        if (flush.ok) {
+          posthog.capture(
+            "skip_quiz_defaults_flushed_to_profile",
+            onboardingEventProps(0, { source: "pre_quiz_login" })
+          );
+          await clearLoginFromPreQuizWelcomeIntent();
+          const { data: refreshed } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", user.id)
+            .single();
+          if (refreshed) {
+            healed = refreshed as Profile;
+            setProfile(healed);
+          }
+        }
+      } else if (loginFromPreQuizWelcome) {
+        await clearLoginFromPreQuizWelcomeIntent();
       }
     }
 

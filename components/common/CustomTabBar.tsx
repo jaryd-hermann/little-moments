@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { View, Pressable, Text, Animated, Easing } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
@@ -8,6 +8,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "@/hooks/useTheme";
 import { useTabBarStore } from "@/store/tabBarStore";
 import { useUnseenStore } from "@/store/unseenStore";
+import { useCaptureFirstMomentCoachmarkStore } from "@/store/captureFirstMomentCoachmarkStore";
 
 /** Slow, gentle rotation used by Connect / Chapters icons when content is unseen. */
 const UNSEEN_ROTATION_PERIOD_MS = 5200;
@@ -538,12 +539,45 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const tabBarHidden = useTabBarStore((s) => s.hidden);
+  const setCoachmarkTargets = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.setTargets
+  );
+  const remeasureTick = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.remeasureTick
+  );
+  const coachmarksVisible = useCaptureFirstMomentCoachmarkStore(
+    (s) => s.visible
+  );
+  const tabRefs = useRef<Record<string, View | null>>({});
   const unseenThreadCount = useUnseenStore((s) => s.unseenThreadCount);
   const unseenChapterCount = useUnseenStore((s) => s.unseenChapterCount);
   const forceUnseenThread = useUnseenStore((s) => s.forceUnseenThreadAttention);
   const forceUnseenChapter = useUnseenStore(
     (s) => s.forceUnseenChapterAttention
   );
+
+  const reportTabTargets = useCallback(() => {
+    const mapping = {
+      capture: "captureTab",
+      capsule: "capsuleTab",
+      chapters: "chaptersTab",
+      brain: "connectTab",
+    } as const;
+    for (const item of TAB_ITEMS) {
+      const ref = tabRefs.current[item.key];
+      const targetKey = mapping[item.key as keyof typeof mapping];
+      ref?.measureInWindow((x, y, width, height) => {
+        if (width <= 0 || height <= 0) return;
+        setCoachmarkTargets({ [targetKey]: { x, y, width, height } });
+      });
+    }
+  }, [setCoachmarkTargets]);
+
+  useEffect(() => {
+    if (!coachmarksVisible) return;
+    const timer = setTimeout(reportTabTargets, 60);
+    return () => clearTimeout(timer);
+  }, [coachmarksVisible, remeasureTick, reportTabTargets]);
 
   if (tabBarHidden) return null;
 
@@ -603,17 +637,24 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               (unseenChapterCount > 0 || forceUnseenChapter));
 
           return (
-            <Pressable
+            <View
               key={item.key}
-              onPress={onPress}
-              style={{
-                flex: 1,
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                paddingVertical: 4,
+              ref={(node) => {
+                tabRefs.current[item.key] = node;
               }}
+              collapsable={false}
+              style={{ flex: 1 }}
             >
+              <Pressable
+                onPress={onPress}
+                style={{
+                  flex: 1,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  paddingVertical: 4,
+                }}
+              >
               {item.key === "capsule" ? (
                 <CapsuleSquareIcon
                   filled={isFocused}
@@ -652,7 +693,8 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               >
                 {item.label}
               </Text>
-            </Pressable>
+              </Pressable>
+            </View>
           );
         })}
       </View>

@@ -37,14 +37,13 @@ export function healProfileIfStuckAfterCapture(
 }
 
 /**
- * Photo-focus + quiz v1 onboarding router.
+ * Photo-focus onboarding router (v2 — capture in main app).
  *
- * Phase order: quiz (pre-auth) -> photo_permission -> activation -> reveal
- *   -> notifications -> done (with the paywall value-anchor + RC modal
- *   pushed from notifications-prompt after the rhythm pick).
+ * Phase order: quiz (pre-auth) -> photo_permission -> notifications
+ *   -> first-moment screen -> Capture tab (+ coachmarks).
  *
- * Legacy v2 phases (resonance / personalized / donation / trial / etc.) are
- * bridged to the closest current step so in-flight users don't get stuck.
+ * Paywall value-anchor + RC modal are pushed from notifications for
+ * control users only when the `quiz` flag is control; test skips paywall.
  */
 export function routeAfterAuth(profile: Profile | null) {
   if (!profile) {
@@ -66,30 +65,22 @@ export function routeAfterAuth(profile: Profile | null) {
 
   switch (phase) {
     case "quiz":
-      // Defensive bridge — shouldn't normally happen because the quiz
-      // runs pre-auth and the post-auth flush writes 'photo_permission'.
-      // If a session is somehow on 'quiz' (e.g. flush failed silently),
-      // skip past the quiz to photo permission rather than restarting it
-      // post-auth, which would feel broken.
       router.replace("/(auth)/photo-permission");
       break;
     case "onboarding_welcome":
-      router.replace("/(auth)/onboarding-welcome");
+      router.replace("/(auth)/photo-permission");
       break;
     case "photo_permission":
       router.replace("/(auth)/photo-permission");
       break;
     case "activation":
-      router.replace("/(auth)/activation");
-      break;
     case "reveal":
-      router.replace("/(auth)/reveal");
+      router.replace("/(auth)/notifications-prompt");
       break;
     case "notifications":
       router.replace("/(auth)/notifications-prompt");
       break;
 
-    // Legacy v2 phases — bridge mid-flow users to the closest current step.
     case "resonance":
     case "follow_up":
     case "slides":
@@ -105,4 +96,8 @@ export function routeAfterAuth(profile: Profile | null) {
     default:
       router.replace("/(auth)/photo-permission");
   }
+}
+
+export function routeToFirstMomentScreen() {
+  router.replace("/(auth)/first-moment");
 }

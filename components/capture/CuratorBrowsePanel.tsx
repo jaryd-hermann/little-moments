@@ -8,9 +8,18 @@ import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
+import { CaptureDatePill } from "@/components/capture/CaptureDatePill";
+import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
 import { Image } from "expo-image";
 import { usePostHog } from "posthog-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   FlatList,
   NativeScrollEvent,
@@ -42,6 +51,12 @@ function loopLogicalIndex(
 interface CuratorBrowsePanelProps {
   /** Large display line (e.g. Yesterday / Today / weekday) — PM Gothic. */
   headingTitle: string;
+  /** Optional inline muted suffix after the title (e.g. ", Jun 8"). */
+  headingTitleSecondary?: string;
+  /** Optional pill (e.g. moment count) shown next to the chevron. */
+  headingTagBubble?: ReactNode;
+  /** Hide the internal CaptureBrowseHeading entirely — parent owns it. */
+  hideHeading?: boolean;
   onPressChangeDay: () => void;
   dayPhotos: MediaAsset[];
   loadingPhotos: boolean;
@@ -63,10 +78,27 @@ interface CuratorBrowsePanelProps {
    * when there are no photos for the selected day.
    */
   ellieNoPhotosFirstCapture?: boolean;
+  /**
+   * Hide the dashed "no photos … let's reflect" banner — used on the
+   * Capture screen for *today*, where the parent renders a dedicated
+   * "Capture with camera" CTA above instead.
+   */
+  suppressNoPhotosBanner?: boolean;
+  /**
+   * Launch the native camera (photo or short video). When provided,
+   * a "Take a photo/video" secondary CTA appears under the primary
+   * "Choose this moment" button. Replaces the previous
+   * "Capture with a question instead" CTA now that the question prompt
+   * flow is hidden in favour of photo/video capture.
+   */
+  onCaptureWithCamera?: () => void;
 }
 
 export function CuratorBrowsePanel({
   headingTitle,
+  headingTitleSecondary,
+  headingTagBubble,
+  hideHeading = false,
   onPressChangeDay,
   dayPhotos,
   loadingPhotos,
@@ -78,6 +110,8 @@ export function CuratorBrowsePanel({
   analyticsContext,
   forceQuestionModeNonce = 0,
   ellieNoPhotosFirstCapture = false,
+  suppressNoPhotosBanner = false,
+  onCaptureWithCamera,
 }: CuratorBrowsePanelProps) {
   const { colors, theme } = useTheme();
   const posthog = usePostHog();
@@ -136,7 +170,7 @@ export function CuratorBrowsePanel({
     if (dayChanged) prevDayKeyRef.current = dayKey;
 
     if (finishedLoad || dayChanged) {
-      setMode(dayPhotos.length === 0 ? "questions" : "photos");
+      setMode("photos");
       lastHapticPhotoIdx.current = 0;
       lastHapticQuestionIdx.current = 0;
     }
@@ -239,8 +273,14 @@ export function CuratorBrowsePanel({
 
   const inPhotoMode =
     !loadingPhotos && dayPhotos.length > 0 && mode === "photos";
-  const inQuestionMode =
-    !loadingPhotos && (dayPhotos.length === 0 || mode === "questions");
+  /**
+   * Question prompt flow is temporarily hidden — the Capture experience
+   * only surfaces photo/video capture for now. The state machinery is
+   * kept intact so we can re-enable it by flipping this flag back to the
+   * original expression. (See user request: "hide the question prompt
+   * flow and only lean into photo/video".)
+   */
+  const inQuestionMode = false;
 
   useEffect(() => {
     if (loadingPhotos || !inPhotoMode) return;
@@ -384,33 +424,37 @@ export function CuratorBrowsePanel({
 
   return (
     <View style={{ flex: 1, paddingTop: 4 }}>
-      <CaptureBrowseHeading
-        title={headingTitle}
-        hideChangeDay={hideChangeDay}
-        onPressChangeDay={onPressChangeDay}
-        topLeftAction={
-          showBackToBrowse
-            ? { label: "← change", onPress: () => onBackToBrowse?.() }
-            : undefined
-        }
-        titleAccessory={
-          inQuestionMode && dayPhotos.length > 0 ? (
-            <Pressable onPress={goPhotos} hitSlop={6}>
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 14,
-                  color: colors.textSecondary,
-                }}
-              >
-                Pick a photo instead
-              </Text>
-            </Pressable>
-          ) : undefined
-        }
-      />
+      {hideHeading ? null : (
+        <CaptureBrowseHeading
+          title={headingTitle}
+          titleSecondary={headingTitleSecondary}
+          tagBubble={headingTagBubble}
+          hideChangeDay={hideChangeDay}
+          onPressChangeDay={onPressChangeDay}
+          topLeftAction={
+            showBackToBrowse
+              ? { label: "← change", onPress: () => onBackToBrowse?.() }
+              : undefined
+          }
+          titleAccessory={
+            inQuestionMode && dayPhotos.length > 0 ? (
+              <Pressable onPress={goPhotos} hitSlop={6}>
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 14,
+                    color: colors.textSecondary,
+                  }}
+                >
+                  Pick a photo instead
+                </Text>
+              </Pressable>
+            ) : undefined
+          }
+        />
+      )}
 
-      {!loadingPhotos && N === 0 ? (
+      {!loadingPhotos && N === 0 && !suppressNoPhotosBanner ? (
         <View
           style={{
             marginHorizontal: CARD_SIDE_GUTTER,
@@ -435,9 +479,7 @@ export function CuratorBrowsePanel({
               textAlign: "center",
             }}
           >
-            {ellieNoPhotosFirstCapture
-              ? `No photos from ${headingTitle.toLowerCase()}, let's use a question.`
-              : `No photos from ${headingTitle.toLowerCase()} — let's reflect instead.`}
+            {`No photos or videos from ${headingTitle.toLowerCase()}.`}
           </Text>
         </View>
       ) : null}
@@ -483,10 +525,13 @@ export function CuratorBrowsePanel({
               offset: PAGE_WIDTH * index,
               index,
             })}
-            renderItem={({ item, index }) => {
-              const prev = photoLoopData[index - 1];
-              const next = photoLoopData[index + 1];
-              const badgeIdx = usePhotoLoop ? (index % N) + 1 : index + 1;
+            renderItem={({ item, index: listIndex }) => {
+              const prev = photoLoopData[listIndex - 1];
+              const next = photoLoopData[listIndex + 1];
+              const badgeIdx = usePhotoLoop ? (listIndex % N) + 1 : listIndex + 1;
+              const isActivePhoto = usePhotoLoop
+                ? listIndex % N === photoIndex
+                : listIndex === photoIndex;
               return (
                 <View
                   style={{
@@ -559,36 +604,38 @@ export function CuratorBrowsePanel({
                         overflow: "hidden",
                         zIndex: 1,
                         borderWidth: 2,
-                        borderColor: "#000000",
+                        borderColor: colors.text,
                         backgroundColor: colors.surfaceSecondary,
                       }}
                     >
-                      <Image
-                        source={{ uri: item.uri }}
-                        style={{ width: "100%", height: "100%" }}
-                        contentFit="cover"
-                      />
+                      <DayAssetPreview asset={item} animate={isActivePhoto} />
                       <View
                         style={{
                           position: "absolute",
                           bottom: 12,
                           left: 12,
-                          backgroundColor: "rgba(0,0,0,0.55)",
-                          borderRadius: 999,
-                          paddingHorizontal: 10,
-                          paddingVertical: 5,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
                         }}
                       >
-                        <Text
-                          style={{
-                            fontFamily: "Roboto-Medium",
-                            fontSize: 12,
-                            color: "#FFF",
-                          }}
-                        >
-                          {format(new Date(item.creationTime), "h:mm a")} ·{" "}
-                          {badgeIdx}/{N}
-                        </Text>
+                        {item.mediaType === "video" ? (
+                          <View
+                            style={{
+                              paddingHorizontal: 8,
+                              paddingVertical: 6,
+                              borderRadius: 9999,
+                              backgroundColor: "#FFC100",
+                              borderWidth: 2,
+                              borderColor: "#000000",
+                            }}
+                          >
+                            <Ionicons name="videocam" size={12} color="#1A1A1A" />
+                          </View>
+                        ) : null}
+                        <CaptureDatePill
+                          label={`${format(new Date(item.creationTime), "h:mm a")} · ${badgeIdx}/${N}`}
+                        />
                       </View>
                     </View>
                   </View>
@@ -804,35 +851,46 @@ export function CuratorBrowsePanel({
                   textTransform: "uppercase",
                 }}
               >
-                Choose this photo
+                Choose this moment
               </Text>
             </Pressable>
-            <View style={{ alignItems: "center", marginTop: 26 }}>
-              <Pressable
-                onPress={goQuestions}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                  paddingHorizontal: 16,
-                  paddingVertical: 8,
-                  borderRadius: 9999,
-                  borderWidth: 1.5,
-                  borderColor: colors.border,
-                }}
-              >
-                <Ionicons name="text-outline" size={20} color={colors.text} />
-                <Text
+            {onCaptureWithCamera ? (
+              <View style={{ alignItems: "center", marginTop: 14 }}>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Medium
+                    );
+                    onCaptureWithCamera();
+                  }}
                   style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 14,
-                    color: colors.text,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: 9999,
+                    borderWidth: 1.5,
+                    borderColor: colors.border,
                   }}
                 >
-                  Capture with a question instead
-                </Text>
-              </Pressable>
-            </View>
+                  <Ionicons
+                    name="camera-outline"
+                    size={20}
+                    color={colors.text}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Medium",
+                      fontSize: 14,
+                      color: colors.text,
+                    }}
+                  >
+                    Take a photo/video
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </>
         ) : null}
 

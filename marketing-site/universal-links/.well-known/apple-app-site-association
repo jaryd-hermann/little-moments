@@ -1,0 +1,22 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["38NFF5BY78.com.jarydhermann.littlemoments"],
+        "components": [
+          {
+            "/": "/app",
+            "comment": "Opens the app — generic entry point used by email CTAs."
+          },
+          {
+            "/": "/app/*",
+            "comment": "Opens the app on a specific destination (chapter, capture, threads, etc.)."
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["38NFF5BY78.com.jarydhermann.littlemoments"]
+  }
+}

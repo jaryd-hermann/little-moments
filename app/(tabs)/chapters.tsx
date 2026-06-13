@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
@@ -18,20 +17,46 @@ import { useChapterDevStore } from "@/store/chapterStore";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 import { useEntries } from "@/hooks/useEntries";
 import {
-  chapterImageSlideToMedia,
-  chapterWeekLabel,
   type ChapterRecord,
 } from "@/lib/chapters";
-import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
-import { TryPremiumPill } from "@/components/common/TryPremiumPill";
-import { Shimmer } from "@/components/common/Shimmer";
-import { useUnseenStore } from "@/store/unseenStore";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
 import { usePostHog } from "posthog-react-native";
 import { DashedEmptyState } from "@/components/common/DashedEmptyState";
+import { ShareChapterModal } from "@/components/common/ShareChapterModal";
+import { ShareMashupModal } from "@/components/common/ShareMashupModal";
+import { InfoTipModal } from "@/components/common/InfoTipModal";
+import { ChaptersGridMashupView } from "@/components/chapters/ChaptersGridMashupView";
+import {
+  ChapterCoverCard,
+  ChapterCoverShimmer,
+  ChapterLockedOverlay,
+} from "@/components/chapters/ChapterCoverCard";
+import { MashupPlayer, type MashupCloseReason } from "@/components/chapters/MashupPlayer";
+import {
+  MashupCompleteToaster,
+  type MashupToasterAction,
+} from "@/components/chapters/MashupCompleteToaster";
+import type { MashupBucket } from "@/lib/mashupBuckets";
+import {
+  bucketMomentsByMonth,
+  bucketMomentsByWeek,
+  bucketMomentsByYear,
+} from "@/lib/mashupBuckets";
+import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 
 const REQUIRED_PER_WEEK = 4;
+
+type ChapterViewMode = "list" | "feed" | "grid";
+
+const CHAPTER_VIEW_MODE_ICONS: Record<
+  ChapterViewMode,
+  keyof typeof Ionicons.glyphMap
+> = {
+  grid: "grid-outline",
+  list: "list-outline",
+  feed: "albums-outline",
+};
 
 function startOfMondayWeek(d: Date): Date {
   const r = new Date(d);
@@ -43,7 +68,7 @@ function startOfMondayWeek(d: Date): Date {
 }
 
 export default function ChaptersScreen() {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const {
     chapters,
@@ -71,6 +96,12 @@ export default function ChaptersScreen() {
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [openChapter, setOpenChapter] = useState<ChapterRecord | null>(null);
+  const [shareChapter, setShareChapter] = useState<ChapterRecord | null>(null);
+  const [viewMode, setViewMode] = useState<ChapterViewMode>("grid");
+  const [openMashup, setOpenMashup] = useState<MashupBucket | null>(null);
+  const [toasterBucket, setToasterBucket] = useState<MashupBucket | null>(null);
+  const [shareMashup, setShareMashup] = useState<MashupBucket | null>(null);
+  const [weeklyStoriesInfoOpen, setWeeklyStoriesInfoOpen] = useState(false);
 
   // Fade-to-black overlay when opening a chapter.
   const fadeOpacity = useSharedValue(0);
@@ -134,6 +165,30 @@ export default function ChaptersScreen() {
     [fadeOpacity, markChapterViewedLocal, isChapterLocked, posthog]
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      const intentView = useTabViewIntentStore.getState().consumeChaptersView();
+      if (intentView) setViewMode(intentView);
+
+      const mashupKey = useTabViewIntentStore.getState().consumeOpenMashupKey();
+      if (mashupKey) {
+        const allBuckets = [
+          ...bucketMomentsByWeek(entries),
+          ...bucketMomentsByMonth(entries),
+          ...bucketMomentsByYear(entries),
+        ];
+        const bucket = allBuckets.find((b) => b.key === mashupKey);
+        if (bucket) setOpenMashup(bucket);
+      }
+
+      const chapterId = useTabViewIntentStore.getState().consumeOpenChapterId();
+      if (chapterId) {
+        const target = realOrDummy.find((c) => c.id === chapterId);
+        if (target) triggerFadeAndOpen(target);
+      }
+    }, [entries, realOrDummy, triggerFadeAndOpen])
+  );
+
   const handleSwipe = useCallback(
     (delta: number) => {
       const nextIdx = activeIdx + delta;
@@ -182,6 +237,7 @@ export default function ChaptersScreen() {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 8,
         }}
       >
         <Text
@@ -194,10 +250,82 @@ export default function ChaptersScreen() {
         >
           Chapters
         </Text>
-        <TryPremiumPill source="chapters_header" />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: colors.surfaceSecondary,
+              borderRadius: 9999,
+              padding: 3,
+            }}
+          >
+            {(["grid", "list", "feed"] as const).map((mode) => (
+              <Pressable
+                key={mode}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setViewMode(mode);
+                  posthog.capture("chapters_view_mode_changed", { mode });
+                }}
+                accessibilityLabel={`${mode} view`}
+                style={{
+                  width: 34,
+                  height: 30,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 9999,
+                  backgroundColor:
+                    viewMode === mode ? colors.primary : "transparent",
+                }}
+              >
+                <Ionicons
+                  name={CHAPTER_VIEW_MODE_ICONS[mode]}
+                  size={16}
+                  color={
+                    viewMode === mode
+                      ? theme === "dark"
+                        ? "#1A1A1A"
+                        : colors.text
+                      : theme === "dark"
+                        ? "#FFFFFF"
+                        : colors.textMuted
+                  }
+                />
+              </Pressable>
+            ))}
+          </View>
+        </View>
       </View>
 
-      {realOrDummy.length === 0 ? (
+      {viewMode === "grid" ? (
+        <ChaptersGridMashupView
+          entries={entries}
+          emptySubtitle={
+            remainingForChapters > 0
+              ? `Add ${remainingForChapters} more moment${remainingForChapters === 1 ? "" : "s"} this week to start building your montages.`
+              : "You're set for this week — keep capturing and your montages will grow."
+          }
+          onEmptyCtaPress={() => router.push("/(tabs)/today")}
+          onOpenMashup={(bucket) => {
+            posthog.capture("mashup_played", {
+              bucket_type: bucket.type,
+              bucket_key: bucket.key,
+              clip_count: bucket.count,
+            });
+            setOpenMashup(bucket);
+          }}
+          onShareMashup={(bucket) => {
+            posthog.capture("mashup_share_tapped", {
+              bucket_type: bucket.type,
+              bucket_key: bucket.key,
+              clip_count: bucket.count,
+              source: "card",
+            });
+            setShareMashup(bucket);
+          }}
+        />
+      ) : realOrDummy.length === 0 ? (
         <DashedEmptyState
           title="Your weekly chapter lives here"
           singleLineTitle
@@ -208,6 +336,20 @@ export default function ChaptersScreen() {
           }
           ctaLabel="Capture a moment"
           onCtaPress={() => router.push("/(tabs)/today")}
+        />
+      ) : viewMode === "list" ? (
+        <ChapterListView
+          chapters={realOrDummy}
+          isChapterLocked={isChapterLocked}
+          onOpen={triggerFadeAndOpen}
+          onShare={(c) => {
+            posthog.capture("chapter_share_tapped", {
+              chapter_id: c.id,
+              source: "chapter_list",
+            });
+            setShareChapter(c);
+          }}
+          onInfoPress={() => setWeeklyStoriesInfoOpen(true)}
         />
       ) : current ? (
         <View
@@ -238,6 +380,37 @@ export default function ChaptersScreen() {
               {isChapterLocked(current) && <ChapterLockedOverlay />}
             </Animated.View>
           </GestureDetector>
+
+          {/* Top-right share button lives OUTSIDE the gesture detector so its
+              tap doesn't propagate to the card's tap-to-open handler. */}
+          {!isChapterLocked(current) && (
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                posthog.capture("chapter_share_tapped", {
+                  chapter_id: current.id,
+                  source: "chapter_card",
+                });
+                setShareChapter(current);
+              }}
+              hitSlop={10}
+              accessibilityLabel="Share chapter"
+              style={{
+                position: "absolute",
+                top: 16,
+                right: 36,
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: "rgba(0,0,0,0.4)",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 10,
+              }}
+            >
+              <Ionicons name="share-outline" size={18} color="#FFFFFF" />
+            </Pressable>
+          )}
         </View>
       ) : null}
 
@@ -261,211 +434,247 @@ export default function ChaptersScreen() {
         visible={!!openChapter}
         chapter={openChapter}
         onClose={() => setOpenChapter(null)}
+        onShare={(c) => {
+          posthog.capture("chapter_share_tapped", {
+            chapter_id: c.id,
+            source: "chapter_completion_modal",
+          });
+          setOpenChapter(null);
+          setShareChapter(c);
+        }}
+      />
+
+      <ShareChapterModal
+        visible={!!shareChapter}
+        chapter={shareChapter}
+        onDismiss={() => setShareChapter(null)}
+      />
+
+      <ShareMashupModal
+        visible={!!shareMashup}
+        bucket={shareMashup}
+        onDismiss={() => setShareMashup(null)}
+      />
+
+      <InfoTipModal
+        visible={weeklyStoriesInfoOpen}
+        onClose={() => setWeeklyStoriesInfoOpen(false)}
+        title="Stories of your weeks"
+        scrollable
+      >
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            lineHeight: 22,
+            color: colors.textSecondary,
+          }}
+        >
+          Each week you capture enough moments, we write a chapter — a short
+          story stitched from what you saved that week. Think of it as a
+          narrative recap of your life, one week at a time.
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            lineHeight: 22,
+            color: colors.textSecondary,
+            marginTop: 12,
+          }}
+        >
+          Open any chapter to read the full story, browse the photos, and share
+          it with someone who was there — or someone you wish had been.
+        </Text>
+      </InfoTipModal>
+
+      <MashupPlayer
+        visible={!!openMashup}
+        bucket={openMashup}
+        onCompleteOrClose={(reason: MashupCloseReason, lastClipIndex) => {
+          const bucket = openMashup;
+          if (!bucket) return;
+          posthog.capture(
+            reason === "auto_end" ? "mashup_completed" : "mashup_closed",
+            {
+              bucket_type: bucket.type,
+              bucket_key: bucket.key,
+              clip_count: bucket.count,
+              last_clip_index: lastClipIndex,
+            }
+          );
+          setOpenMashup(null);
+          setToasterBucket(bucket);
+        }}
+      />
+
+      <MashupCompleteToaster
+        visible={!!toasterBucket}
+        bucket={toasterBucket}
+        onDismiss={() => setToasterBucket(null)}
+        onAction={(action: MashupToasterAction) => {
+          const bucket = toasterBucket;
+          posthog.capture(
+            action === "share"
+              ? "mashup_share_tapped"
+              : "mashup_replay_tapped",
+            bucket
+              ? {
+                  bucket_type: bucket.type,
+                  bucket_key: bucket.key,
+                  clip_count: bucket.count,
+                  source: "toaster",
+                }
+              : undefined
+          );
+          setToasterBucket(null);
+
+          if (action === "share" && bucket) {
+            setShareMashup(bucket);
+            return;
+          }
+
+          // "Watch it again" re-opens the full-screen player with the same
+          // bucket from clip 0. We wait a beat so the toaster's slide-down
+          // animation finishes before the player's fade-in starts (iOS only
+          // shows one modal at a time, so this also avoids a stacking race).
+          if (action === "replay" && bucket) {
+            setTimeout(() => {
+              posthog.capture("mashup_played", {
+                bucket_type: bucket.type,
+                bucket_key: bucket.key,
+                clip_count: bucket.count,
+                source: "replay",
+              });
+              setOpenMashup(bucket);
+            }, 280);
+          }
+        }}
       />
     </SafeAreaView>
   );
 }
 
-function ChapterCoverShimmer({
-  chapterId,
-  viewedAt,
+/**
+ * Default ("list") view — vertical scrolling list of chapter cards. Each
+ * card mirrors the cover layout used in the "feed" (flipbook) view but at a
+ * fixed compact height so users can browse all chapters at once.
+ */
+function ChapterListView({
+  chapters,
+  isChapterLocked,
+  onOpen,
+  onShare,
+  onInfoPress,
 }: {
-  chapterId: string;
-  viewedAt: string | null;
+  chapters: ChapterRecord[];
+  isChapterLocked: (c: ChapterRecord) => boolean;
+  onOpen: (c: ChapterRecord) => void;
+  onShare: (c: ChapterRecord) => void;
+  onInfoPress: () => void;
 }) {
-  // Match `ThreadCard` semantics: a chapter is visually unseen until either
-  // the row's viewed_at column is set OR the user opened it during this
-  // session (the cross-screen viewed set).
-  const viewedInSession = useUnseenStore((s) =>
-    s.viewedChapterIds.has(chapterId)
-  );
-  if (viewedAt != null || viewedInSession) return null;
-  return <Shimmer active bandWidth={120} intervalMs={1300} />;
-}
-
-function ChapterLockedOverlay() {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
   return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderRadius: 18,
-        backgroundColor:
-          theme === "dark" ? "rgba(0,0,0,0.78)" : "rgba(255,255,255,0.92)",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: 24,
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{
+        paddingHorizontal: 20,
+        paddingTop: 8,
+        paddingBottom: 120,
+        gap: 14,
       }}
+      showsVerticalScrollIndicator={false}
     >
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
           gap: 8,
-          marginBottom: 6,
+          marginBottom: 4,
         }}
       >
-        <Ionicons name="lock-closed" size={22} color={colors.primary} />
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 18,
-            color: colors.primary,
+            fontFamily: "PMGothicLudington-Text110",
+            fontSize: 22,
+            color: colors.text,
+            flex: 1,
           }}
         >
-          Chapter locked
+          Stories of your weeks
         </Text>
+        <Pressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onInfoPress();
+          }}
+          hitSlop={10}
+          accessibilityLabel="About weekly chapters"
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.surfaceSecondary,
+          }}
+        >
+          <Ionicons
+            name="information-circle-outline"
+            size={20}
+            color={colors.textMuted}
+          />
+        </Pressable>
       </View>
-      <Text
-        style={{
-          fontFamily: "Roboto-Regular",
-          fontSize: 14,
-          lineHeight: 20,
-          color: colors.text,
-          textAlign: "center",
-        }}
-      >
-        Upgrade to unlock this chapter.
-      </Text>
-    </View>
+
+      {chapters.map((chapter) => {
+        const locked = isChapterLocked(chapter);
+        return (
+          <Pressable
+            key={chapter.id}
+            onPress={() => onOpen(chapter)}
+            style={{
+              height: 220,
+              borderRadius: 18,
+              overflow: "hidden",
+              backgroundColor: colors.surfaceSecondary,
+            }}
+          >
+            <ChapterCoverCard chapter={chapter} />
+            <ChapterCoverShimmer
+              chapterId={chapter.id}
+              viewedAt={chapter.viewed_at}
+            />
+            {locked ? <ChapterLockedOverlay /> : null}
+            {!locked ? (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onShare(chapter);
+                }}
+                hitSlop={10}
+                accessibilityLabel="Share chapter"
+                style={{
+                  position: "absolute",
+                  top: 12,
+                  right: 12,
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: "rgba(0,0,0,0.45)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+              </Pressable>
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </ScrollView>
   );
 }
 
-function ChapterCoverCard({ chapter }: { chapter: ChapterRecord }) {
-  const label = chapterWeekLabel(chapter);
-  const collageMedia = chapter.image_slide
-    ? chapterImageSlideToMedia(chapter.image_slide)
-    : [];
-
-  return (
-    <>
-      <CollageGrid media={collageMedia} />
-
-      {/* Bottom gradient for legibility */}
-      <LinearGradient
-        colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.78)"]}
-        start={{ x: 0.5, y: 0.4 }}
-        end={{ x: 0.5, y: 1 }}
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: "60%",
-        }}
-        pointerEvents="none"
-      />
-
-      <View
-        style={{
-          position: "absolute",
-          left: 20,
-          right: 20,
-          bottom: 28,
-        }}
-        pointerEvents="none"
-      >
-        <Text
-          style={{
-            fontFamily: "Roboto-Medium",
-            fontSize: 11,
-            color: "rgba(255,255,255,0.78)",
-            letterSpacing: 2,
-            textTransform: "uppercase",
-            marginBottom: 8,
-          }}
-        >
-          Chapter {chapter.chapter_number}
-        </Text>
-        <Text
-          style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 28,
-            lineHeight: 34,
-            color: "#FFFFFF",
-            marginBottom: 6,
-          }}
-        >
-          {label}
-        </Text>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 13,
-            color: "rgba(255,255,255,0.78)",
-          }}
-        >
-          {chapter.moment_count} moments captured
-        </Text>
-      </View>
-    </>
-  );
-}
-
-function CollageGrid({
-  media,
-}: {
-  media: ReturnType<typeof chapterImageSlideToMedia>;
-}) {
-  if (media.length === 0) {
-    return (
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: "#222222",
-        }}
-      />
-    );
-  }
-
-  // Build a list of "rows" of 1 or 2 images so the card always fills the
-  // full vertical space. For odd counts we lead with a single full-width
-  // row, then pair the remaining images two-up. Each row uses flex: 1 so
-  // they stretch evenly across the card.
-  type Row = (typeof media)[number][];
-  const rows: Row[] = [];
-  let idx = 0;
-  if (media.length % 2 === 1) {
-    rows.push([media[idx++]]);
-  }
-  while (idx < media.length) {
-    rows.push([media[idx], media[idx + 1]]);
-    idx += 2;
-  }
-
-  return (
-    <View
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        flexDirection: "column",
-      }}
-    >
-      {rows.map((row, ri) => (
-        <View key={ri} style={{ flex: 1, flexDirection: "row" }}>
-          {row.map((m, ci) => (
-            <View key={`${ri}-${ci}`} style={{ flex: 1, overflow: "hidden" }}>
-              <EntryMediaImage
-                media={m}
-                style={{ width: "100%", height: "100%" }}
-              />
-            </View>
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
 

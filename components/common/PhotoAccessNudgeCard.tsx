@@ -34,10 +34,16 @@ export interface PhotoAccessNudgeCardProps {
   subtitle?: string;
   /** Primary CTA label. Default "CONTINUE" (uppercased). */
   primaryLabel?: string;
+  /** Headline font — defaults to Libre Baskerville for compact surfaces. */
+  headlineFontFamily?: string;
+  /** Headline size in px — card variant defaults to 22. */
+  headlineFontSize?: number;
   /** Tap handler for the primary CTA. Should invoke `ensureFullPhotoAccess()`. */
   onPrimaryPress: () => void | Promise<void>;
   /** Secondary text-link label. Default "or start with a word instead". */
   wordFallbackLabel?: string;
+  /** When false, omits the leading "or" before the secondary link. */
+  showSecondaryOrPrefix?: boolean;
   /** Tap handler for the word-fallback link. Pass `undefined` to hide the link. */
   onWordFallbackPress?: () => void | Promise<void>;
   /**
@@ -52,14 +58,24 @@ export function PhotoAccessNudgeCard({
   headline = "Grant photo access to start",
   subtitle = "We'll surface one photo at a time. Nothing leaves your device until you save.",
   primaryLabel = "CONTINUE",
+  headlineFontFamily = "LibreBaskerville-Bold",
+  headlineFontSize,
   onPrimaryPress,
   wordFallbackLabel = "start with a word instead",
+  showSecondaryOrPrefix = true,
   onWordFallbackPress,
   variant = "card",
 }: PhotoAccessNudgeCardProps) {
   const { colors, theme } = useTheme();
   const isCompact = variant === "compact";
   const palette = theme === "dark" ? DARK : LIGHT;
+  const resolvedHeadlineSize = headlineFontSize ?? (isCompact ? 20 : 22);
+  const resolvedHeadlineLineHeight =
+    headlineFontSize != null
+      ? Math.round(resolvedHeadlineSize * 1.25)
+      : isCompact
+        ? 26
+        : 30;
 
   const handlePrimary = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -111,9 +127,9 @@ export function PhotoAccessNudgeCard({
 
       <Text
         style={{
-          fontFamily: "LibreBaskerville-Bold",
-          fontSize: isCompact ? 20 : 22,
-          lineHeight: isCompact ? 26 : 30,
+          fontFamily: headlineFontFamily,
+          fontSize: resolvedHeadlineSize,
+          lineHeight: resolvedHeadlineLineHeight,
           color: palette.ink,
           textAlign: "center",
           marginBottom: 10,
@@ -211,12 +227,25 @@ export function PhotoAccessNudgeCard({
                 textAlign: "center",
               }}
             >
-              or{" "}
-              <Text
-                style={{ textDecorationLine: "underline", color: palette.ink }}
-              >
-                {wordFallbackLabel}
-              </Text>
+              {showSecondaryOrPrefix ? (
+                <>
+                  or{" "}
+                  <Text
+                    style={{
+                      textDecorationLine: "underline",
+                      color: palette.ink,
+                    }}
+                  >
+                    {wordFallbackLabel}
+                  </Text>
+                </>
+              ) : (
+                <Text
+                  style={{ textDecorationLine: "underline", color: palette.ink }}
+                >
+                  {wordFallbackLabel}
+                </Text>
+              )}
             </Text>
           </Pressable>
         </>

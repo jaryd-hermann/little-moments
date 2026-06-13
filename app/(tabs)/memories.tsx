@@ -1,15 +1,17 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect, router } from "expo-router";
+import { useFocusEffect, router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ListViewMemories } from "@/components/memories/ListViewMemories";
 import { CapsuleFlipbookView } from "@/components/memories/CapsuleFlipbookView";
+import { GridViewMemories } from "@/components/memories/GridViewMemories";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ChapterStoryViewer } from "@/components/today/ChapterStoryViewer";
+import { ShareChapterModal } from "@/components/common/ShareChapterModal";
 import { useEntries } from "@/hooks/useEntries";
 import { useStreak } from "@/hooks/useStreak";
 import { useTheme } from "@/hooks/useTheme";
@@ -28,25 +30,39 @@ import { chapterCardTitle, chapterWeekLabel } from "@/lib/chapters";
 import type { Entry } from "@/store/entryStore";
 import { CapsuleStatBar, type CapsuleFilter } from "@/components/memories/CapsuleStatBar";
 import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
-import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
+import { CoreMemoryIcon } from "@/components/common/CoreMemoryIcon";
 import { useThreads } from "@/hooks/useThreads";
 import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
+import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 import { DashedEmptyState } from "@/components/common/DashedEmptyState";
+import { MagicFillPill } from "@/components/magic-fill/MagicFillPill";
+import {
+  hasFullPhotoLibraryAccess,
+  useMediaLibrary,
+} from "@/hooks/useMediaLibrary";
 
-type ViewMode = "list" | "flipbook";
+type ViewMode = "list" | "feed" | "grid";
+
+const VIEW_MODE_ICONS: Record<ViewMode, keyof typeof Ionicons.glyphMap> = {
+  grid: "grid-outline",
+  list: "list-outline",
+  feed: "albums-outline",
+};
 
 export default function MemoriesScreen() {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const { entries, fetchEntries } = useEntries();
   const { totalMoments } = useStreak();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
-  const [viewMode, setViewMode] = useState<ViewMode>("flipbook");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [capsuleFilter, setCapsuleFilter] = useState<CapsuleFilter>("all");
+  const { filter: filterParam } = useLocalSearchParams<{ filter?: string }>();
   const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
+  const setPinnedOnly = useCapsuleFlipbookStore((s) => s.setPinnedOnly);
   const togglePinnedOnly = useCapsuleFlipbookStore((s) => s.togglePinnedOnly);
   const {
     totalConnections,
@@ -56,7 +72,7 @@ export default function MemoriesScreen() {
   } = useThreads();
   const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
 
-  const pinnedMomentCount = useMemo(
+  const coreMomentCount = useMemo(
     () =>
       entries.filter((e) => e.entry_type === "moment" && e.is_pinned).length,
     [entries]
@@ -78,6 +94,18 @@ export default function MemoriesScreen() {
   }, [posthog]);
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
+  const { permissionStatus, accessPrivileges, checkPermission } =
+    useMediaLibrary();
+  const hasPhotoAccess = hasFullPhotoLibraryAccess(
+    permissionStatus,
+    accessPrivileges
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void checkPermission();
+    }, [checkPermission])
+  );
   const { philosophyStories, bySlug } = useMarketingStories();
   const philosophyListItems = useMemo(
     () => toMarketingStoryListItems(philosophyStories),
@@ -112,6 +140,22 @@ export default function MemoriesScreen() {
     return m;
   }, [allChapters]);
   const [chapterViewerChapter, setChapterViewerChapter] = useState<ChapterRecord | null>(null);
+  const [shareChapter, setShareChapter] = useState<ChapterRecord | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      const view = useTabViewIntentStore.getState().consumeMemoriesView();
+      if (view) setViewMode(view);
+    }, [])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (filterParam === "core" || filterParam === "pinned") {
+        setPinnedOnly(true);
+      }
+    }, [filterParam, setPinnedOnly])
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -162,14 +206,20 @@ export default function MemoriesScreen() {
   }, [entries, dummyChapters]);
 
   const filteredEntries = useMemo(() => {
-    if (!searchQuery.trim()) return entriesWithDummyChapter;
+    let list = entriesWithDummyChapter;
+    if (pinnedOnly) {
+      list = list.filter(
+        (e) => e.entry_type === "moment" && Boolean(e.is_pinned)
+      );
+    }
+    if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
-    return entriesWithDummyChapter.filter(
+    return list.filter(
       (e) =>
         (e.title?.toLowerCase().includes(q) ?? false) ||
         e.body.toLowerCase().includes(q)
     );
-  }, [entriesWithDummyChapter, searchQuery]);
+  }, [entriesWithDummyChapter, searchQuery, pinnedOnly]);
 
   const handleOpenStory = (slug: string) => {
     setStoryViewerSlug(slug);
@@ -227,62 +277,66 @@ export default function MemoriesScreen() {
               padding: 3,
             }}
           >
-            {(["flipbook", "list"] as const).map((mode) => (
+            {(["grid", "list", "feed"] as const).map((mode) => (
               <Pressable
                 key={mode}
                 onPress={() => {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  if (mode === "flipbook") {
+                  if (mode === "feed") {
                     posthog.capture("capsule_flipbook_opened", {
+                      entry_count: entries.length,
+                    });
+                  } else if (mode === "grid") {
+                    posthog.capture("capsule_grid_opened", {
                       entry_count: entries.length,
                     });
                   }
                   setViewMode(mode);
                 }}
+                accessibilityLabel={`${mode} view`}
                 style={{
-                  paddingVertical: 5,
-                  paddingHorizontal: 12,
+                  width: 34,
+                  height: 30,
+                  alignItems: "center",
+                  justifyContent: "center",
                   borderRadius: 9999,
                   backgroundColor:
                     viewMode === mode ? colors.primary : "transparent",
                 }}
               >
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 11,
-                    color: viewMode === mode ? colors.text : colors.textMuted,
-                    letterSpacing: 1,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {mode === "list" ? "List" : "Flipbook"}
-                </Text>
+                <Ionicons
+                  name={VIEW_MODE_ICONS[mode]}
+                  size={16}
+                  color={
+                    viewMode === mode
+                      ? "#1A1A1A"
+                      : colors.textMuted
+                  }
+                />
               </Pressable>
             ))}
           </View>
-          {(pinnedMomentCount > 0 || pinnedOnly) && (
+          {(viewMode === "grid" || viewMode === "feed") && hasPhotoAccess ? (
+            <MagicFillPill />
+          ) : null}
+          {(coreMomentCount > 0 || pinnedOnly) && (
             <Pressable
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 togglePinnedOnly();
               }}
               hitSlop={8}
-              accessibilityLabel={pinnedOnly ? "Show all" : "Show pinned only"}
+              accessibilityLabel={
+                pinnedOnly ? "Show all memories" : "Show core memories only"
+              }
               style={{
-                width: 30,
-                height: 30,
-                borderRadius: 9999,
+                width: 36,
+                height: 36,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: pinnedOnly ? colors.primary : "transparent",
               }}
             >
-              <ThumbtackIcon
-                size={16}
-                color={colors.text}
-                weight={pinnedOnly ? "solid" : "regular"}
-              />
+              <CoreMemoryIcon size={32} active={pinnedOnly} />
             </Pressable>
           )}
           {viewMode === "list" && (
@@ -308,9 +362,30 @@ export default function MemoriesScreen() {
         </View>
       </View>
 
-      {viewMode === "flipbook" ? (
+      {viewMode === "feed" ? (
         <View style={{ flex: 1, paddingBottom: 100 }}>
           <CapsuleFlipbookView entries={filteredEntries} />
+        </View>
+      ) : viewMode === "grid" ? (
+        <View style={{ flex: 1 }}>
+          <GridViewMemories
+            entries={filteredEntries}
+            coreOnly={pinnedOnly}
+            showMagicFillButton={hasPhotoAccess}
+            onPressEntry={(entry) => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              posthog.capture("capsule_grid_entry_tapped", {
+                entry_id: entry.id,
+                ymd: entry.entry_date,
+              });
+              router.push(`/entry/${entry.id}`);
+            }}
+            onPressEmptyDay={(ymd) => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              posthog.capture("capsule_grid_empty_day_tapped", { ymd });
+              router.push({ pathname: "/(tabs)/today", params: { day: ymd } });
+            }}
+          />
         </View>
       ) : (
         <View className="flex-1 px-5">
@@ -319,20 +394,12 @@ export default function MemoriesScreen() {
             searchQuery={searchQuery}
             onChangeQuery={handleSearchQuery}
             capsuleFilter={capsuleFilter}
-            threads={threadsForCapsule}
             showSearch={searchVisible}
+            showMagicFillButton={hasPhotoAccess}
             isChapterLockedById={(chapterId) => {
               const ch = chapterByIdMap.get(chapterId);
               return ch ? isChapterLocked(ch) : false;
             }}
-            // Dev dummy threads are always openable; otherwise the real
-            // thread lock predicate decides. Index is unused inside
-            // `isThreadLocked` today, so 0 is a safe placeholder.
-            isThreadLocked={(thread) =>
-              thread.id.startsWith("dummy-")
-                ? false
-                : isThreadLocked(thread, 0)
-            }
             onOpenChapter={(chapterId) => {
               const ch = chapterByIdMap.get(chapterId);
               if (!ch) return;
@@ -354,6 +421,20 @@ export default function MemoriesScreen() {
         visible={!!chapterViewerChapter}
         chapter={chapterViewerChapter}
         onClose={() => setChapterViewerChapter(null)}
+        onShare={(c) => {
+          posthog.capture("chapter_share_tapped", {
+            chapter_id: c.id,
+            source: "chapter_completion_modal_capsule",
+          });
+          setChapterViewerChapter(null);
+          setShareChapter(c);
+        }}
+      />
+
+      <ShareChapterModal
+        visible={!!shareChapter}
+        chapter={shareChapter}
+        onDismiss={() => setShareChapter(null)}
       />
     </SafeAreaView>
   );

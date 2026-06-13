@@ -187,7 +187,7 @@ export default function QuizStepScreen() {
       >
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
+            fontFamily: "PMGothicLudington-Text110",
             fontSize: 24,
             lineHeight: 32,
             color: colors.text,

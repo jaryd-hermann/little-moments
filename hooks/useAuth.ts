@@ -6,6 +6,8 @@ import { logOutRevenueCat } from "@/lib/revenuecat";
 import { cancelAllNotifications } from "@/lib/notifications";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
+import { syncLocalMagicFillFlagsToProfile } from "@/lib/magicFillProfileSync";
+import { useSettingsStore } from "@/store/settingsStore";
 
 export function useAuth() {
   const { user, profile, session, isLoading, setProfile, clearAuth } =
@@ -22,6 +24,10 @@ export function useAuth() {
       setProfile(data as Profile);
       applyNotificationTimeFromProfile(data.notification_time);
       applyThemeFromProfile(data.color_theme, data as Profile);
+      if ((data as Profile).has_completed_magic_fill) {
+        useSettingsStore.getState().setHasCompletedMagicFill(true);
+      }
+      void syncLocalMagicFillFlagsToProfile();
     }
     return data as Profile | null;
   }, [user]);

@@ -73,8 +73,13 @@ type WebMessage =
   | { type: "snapshot"; dataUrl: string | null }
   | { type: "reviewDone" };
 
+// Bump when simulation forces change shape — old cached positions will
+// fight the new layout and slow convergence. v2: looser charge/links,
+// roomier fit-to-view. v3: stronger cluster pull + territory hulls
+// (May 2026).
+const LAYOUT_VERSION = 3;
 function layoutStorageKey(userId: string): string {
-  return `graph-layout:${userId}`;
+  return `graph-layout:v${LAYOUT_VERSION}:${userId}`;
 }
 
 export interface GraphWebViewHandle {

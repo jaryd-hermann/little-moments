@@ -1,3 +1,4 @@
+import { MembershipCard } from "@/components/common/MembershipCard";
 import { MarketingStoryCard } from "@/components/today/MarketingStoryCard";
 import { StoryViewer } from "@/components/today/StoryViewer";
 import { ACCENT_PALETTES, Colors } from "@/constants/Colors";
@@ -34,6 +35,7 @@ import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
 import { useUnseenStore } from "@/store/unseenStore";
 import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
 import { useFirstMomentOnboardingSheetStore } from "@/store/firstMomentOnboardingSheetStore";
+import { useCaptureFirstMomentCoachmarkStore } from "@/store/captureFirstMomentCoachmarkStore";
 import { useEntryStore } from "@/store/entryStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -74,13 +76,6 @@ const SHOW_ACCENT_PICKER = false;
 /** Hide the rewatchable Philosophy stories card. Flip back on if we want
  *  to surface the marketing rewatch entry from settings again. */
 const SHOW_PHILOSOPHY_STORIES = false;
-
-const GOOD_TIMES_APP_STORE_URL =
-  "https://apps.apple.com/us/app/good-times-one-group-question/id6755366013";
-
-const PROMO_GOOD_TIMES = require("@/assets/images/promo-good-times.png");
-/** Intrinsic size of promo-good-times.png (avoids letterboxing in a fixed-height box). */
-const PROMO_GOOD_TIMES_ASPECT = 1242 / 580;
 
 const SETTINGS_REMINDER_VISIBLE: ReminderSlot[] = ["morning", "evening"];
 const SETTINGS_RHYTHM_TOGGLE_BG = "#FEEEB1";
@@ -932,6 +927,8 @@ export default function SettingsScreen() {
           ) : null}
         </View>
 
+        <LivePhotoSettingRow colors={colors} />
+
         {/* THE PHILOSOPHY — always rewatchable. Hidden behind a flag at the
             top of the file so we can flip it back on without restoring the JSX. */}
         {SHOW_PHILOSOPHY_STORIES ? (
@@ -995,6 +992,8 @@ export default function SettingsScreen() {
               <DummyFirstPinTester colors={colors} />
               <SettingDivider colors={colors} />
               <DummyFirstMomentOnboardingTester colors={colors} />
+              <SettingDivider colors={colors} />
+              <DevCaptureCoachmarkTourTester colors={colors} />
             </View>
           </>
         )}
@@ -1084,40 +1083,7 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* You might also like — cross-promo for our other app, anchored
-            below ACCOUNT so it doesn't compete with the user's own settings. */}
-        <Text
-          style={{
-            fontFamily: "Roboto-Light",
-            fontSize: 11,
-            color: colors.textMuted,
-            letterSpacing: 1,
-            textTransform: "uppercase",
-            marginTop: 28,
-            marginBottom: 8,
-          }}
-        >
-          YOU MIGHT ALSO LIKE
-        </Text>
-        <Pressable
-          onPress={() => Linking.openURL(GOOD_TIMES_APP_STORE_URL)}
-          accessibilityRole="link"
-          accessibilityLabel="Good Times: One Group Question on the App Store"
-          style={{
-            borderRadius: 14,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: colors.border,
-          }}
-        >
-          <Image
-            source={PROMO_GOOD_TIMES}
-            style={{ width: "100%", aspectRatio: PROMO_GOOD_TIMES_ASPECT }}
-            contentFit="cover"
-          />
-        </Pressable>
-
-        <Pressable onPress={() => { posthog.capture("logged_out"); signOut(); }} style={{ marginTop: 24, marginBottom: 48 }}>
+        <Pressable onPress={() => { posthog.capture("logged_out"); signOut(); }} style={{ marginTop: 36, marginBottom: 48 }}>
           <Text
             style={{
               fontFamily: "Roboto-Medium",
@@ -1207,6 +1173,68 @@ function SettingDivider({ colors }: { colors: ThemePalette }) {
         marginHorizontal: 16,
       }}
     />
+  );
+}
+
+/**
+ * Toggle for Live Photo looping. iOS-only feature — surface it on Android
+ * too so the user's preference roams with them, but the value has no effect
+ * until they pin an iOS Live Photo.
+ */
+function LivePhotoSettingRow({ colors }: { colors: ThemePalette }) {
+  const enabled = useSettingsStore((s) => s.livePhotoPlaybackEnabled);
+  const setEnabled = useSettingsStore((s) => s.setLivePhotoPlaybackEnabled);
+  return (
+    <View
+      style={{
+        marginTop: 16,
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+        }}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: colors.text,
+            }}
+          >
+            Live Photos
+          </Text>
+          <Text
+            style={{
+              fontFamily: "Roboto-Light",
+              fontSize: 12,
+              color: colors.textMuted,
+              marginTop: 2,
+            }}
+          >
+            Loop iOS Live Photos as short videos wherever they appear.
+          </Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={setEnabled}
+          trackColor={{
+            true: colors.primary,
+            false: colors.surfaceSecondary,
+          }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+    </View>
   );
 }
 
@@ -1446,7 +1474,7 @@ function DummyLimitedPhotoAccessTester({
 }
 
 /**
- * Manually triggers the "You pinned your first moment" celebration sheet.
+ * Manually triggers the "You saved your first core memory" celebration sheet.
  * Resets the persisted `hasSeenFirstPinCelebration` flag first so the sheet
  * can be re-previewed even on accounts that have already seen it.
  */
@@ -1473,7 +1501,7 @@ function DummyFirstPinTester({ colors }: { colors: ThemePalette }) {
           color: colors.text,
         }}
       >
-        Pin
+        Core memory
       </Text>
       <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
     </Pressable>
@@ -1519,139 +1547,58 @@ function DummyFirstMomentOnboardingTester({ colors }: { colors: ThemePalette }) 
   );
 }
 
-const WORDMARK_PREMIUM = require("@/assets/images/wordmark-premium.png");
-
-function MembershipCard({
-  colors,
-  subscriptionStatus,
-  createdAt,
-  onManage,
-  onExplore,
-}: {
-  colors: ThemePalette;
-  subscriptionStatus: string;
-  createdAt: string | null;
-  canManageSubscription: boolean;
-  onManage: () => void | Promise<void>;
-  onExplore: () => void;
-}) {
-  const sinceDate = createdAt
-    ? new Date(createdAt).toLocaleDateString("en-US", {
-        month: "long",
-        year: "numeric",
-      })
-    : null;
-
-  const isPremium =
-    subscriptionStatus === "active" || subscriptionStatus === "cancelled";
-  const isFree =
-    subscriptionStatus === "free" || subscriptionStatus === "trial";
-
-  const handlePress = () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-    if (isFree) {
-      onExplore();
-    } else {
-      void onManage();
-    }
-  };
-
-  if (isPremium) {
-    const premiumSublabel =
-      subscriptionStatus === "active"
-        ? "You have full access"
-        : "Access until the end of your billing period";
-    return (
-      <View
-        style={{
-          marginTop: 16,
-          backgroundColor: "#202020",
-          borderRadius: 14,
-          borderWidth: 2,
-          borderColor: "#FECFB4",
-          paddingHorizontal: 24,
-          paddingVertical: 24,
-        }}
-      >
-        <Pressable onPress={handlePress}>
-          <Image
-            source={WORDMARK_PREMIUM}
-            style={{ height: 36, width: "100%", alignSelf: "center" }}
-            contentFit="contain"
-          />
-          <Text
-            style={{
-              fontFamily: "Roboto-Light",
-              fontSize: 14,
-              color: "#FFFFFF",
-              textAlign: "center",
-              marginTop: 18,
-            }}
-          >
-            {premiumSublabel}
-          </Text>
-          {sinceDate && (
-            <Text
-              style={{
-                fontFamily: "Roboto-Light",
-                fontSize: 13,
-                color: "rgba(255,255,255,0.45)",
-                textAlign: "center",
-                marginTop: 14,
-              }}
-            >
-              Premium member since {sinceDate}
-            </Text>
-          )}
-        </Pressable>
-      </View>
-    );
-  }
-
+function DevCaptureCoachmarkTourTester({ colors }: { colors: ThemePalette }) {
   return (
-    <View
+    <Pressable
+      onPress={() => {
+        const momentCount = useEntryStore
+          .getState()
+          .entries.filter((e) => e.entry_type === "moment").length;
+        if (momentCount === 0) {
+          Alert.alert(
+            "No moments yet",
+            "Save at least one moment first so the pin and Dig deeper steps have targets to highlight.",
+          );
+          return;
+        }
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        useCaptureFirstMomentCoachmarkStore.getState().restartForDev();
+        router.dismiss();
+        setTimeout(() => {
+          router.replace("/(tabs)/today");
+        }, 80);
+      }}
       style={{
-        marginTop: 16,
-        backgroundColor: "#202020",
-        borderRadius: 14,
-        borderWidth: 2,
-        borderColor: "#FECFB4",
-        paddingHorizontal: 24,
-        paddingVertical: 24,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
       }}
     >
-      <Pressable onPress={handlePress}>
-        <Image
-          source={WORDMARK_PREMIUM}
-          style={{ height: 36, width: "100%", alignSelf: "center" }}
-          contentFit="contain"
-        />
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: colors.text,
+          }}
+        >
+          Capture onboarding tooltips
+        </Text>
         <Text
           style={{
             fontFamily: "Roboto-Light",
-            fontSize: 14,
-            color: "#FFFFFF",
-            textAlign: "center",
-            marginTop: 18,
+            fontSize: 12,
+            color: colors.textMuted,
+            marginTop: 2,
           }}
         >
-          See if becoming a Premium member is right for you
+          Reset and rerun the 6-step Capture tour.
         </Text>
-        {sinceDate && (
-          <Text
-            style={{
-              fontFamily: "Roboto-Light",
-              fontSize: 13,
-              color: "rgba(255,255,255,0.45)",
-              textAlign: "center",
-              marginTop: 14,
-            }}
-          >
-            Free member since {sinceDate}
-          </Text>
-        )}
-      </Pressable>
-    </View>
+      </View>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
   );
 }
 

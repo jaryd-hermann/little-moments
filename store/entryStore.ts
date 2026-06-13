@@ -39,6 +39,14 @@ export interface EntryMedia {
   created_at: string;
   /** Original capture time of the photo (EXIF / MediaLibrary creationTime). */
   taken_at?: string | null;
+  /** Paired video for iOS Live Photos. The image row stores both. */
+  paired_video_storage_path?: string | null;
+  paired_video_storage_url?: string | null;
+  /** Human-readable location label (e.g. "Tel Aviv, Israel") derived from
+   *  the photo's EXIF geo. Nullable — most photos won't have geo metadata. */
+  location_name?: string | null;
+  location_latitude?: number | null;
+  location_longitude?: number | null;
 }
 
 interface EntryStore {

@@ -1,31 +1,35 @@
-import { useState, useEffect, useRef } from "react";
+import { MicRecorder } from "@/components/composer/MicRecorder";
+import { EnhancedCard } from "@/components/dig-deeper/AIConversation";
+import { AIMessageBubble } from "@/components/dig-deeper/AIMessageBubble";
+import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
+import { useEntries } from "@/hooks/useEntries";
+import { useTheme } from "@/hooks/useTheme";
+import { callDigDeeper } from "@/lib/anthropic";
+import { setDigDeeperPendingResult } from "@/lib/digDeeperReturn";
+import { momentTitleStyle } from "@/lib/momentTypography";
+import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
+import { useSettingsStore } from "@/store/settingsStore";
+import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
+import { router, useLocalSearchParams } from "expo-router";
+import { usePostHog } from "posthog-react-native";
+import { useEffect, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
   useWindowDimensions,
+  View,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { router, useLocalSearchParams } from "expo-router";
-import { usePostHog } from "posthog-react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { AIMessageBubble } from "@/components/dig-deeper/AIMessageBubble";
-import { EnhancedCard } from "@/components/dig-deeper/AIConversation";
-import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
-import { MicRecorder } from "@/components/composer/MicRecorder";
-import { callDigDeeper } from "@/lib/anthropic";
-import { setDigDeeperPendingResult } from "@/lib/digDeeperReturn";
-import { useTheme } from "@/hooks/useTheme";
-import { useEntries } from "@/hooks/useEntries";
 
 interface Message {
   role: "user" | "assistant";
@@ -87,15 +91,27 @@ const REPLY_INPUT_PAD_V = 10;
 const REPLY_FIELD_WIDTH_SUBTRACT = 40 + 28;
 
 const APP_ICON = require("@/assets/images/white-icon.png");
+const DIG_DEEPER_ONBOARDING_IMAGE = require("@/assets/images/DigDeeper.png");
 
 /** Soft closer rendered in violet italic via AIMessageBubble's `_..._` markup. */
 const INITIAL_TRAILER = "_Any of this is interesting._";
 
+const ONBOARDING_BULLETS = [
+  "We'll ask you one thoughtful question",
+  "Your answer helps shape a richer story",
+  "You stay in control — accept, revise, or skip",
+];
+
 export default function DigDeeperScreen() {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
+  const hasCompletedDigDeeper = useSettingsStore((s) => s.hasCompletedDigDeeper);
+  const setHasCompletedDigDeeper = useSettingsStore(
+    (s) => s.setHasCompletedDigDeeper
+  );
+  const [flowStep, setFlowStep] = useState<0 | 1>(hasCompletedDigDeeper ? 1 : 0);
   const params = useLocalSearchParams<{
     title?: string;
     body?: string;
@@ -138,9 +154,11 @@ export default function DigDeeperScreen() {
   );
 
   useEffect(() => {
+    if (flowStep !== 1) return;
+    if (messages.length > 0) return;
     posthog.capture("started_dig_deeper");
     fetchInitialAnalysis();
-  }, []);
+  }, [flowStep]);
 
   const fetchInitialAnalysis = async () => {
     setIsLoading(true);
@@ -242,6 +260,7 @@ export default function DigDeeperScreen() {
         Alert.alert("Update failed", "Could not save changes. Please try again.");
         return;
       }
+      setHasCompletedDigDeeper(true);
       router.back();
       return;
     }
@@ -252,6 +271,7 @@ export default function DigDeeperScreen() {
       originalTitle: params.title ?? "",
       aiConversationJson: JSON.stringify(conversationHistory.current),
     });
+    setHasCompletedDigDeeper(true);
     router.back();
   };
 
@@ -492,6 +512,141 @@ export default function DigDeeperScreen() {
           </Pressable>
         </View>
 
+        {!hasCompletedDigDeeper ? (
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 6,
+              marginBottom: flowStep === 0 ? 20 : 8,
+            }}
+          >
+            {[0, 1].map((i) => (
+              <View
+                key={i}
+                style={{
+                  width: flowStep === i ? 20 : 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor:
+                    flowStep === i ? colors.primary : colors.border,
+                }}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {flowStep === 0 ? (
+          <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 8 }}>
+            <Text
+              style={{
+                fontFamily: "PMGothicLudington-Text110",
+                fontSize: 26,
+                lineHeight: 32,
+                color: colors.text,
+                textAlign: "center",
+                marginBottom: 12,
+              }}
+            >
+              Make this moment more memorable
+            </Text>
+            <Text
+              style={{
+                fontFamily: "Roboto-Regular",
+                fontSize: 15,
+                lineHeight: 22,
+                color: colors.textSecondary,
+                textAlign: "center",
+                marginBottom: 24,
+              }}
+            >
+              Turn a quick caption into a richer story.
+            </Text>
+            {ONBOARDING_BULLETS.map((line) => (
+              <View
+                key={line}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  marginBottom: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Regular",
+                    fontSize: 16,
+                    lineHeight: 22,
+                    color: colors.primary,
+                  }}
+                >
+                  •
+                </Text>
+                <Text
+                  style={{
+                    flex: 1,
+                    fontFamily: "Roboto-Regular",
+                    fontSize: 15,
+                    lineHeight: 22,
+                    color: colors.text,
+                  }}
+                >
+                  {line}
+                </Text>
+              </View>
+            ))}
+            <View
+              style={{
+                alignItems: "center",
+                marginTop: 8,
+                marginBottom: 12,
+              }}
+            >
+              <Image
+                source={DIG_DEEPER_ONBOARDING_IMAGE}
+                accessibilityLabel="Dig Deeper preview"
+                resizeMode="contain"
+                style={{
+                  width: Math.min(windowWidth - 72, 320),
+                  height: 400,
+                }}
+              />
+            </View>
+            <Pressable
+              accessibilityLabel="Try Dig Deeper"
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                posthog.capture("dig_deeper_onboarding_continue");
+                setFlowStep(1);
+              }}
+              style={{
+                marginTop: "auto",
+                marginBottom: Math.max(insets.bottom, 16),
+                height: 56,
+                borderRadius: 9999,
+                backgroundColor: colors.primary,
+                borderWidth: 2,
+                borderColor: PINK_CTA_BORDER,
+                alignItems: "center",
+                justifyContent: "center",
+                ...bevelShadow(theme),
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 15,
+                  color: PINK_CTA_INK,
+                  letterSpacing: 0.8,
+                  textTransform: "uppercase",
+                }}
+              >
+                Try Dig Deeper
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
         {/* Moment context card — shows what we're digging into */}
         {(params.title || params.body) && (
           <View
@@ -509,12 +664,11 @@ export default function DigDeeperScreen() {
           >
             {params.title ? (
               <Text
-                style={{
-                  fontFamily: "LibreBaskerville-Bold",
+                style={momentTitleStyle({
                   fontSize: 15,
                   color: colors.text,
                   marginBottom: 4,
-                }}
+                })}
                 numberOfLines={1}
               >
                 {params.title}
@@ -710,6 +864,8 @@ export default function DigDeeperScreen() {
               </View>
             </View>
           </View>
+        )}
+          </>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>

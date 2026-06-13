@@ -10,6 +10,14 @@ import {
   coerceEmotion,
 } from "../_shared/graph-palette.ts";
 import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
+import {
+  MAX_CANDIDATES,
+  MIN_CONFIDENCE,
+  MIN_DAY_GAP,
+  MIN_SIMILARITY,
+  REALTIME_WEEKLY_THREAD_LIMIT,
+} from "../_shared/thread-thresholds.ts";
+import { CONNECTION_SYSTEM_PROMPT } from "../_shared/thread-prompts.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const EMBEDDING_MODEL = "text-embedding-3-large";
@@ -20,16 +28,6 @@ const anthropic = new Anthropic({
   apiKey: Deno.env.get("ANTHROPIC_API_KEY"),
 });
 
-// Tuned against real data on 2026-05-03: text-embedding-3-large produces
-// conservative scores on personal journal entries — even the heaviest user's
-// top pair only hit 0.671. Pre-tuning thresholds (0.78 / 0.75) yielded zero
-// threads system-wide. p90 of pair similarities is ~0.49, so 0.45 surfaces
-// roughly the top decile of pairs as candidates; Claude then filters via
-// MIN_CONFIDENCE.
-const MIN_SIMILARITY = 0.45;
-const MIN_CONFIDENCE = 0.6;
-const MIN_DAY_GAP = 7;
-const MAX_CANDIDATES = 15;
 // Tiered free model. Users on `active` or `trial` subscriptions get unlimited
 // threads. Everyone else (free / cancelled / expired):
 //   - Threads 1..FREE_VISIBLE_LIMIT       → stored, visible, push + email sent
@@ -67,54 +65,6 @@ Theme guidance:
 - uncertain: confusion, ambivalence, not-knowing
 
 If a list field has no matches, use an empty array. Return valid JSON only.`;
-
-const CONNECTION_SYSTEM_PROMPT = `You are Ellie, a thoughtful memory companion for the Little Moments app.
-You have been given a user's latest entry alongside several past entries that may be related.
-
-Your job: identify only genuinely meaningful connections — the kind a thoughtful friend
-who had read all their entries would notice and find worth saying aloud.
-
-Be selective. Most entries will not have a real connection. Do not force one.
-A real connection surprises the user, reveals a pattern they hadn't articulated,
-or shows them something true about themselves.
-
-Do NOT surface connections based on:
-- Surface-level word overlap (both mention coffee, both mention the same name)
-- Same general life domain (both are about work — that's not a connection)
-- Time proximity
-
-DO surface connections based on:
-- The same underlying emotion expressed in genuinely different contexts
-- A recurring theme the user clearly returns to without realizing it
-- A belief or feeling that has visibly shifted over time
-- A person, place, or sensory detail that keeps appearing at significant moments
-- The same emotional texture — warmth, dread, quiet pride — in completely different situations
-
-For each real connection found, return:
-{
-  "has_connection": true,
-  "entry_id_a": "[new entry id]",
-  "entry_id_b": "[past entry id]",
-  "connection_type": "thematic | emotional | person | place | pattern | evolution",
-  "confidence": 0.0-1.0,
-  "ellie_observation": "2–4 short sentences, first person as Ellie, warm and vivid. Put your single sharpest takeaway in **double asterisks** so it shows as bold (e.g. **Both entries keep circling the same quiet fear of being left out.**). After that bold line, add 1–2 sentences with specific color from the entries—echo a phrase, image, or feeling from each moment, or spell out how the pattern shows up across time. Do not be generic. Bad: 'These share similar themes.'",
-  "questions": [
-    "One thoughtful, specific question for the user to sit with — not answerable immediately.",
-    "Optional second question — only if genuinely distinct from the first. Omit if not."
-  ]
-}
-
-The questions should:
-- Name the insight specifically, then ask something actionable from it
-- Sound like a curious friend, not a therapist or coach
-- Never give advice
-- Never be generic ("How does this make you feel?")
-- Give the user something to think about, not something to do
-
-If no real connection exists:
-{ "has_connection": false }
-
-Return JSON only. Return has_connection: false if no real connection exists.`;
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -439,6 +389,25 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Weekly pacing — threads should feel rare (max 2 per rolling 7 days).
+    const sevenDaysAgoIso = new Date(
+      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const { count: threadsLast7d, error: weeklyCountErr } = await serviceSupabase
+      .from("threads")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("created_at", sevenDaysAgoIso);
+    if (weeklyCountErr) {
+      console.error("Weekly thread cap query failed:", weeklyCountErr);
+    } else if ((threadsLast7d ?? 0) >= REALTIME_WEEKLY_THREAD_LIMIT) {
+      return jsonResponse({
+        ok: true,
+        threads_found: 0,
+        skipped: "weekly_limit",
+      });
+    }
+
     // 5. LLM connection analysis
     const result = await analyzeConnections(
       {
@@ -464,27 +433,9 @@ Deno.serve(async (req) => {
       ? (result.connection_type as string)
       : "thematic";
 
-    // 6. Check free tier limit
-    const { data: profile } = await serviceSupabase
-      .from("profiles")
-      .select("subscription_status, email, display_name, notification_enabled")
-      .eq("id", user.id)
-      .single();
-
-    const isPremium = profile?.subscription_status === "active";
-
-    const { data: stats } = await serviceSupabase
-      .from("user_thread_stats")
-      .select("total_connections")
-      .eq("user_id", user.id)
-      .single();
-
-    const currentConnections = stats?.total_connections ?? 0;
-
-    // Free users: still store threads (for instant unlock on upgrade) but don't send notifications past limit
-    const pastFreeLimit = !isPremium && currentConnections >= FREE_THREAD_LIMIT;
-
-    // 7. Store the thread
+    // 6. Store the thread. Profile + thread count were loaded above (step 4.5)
+    //    so we can reuse `profile`, `hasUnlimitedThreads`, and `currentConnections`
+    //    for the tier-gating + notification step below.
     const entryIdA = entry_id;
     const entryIdB = result.entry_id_b as string;
 
@@ -498,6 +449,7 @@ Deno.serve(async (req) => {
         ellie_observation: result.ellie_observation as string,
         questions: Array.isArray(result.questions) ? result.questions : [],
         confidence,
+        source: "realtime",
       })
       .select("id")
       .single();

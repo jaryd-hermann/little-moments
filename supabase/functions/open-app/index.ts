@@ -1,6 +1,20 @@
 /**
- * Public bridge page for email CTAs: opens the native app via custom URL scheme,
- * with a manual fallback to the marketing site if the app is not installed.
+ * @deprecated Superseded by Universal Links / Android App Links targeting
+ * `https://getlittlemoments.com/app/*` (see `app.config.ts`
+ * `ios.associatedDomains` + `android.intentFilters`, the redirect router at
+ * `app/+native-intent.tsx`, and the marketing-site files in
+ * `marketing-site/universal-links/`).
+ *
+ * No new email template should target this URL — `resolveEmailAppOpenUrl()` /
+ * `emailDeepLinks` now build Universal Link URLs instead.
+ *
+ * Kept deployed strictly so that emails already in users' inboxes (which
+ * baked the Supabase URL into the CTA <a href>) still render a manual-tap
+ * fallback rather than 404'ing. The deep link behavior on this page does NOT
+ * work reliably from in-app email browsers (Gmail iOS, Outlook, LinkedIn) —
+ * that is the original bug that motivated the Universal Links migration.
+ * Once the oldest CTA-bearing emails age out of regular inbox traffic (~30
+ * days), this function can be safely deleted.
  *
  * Deploy: `supabase functions deploy open-app`
  * Optional env: EMAIL_OPEN_WEB_FALLBACK (default https://getlittlemoments.com/)

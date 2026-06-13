@@ -24,11 +24,13 @@ import { supabase } from "@/lib/supabase";
 import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
 import type { Entry, EntryMedia } from "@/store/entryStore";
+import { useEntryStore } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryMediaVideo } from "@/components/common/EntryMediaVideo";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
 import { EntryPinToggle } from "@/components/common/EntryPinToggle";
-import { smartParagraphs as splitParagraphs } from "@/lib/paragraphs";
+import { LocationTag } from "@/components/common/LocationTag";
+import { momentTitleStyle } from "@/lib/momentTypography";
 
 function stripHtml(html: string): string {
   return html
@@ -45,6 +47,12 @@ function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function splitParagraphs(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  return trimmed.split(/\n\n+/).filter(Boolean);
 }
 
 function MomentDetailStillImage({
@@ -80,6 +88,7 @@ function MomentDetailStillImage({
         media={media}
         style={mediaStyle}
         contentFit="cover"
+        enableLivePhoto
         onLoad={({ width, height }) => setAspect(width / height)}
       />
     </Pressable>
@@ -160,11 +169,18 @@ export default function EntryDetailScreen() {
         .single()
         .then(({ data }) => {
           if (data) {
-            setEntry({
+            const mapped = {
               ...data,
               media: data.entry_media ?? [],
               is_pinned: Boolean((data as { is_pinned?: boolean }).is_pinned),
-            } as Entry);
+            } as Entry;
+            setEntry(mapped);
+            const store = useEntryStore.getState();
+            if (store.entries.some((e) => e.id === mapped.id)) {
+              store.updateEntry(mapped.id, mapped);
+            } else {
+              store.addEntry(mapped);
+            }
           }
         });
     }
@@ -320,11 +336,10 @@ export default function EntryDetailScreen() {
       >
         {entry.title && (
           <Text
-            style={{
-              fontFamily: "LibreBaskerville-Bold",
+            style={momentTitleStyle({
               fontSize: 24,
               color: colors.text,
-            }}
+            })}
           >
             {entry.title}
           </Text>
@@ -385,13 +400,19 @@ export default function EntryDetailScreen() {
                 return <EntryMediaVideo key={m.id} media={m} style={videoStyle} />;
               }
               return (
-                <MomentDetailStillImage
-                  key={m.id}
-                  media={m}
-                  maxWidth={windowWidth - 40}
-                  placeholderBg={colors.surfaceSecondary}
-                  onPress={() => setFullScreenMedia(m)}
-                />
+                <View key={m.id} style={{ gap: 8 }}>
+                  <MomentDetailStillImage
+                    media={m}
+                    maxWidth={windowWidth - 40}
+                    placeholderBg={colors.surfaceSecondary}
+                    onPress={() => setFullScreenMedia(m)}
+                  />
+                  {m.location_name ? (
+                    <View style={{ alignSelf: "center" }}>
+                      <LocationTag name={m.location_name} variant="inline" />
+                    </View>
+                  ) : null}
+                </View>
               );
             })}
           </View>
@@ -610,6 +631,7 @@ export default function EntryDetailScreen() {
               <EntryMediaImage
                 media={fullScreenMedia}
                 contentFit="contain"
+                enableLivePhoto
                 style={{ flex: 1, width: "100%" }}
               />
             ) : null}

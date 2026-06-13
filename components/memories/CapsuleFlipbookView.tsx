@@ -252,6 +252,7 @@ export function CapsuleFlipbookView({
           {firstMedia ? (
             <EntryMediaImage
               media={firstMedia}
+              enableLivePhoto
               style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
             />
           ) : (
@@ -269,7 +270,7 @@ export function CapsuleFlipbookView({
               {current.word_of_day ? (
                 <Text
                   style={{
-                    fontFamily: "LibreBaskerville-Italic",
+                    fontFamily: "PMGothicLudington-Text110",
                     fontSize: 60,
                     color: "rgba(255,255,255,0.22)",
                   }}
@@ -349,7 +350,7 @@ export function CapsuleFlipbookView({
             {current.title ? (
               <Text
                 style={{
-                  fontFamily: "LibreBaskerville-Bold",
+                  fontFamily: "PMGothicLudington-Text110",
                   fontSize: 24,
                   lineHeight: 30,
                   color: "#FFFFFF",
@@ -390,7 +391,7 @@ export function CapsuleFlipbookView({
           zIndex: 10,
         }}
       >
-        <EntryPinToggle entryId={current.id} size={20} />
+        <EntryPinToggle entryId={current.id} />
         <Pressable
           onPress={() => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

@@ -21,32 +21,29 @@ export function calendarDateForReflectionTarget(
   return new Date(base.getFullYear(), base.getMonth(), base.getDate());
 }
 
+/** Parse `yyyy-MM-dd` route params into a local calendar `Date`. */
+export function parseCaptureDayYmd(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const targetDate = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (Number.isNaN(targetDate.getTime())) return null;
+  targetDate.setHours(0, 0, 0, 0);
+  return targetDate;
+}
+
 export function reflectionTargetLabel(target: ReflectionTarget): string {
   return target === "yesterday" ? "Yesterday" : "Today";
 }
 
 export function captureScreenHeading(
   captureTargetDate: Date,
-  now: Date = new Date()
-): { title: string; subtitle: string } {
-  const ymd = format(captureTargetDate, "yyyy-MM-dd");
-  const todayYmd = format(now, "yyyy-MM-dd");
-  const yestYmd = format(subDays(now, 1), "yyyy-MM-dd");
-  if (ymd === todayYmd) {
-    return {
-      title: "Today",
-      subtitle: format(captureTargetDate, "EEE, MMM d"),
-    };
-  }
-  if (ymd === yestYmd) {
-    return {
-      title: "Yesterday",
-      subtitle: format(captureTargetDate, "EEE, MMM d"),
-    };
-  }
+  _now: Date = new Date()
+): { title: string; subtitle: string; titleSecondary: string } {
   return {
-    title: format(captureTargetDate, "EEEE"),
+    title: format(captureTargetDate, "EEE"),
     subtitle: format(captureTargetDate, "MMM d, yyyy"),
+    titleSecondary: format(captureTargetDate, ", MMM d"),
   };
 }
 

@@ -214,16 +214,81 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Build prompt + call Claude ──────────────────────────────────
-    const { data: maxChapter } = await supabase
-      .from("chapters")
-      .select("chapter_number")
-      .eq("user_id", userId)
-      .order("chapter_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // ── Choose chronologically-correct chapter_number ───────────────
+    // Unlike cron-chapters (which always processes the most recent past
+    // week → max+1 is naturally chronological), generate-chapter can
+    // backfill an older week. We compute the insertion slot by sorting
+    // existing chapters by ref_week_start_date (legacy monthly rows fall
+    // back to (ref_year, ref_month, 1)) and place the new chapter at
+    // (countBefore + 1). Any chapters that should sort after this one
+    // get shifted up by 1.
+    type ExistingChapterRow = {
+      id: string;
+      chapter_number: number;
+      ref_week_start_date: string | null;
+      ref_year: number | null;
+      ref_month: number | null;
+    };
 
-    const chapterNumber = (maxChapter?.chapter_number ?? 0) + 1;
+    const { data: existingChapters } = await supabase
+      .from("chapters")
+      .select(
+        "id, chapter_number, ref_week_start_date, ref_year, ref_month"
+      )
+      .eq("user_id", userId);
+
+    const chapterSortKey = (c: ExistingChapterRow): string =>
+      c.ref_week_start_date ??
+      (c.ref_year && c.ref_month
+        ? `${c.ref_year}-${String(c.ref_month).padStart(2, "0")}-01`
+        : "9999-12-31");
+
+    const newSortKey = startDate;
+    const existing = (existingChapters ?? []) as ExistingChapterRow[];
+    const chaptersAfter = existing
+      .filter((c) => chapterSortKey(c) >= newSortKey)
+      // Descending by current chapter_number so each `+1` shift can land
+      // in the slot just freed by the previous iteration without ever
+      // violating the (user_id, chapter_number) unique constraint.
+      .sort((a, b) => b.chapter_number - a.chapter_number);
+    const chapterNumber =
+      existing.filter((c) => chapterSortKey(c) < newSortKey).length + 1;
+
+    for (const c of chaptersAfter) {
+      const { error: shiftErr } = await supabase
+        .from("chapters")
+        .update({ chapter_number: c.chapter_number + 1 })
+        .eq("id", c.id);
+      if (shiftErr) {
+        console.error(
+          `[generate-chapter] failed to shift chapter ${c.id} for backfill:`,
+          shiftErr
+        );
+        return jsonResponse(500, {
+          error: "renumber_failed",
+          detail: shiftErr.message,
+        });
+      }
+
+      // Keep the mirrored Capsule entry title in sync ("Chapter N: …").
+      const { data: mirrored } = await supabase
+        .from("entries")
+        .select("id, title")
+        .eq("chapter_id", c.id);
+      for (const row of mirrored ?? []) {
+        const oldTitle = (row.title as string | null) ?? "";
+        const newTitle = oldTitle.replace(
+          /^Chapter \d+:/,
+          `Chapter ${c.chapter_number + 1}:`
+        );
+        if (newTitle === oldTitle) continue;
+        await supabase
+          .from("entries")
+          .update({ title: newTitle })
+          .eq("id", row.id);
+      }
+    }
+
     const weekLabel = weekOfMonthLabel(startDate);
     const rangeLabel = `${weekStart.toFormat("LLL d")}–${weekEnd.toFormat("LLL d")}`;
 
@@ -342,6 +407,7 @@ Deno.serve(async (req) => {
             weekLabel,
             momentCount: weekEntries.length,
             chapterNumber,
+            chapterId: chapter.id,
           });
           const r = await dispatch(supabase, {
             userId,

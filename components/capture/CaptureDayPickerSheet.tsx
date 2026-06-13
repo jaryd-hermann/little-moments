@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import {
   View,
   Text,
@@ -8,8 +9,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { format } from "date-fns";
 import { useTheme } from "@/hooks/useTheme";
-import { PINK_CTA_INK } from "@/lib/themedShadow";
+import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 
 export interface DayPickerRow {
   /** yyyy-MM-dd */
@@ -33,6 +35,16 @@ interface CaptureDayPickerSheetProps {
    * another → pick a fresh day only).
    */
   disableDaysWithMoments?: boolean;
+  /**
+   * Optional primary CTA pinned to the bottom of the sheet. Lets the user
+   * bypass the day list when the relevant action is "stay on this day"
+   * (e.g. capturing another moment for the day they're already on).
+   */
+  primaryAction?: {
+    label: string;
+    onPress: () => void;
+    iconName?: ComponentProps<typeof Ionicons>["name"];
+  };
 }
 
 export function CaptureDayPickerSheet({
@@ -42,6 +54,7 @@ export function CaptureDayPickerSheet({
   selectedYmd,
   onSelectYmd,
   disableDaysWithMoments = false,
+  primaryAction,
 }: CaptureDayPickerSheetProps) {
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -102,8 +115,11 @@ export function CaptureDayPickerSheet({
           </Text>
           <ScrollView
             keyboardShouldPersistTaps="handled"
-            style={{ flexGrow: 0 }}
-            contentContainerStyle={{ paddingHorizontal: 12 }}
+            style={{ flexGrow: 0, flexShrink: 1 }}
+            contentContainerStyle={{
+              paddingHorizontal: 12,
+              paddingBottom: primaryAction ? 8 : 0,
+            }}
           >
             {rows.map((row, i) => {
               const selected = row.ymd === selectedYmd;
@@ -217,7 +233,7 @@ export function CaptureDayPickerSheet({
                             }}
                           >
                             {row.photoCount === 0
-                              ? row.titleLine === "Today"
+                              ? row.ymd === format(new Date(), "yyyy-MM-dd")
                                 ? "No photos today"
                                 : "No photos"
                               : `${row.photoCount} photo${row.photoCount === 1 ? "" : "s"}`}
@@ -245,6 +261,56 @@ export function CaptureDayPickerSheet({
               );
             })}
           </ScrollView>
+          {primaryAction ? (
+            <View
+              style={{
+                paddingHorizontal: 16,
+                paddingTop: 12,
+                paddingBottom: 4,
+                borderTopWidth: 1,
+                borderTopColor: colors.border,
+                backgroundColor: colors.background,
+              }}
+            >
+              <Pressable
+                onPress={primaryAction.onPress}
+                accessibilityRole="button"
+                accessibilityLabel={primaryAction.label}
+                style={{
+                  height: 56,
+                  borderRadius: 9999,
+                  backgroundColor: colors.primary,
+                  borderWidth: 2,
+                  borderColor: PINK_CTA_BORDER,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                  ...bevelShadow(theme),
+                }}
+              >
+                {primaryAction.iconName ? (
+                  <Ionicons
+                    name={primaryAction.iconName}
+                    size={18}
+                    color={PINK_CTA_INK}
+                  />
+                ) : null}
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 15,
+                    color: PINK_CTA_INK,
+                    letterSpacing: 0.8,
+                    textTransform: "uppercase",
+                  }}
+                  numberOfLines={1}
+                >
+                  {primaryAction.label}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>

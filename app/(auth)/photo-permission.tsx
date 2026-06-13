@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { View, ScrollView, Image, StatusBar } from "react-native";
+import { useEffect, useState } from "react";
+import { View, ScrollView, Image, StatusBar, Text } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { usePostHog } from "posthog-react-native";
@@ -9,6 +9,9 @@ import type { Profile } from "@/store/authStore";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import { PhotoAccessNudgeCard } from "@/components/common/PhotoAccessNudgeCard";
+import { FullPhotoLibraryAccessModal } from "@/components/common/FullPhotoLibraryAccessModal";
+import { queryRecentCameraPhotos } from "@/hooks/useMediaLibrary";
+import { useOnboardingMontageStore } from "@/store/onboardingMontageStore";
 import { useTheme } from "@/hooks/useTheme";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 
@@ -32,6 +35,7 @@ export default function PhotoPermissionScreen() {
   const { checkPermission, requestPermission } = useMediaLibrary();
   const { ensureFullPhotoAccess, fullPhotoAccessModal } =
     useFullPhotoAccessExplainer({ checkPermission, requestPermission });
+  const [skipModalVisible, setSkipModalVisible] = useState(false);
 
   useEffect(() => {
     posthog.capture("viewed_photo_permission", onboardingEventProps(3));
@@ -44,7 +48,7 @@ export default function PhotoPermissionScreen() {
     if (user) {
       const { data } = await supabase
         .from("profiles")
-        .update({ onboarding_phase: "activation" })
+        .update({ onboarding_phase: "notifications" })
         .eq("id", user.id)
         .select()
         .single();
@@ -56,10 +60,7 @@ export default function PhotoPermissionScreen() {
         onboardingEventProps(3, { reason })
       );
     }
-    router.replace({
-      pathname: "/(auth)/activation",
-      params: { prompt_type: promptType },
-    });
+    router.replace("/(auth)/notifications-prompt");
   };
 
   const handleAllow = async () => {
@@ -80,30 +81,38 @@ export default function PhotoPermissionScreen() {
       })
     );
     if (granted) {
+      void queryRecentCameraPhotos({ daysBack: 30, limit: 20 }).then(
+        (assets) => useOnboardingMontageStore.getState().setAssets(assets)
+      );
       await advanceTo("photo");
     } else {
       await advanceTo("word", "os_denied");
     }
   };
 
-  const handleWordFallback = async () => {
+  const handleSkipLinkPress = () => {
     posthog.capture(
-      "photo_permission_explainer_shown",
-      onboardingEventProps(3, { trigger: "skip" })
+      "photo_permission_skip_link_tapped",
+      onboardingEventProps(3)
     );
-    const granted = await ensureFullPhotoAccess();
+    setSkipModalVisible(true);
+  };
+
+  const handleSkipModalContinue = async () => {
+    setSkipModalVisible(false);
+    await handleAllow();
+  };
+
+  const handleSkipModalSkip = async () => {
+    setSkipModalVisible(false);
     posthog.capture(
       "photo_permission_resolved",
       onboardingEventProps(3, {
-        result: granted ? "granted" : "dismissed",
+        result: "dismissed",
         trigger: "skip",
       })
     );
-    if (granted) {
-      await advanceTo("photo");
-    } else {
-      await advanceTo("word", "user_skipped");
-    }
+    await advanceTo("word", "user_skipped");
   };
 
   return (
@@ -116,6 +125,23 @@ export default function PhotoPermissionScreen() {
         backgroundColor={colors.background}
       />
       {fullPhotoAccessModal}
+      <FullPhotoLibraryAccessModal
+        visible={skipModalVisible}
+        onClose={() => setSkipModalVisible(false)}
+        onAllowAccess={handleSkipModalContinue}
+        title="Photo access keeps Little Moments working"
+        body={
+          <>
+            Little Moments surfaces photos from your camera roll one day at a time so
+            you can pick what mattered. We need{" "}
+            <Text style={{ fontFamily: "Roboto-Bold" }}>full photo access</Text> for
+            that to work — nothing leaves your device until you save a moment.
+          </>
+        }
+        primaryCtaLabel="Continue"
+        secondaryCtaLabel="Skip permission"
+        onSecondaryCtaPress={handleSkipModalSkip}
+      />
       <ScrollView
         style={{ flex: 1, backgroundColor: colors.background }}
         contentContainerStyle={{
@@ -136,11 +162,14 @@ export default function PhotoPermissionScreen() {
         <View style={{ marginTop: 28 }}>
           <PhotoAccessNudgeCard
             headline="Pick from your day's photos"
+            headlineFontFamily="PMGothicLudington-Text110"
+            headlineFontSize={30}
             subtitle="Each day, we'll show you photos from that day so you choose which one mattered. Nothing leaves your device until you save a moment."
             primaryLabel="ALLOW PHOTOS"
-            wordFallbackLabel="Use questions instead"
+            wordFallbackLabel="I don't want to use photos"
+            showSecondaryOrPrefix={false}
             onPrimaryPress={handleAllow}
-            onWordFallbackPress={handleWordFallback}
+            onWordFallbackPress={handleSkipLinkPress}
           />
         </View>
       </ScrollView>

@@ -6,6 +6,7 @@ import {
   parseChapterRow,
   type ChapterRecord,
 } from "@/lib/chapters";
+import { enqueueChapterCoversForPrefetch } from "@/lib/mediaPrefetch";
 
 // Free-tier paywalling — must match the server-side constants in
 // supabase/functions/cron-chapters/index.ts. First N weekly chapters
@@ -44,6 +45,7 @@ export function useChapters() {
         // Hide legacy monthly chapters — only weekly chapters surface now.
         .filter((r) => Boolean(r.ref_week_start_date));
       setChapters(parsed);
+      enqueueChapterCoversForPrefetch(parsed);
     }
     setIsLoading(false);
   }, [userId]);

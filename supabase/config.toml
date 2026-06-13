@@ -52,6 +52,12 @@ verify_jwt = false
 [functions.shared-moment]
 verify_jwt = false
 
+[functions.shared-chapter]
+verify_jwt = false
+
+[functions.shared-mashup]
+verify_jwt = false
+
 [functions.open-app]
 verify_jwt = false
 
@@ -74,6 +80,9 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.cron-lifecycle-emails]
+verify_jwt = false
+
+[functions.cron-magic-fill-nudges]
 verify_jwt = false
 
 [functions.lifecycle-event]

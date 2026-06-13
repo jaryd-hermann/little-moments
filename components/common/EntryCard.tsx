@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import type { Entry } from "@/store/entryStore";
 import { format } from "date-fns";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
-import { useTheme } from "@/hooks/useTheme";
+import { momentTitleStyle } from "@/lib/momentTypography";
 
 interface EntryCardProps {
   entry: Entry;
@@ -36,11 +36,10 @@ export function EntryCard({ entry, compact }: EntryCardProps) {
     >
       {entry.title && (
         <Text
-          style={{
-            fontFamily: "LibreBaskerville-Bold",
+          style={momentTitleStyle({
             fontSize: compact ? 15 : 18,
             color: colors.text,
-          }}
+          })}
           numberOfLines={1}
         >
           {entry.title}

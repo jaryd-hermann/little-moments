@@ -14,6 +14,20 @@
  */
 export type QuizAnswers = Record<string, string>;
 
+/**
+ * When someone taps Login from pre-quiz welcome and signs up (no local quiz),
+ * we persist these answers so persona, rhythm pre-fill, and paywall headline
+ * match a sensible default rather than `{}`.
+ */
+export const SKIP_QUIZ_DEFAULT_ANSWERS: QuizAnswers = {
+  q1_hook: "notice",
+  q2_failure: "first_time",
+  q3_rhythm: "evening",
+  q4_time: "few_minutes",
+  /** Drives mirrorHeadlineForQ5 on the paywall value screen. */
+  q5_commitment: "archive",
+};
+
 export type QuizPersona = "time" | "memory" | "legacy" | "habit" | "presence";
 
 export type CaptureRhythm = "morning" | "evening";

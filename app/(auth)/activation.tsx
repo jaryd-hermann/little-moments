@@ -356,6 +356,13 @@ export default function ActivationScreen() {
     ]
   );
 
+  /**
+   * Activation off-ramp. The user is stuck or doesn't want to capture
+   * right now — but we don't want to drop them all the way out of the
+   * onboarding funnel, because notifications + value-anchor (paywall)
+   * are the steps that actually move retention and trial-start. Skip
+   * past activation + reveal and land them on the notifications screen.
+   */
   const handleSkipOnboarding = useCallback(async () => {
     posthog.capture(
       "activation_skipped",
@@ -364,13 +371,13 @@ export default function ActivationScreen() {
     if (user) {
       const { data } = await supabase
         .from("profiles")
-        .update({ onboarding_phase: "done", onboarding_completed: true })
+        .update({ onboarding_phase: "notifications" })
         .eq("id", user.id)
         .select()
         .single();
       if (data) setProfile(data as Profile);
     }
-    router.replace("/(tabs)/today");
+    router.replace("/(auth)/notifications-prompt");
   }, [posthog, promptTypeParam, user, setProfile]);
 
   const todayPhotoPermissionBlocked =
@@ -500,26 +507,66 @@ export default function ActivationScreen() {
         />
         </Animated.View>
       ) : (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          showsVerticalScrollIndicator={false}
-        >
-          <CuratorBrowsePanel
-            key={memoryYmd}
-            headingTitle={captureHeading.title}
-            onPressChangeDay={() => {}}
-            dayPhotos={dayPhotos}
-            loadingPhotos={loadingDayPhotos}
-            onChoosePhoto={handlePinPhotoFromBrowse}
-            onStartQuestionCapture={handleStartQuestionFromBrowse}
-            hideChangeDay
-            analyticsContext={{
-              target_ymd: memoryYmd,
-              surface: "activation",
+        <>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <CuratorBrowsePanel
+              key={memoryYmd}
+              headingTitle={captureHeading.title}
+              onPressChangeDay={() => {}}
+              dayPhotos={dayPhotos}
+              loadingPhotos={loadingDayPhotos}
+              onChoosePhoto={handlePinPhotoFromBrowse}
+              onStartQuestionCapture={handleStartQuestionFromBrowse}
+              hideChangeDay
+              analyticsContext={{
+                target_ymd: memoryYmd,
+                surface: "activation",
+              }}
+            />
+          </ScrollView>
+          {/*
+            Off-ramp link, always visible at the bottom of the browse
+            panel. Tapping it sets phase = "notifications" and jumps the
+            user past activation + reveal to the notifications screen so
+            they don't get stuck on this step.
+          */}
+          <View
+            style={{
+              paddingHorizontal: 24,
+              paddingTop: 8,
+              paddingBottom: 16,
+              backgroundColor: colors.background,
+              borderTopWidth: 1,
+              borderTopColor: colors.borderLight,
             }}
-          />
-        </ScrollView>
+          >
+            <Pressable
+              accessibilityLabel="Skip for now"
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                void handleSkipOnboarding();
+              }}
+              hitSlop={8}
+              style={{ paddingVertical: 10 }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 14,
+                  color: colors.text,
+                  textAlign: "center",
+                  textDecorationLine: "underline",
+                }}
+              >
+                Skip for now
+              </Text>
+            </Pressable>
+          </View>
+        </>
       )}
     </SafeAreaView>
   );

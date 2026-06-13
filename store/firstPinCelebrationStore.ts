@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /**
- * Drives the one-shot "You pinned your first moment" celebration sheet.
+ * Drives the one-shot "You saved your first core memory" celebration sheet.
  *
  * `hasSeenFirstPinCelebration` is the only persisted bit — it ensures the
  * celebration fires exactly once per user. `visible` is in-memory because the

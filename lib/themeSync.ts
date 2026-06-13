@@ -22,12 +22,20 @@ export function applyThemeFromProfile(
   if (profile != null && profile.onboarding_completed === false) {
     return;
   }
-  let next: ThemePreference;
-  if (colorTheme === "light" || colorTheme === "dark" || colorTheme === "system") {
-    next = colorTheme;
-  } else {
-    next = "system";
+  // Only sync when the profile has an explicit preference. Treating
+  // null/undefined as "system" overwrites the user's local choice every
+  // time we re-hydrate from the server — which manifests as a sudden
+  // flip (e.g. light → dark) the moment we touch the profile during
+  // the notifications → value-anchor handoff if their OS is in dark
+  // mode and color_theme was never persisted.
+  if (
+    colorTheme !== "light" &&
+    colorTheme !== "dark" &&
+    colorTheme !== "system"
+  ) {
+    return;
   }
+  const next: ThemePreference = colorTheme;
   const current = useSettingsStore.getState().theme;
   if (current === next) return;
   useSettingsStore.getState().setTheme(next);

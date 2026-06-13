@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, Image as RNImage, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
-import { format } from "date-fns";
+import { MagicFillDatePill } from "@/components/magic-fill/MagicFillDatePill";
 import { useTheme } from "@/hooks/useTheme";
 import type { PromptType } from "@/lib/momentAssist";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
@@ -184,21 +184,9 @@ export function PromptCard({
                     position: "absolute",
                     top: 12,
                     left: 12,
-                    backgroundColor: "rgba(0,0,0,0.5)",
-                    borderRadius: 8,
-                    paddingHorizontal: 10,
-                    paddingVertical: 5,
                   }}
                 >
-                  <Text
-                    style={{
-                      fontFamily: "LibreBaskerville-Bold",
-                      fontSize: 14,
-                      color: "#FFFFFF",
-                    }}
-                  >
-                    {format(new Date(photoDate), "MMM d, yyyy")}
-                  </Text>
+                  <MagicFillDatePill date={new Date(photoDate)} />
                 </View>
               )}
               {isShuffling && (

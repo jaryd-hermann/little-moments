@@ -9,6 +9,10 @@ import { routeAfterAuth, healProfileIfStuckAfterCapture } from "@/lib/onboarding
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
 import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
+import {
+  clearLoginFromPreQuizWelcomeIntent,
+  getLoginFromPreQuizWelcomeIntent,
+} from "@/lib/onboardingLoginIntent";
 
 export default function IndexRedirect() {
   const { colors } = useTheme();
@@ -37,7 +41,10 @@ export default function IndexRedirect() {
       // until the profile has the answers.
       const quizState = useOnboardingQuizStore.getState();
       const localAnswerCount = Object.keys(quizState.answers).length;
-      const profileAnswerCount = Object.keys(p?.quiz_answers ?? {}).length;
+      if (localAnswerCount > 0) {
+        await clearLoginFromPreQuizWelcomeIntent();
+      }
+      let profileAnswerCount = Object.keys(p?.quiz_answers ?? {}).length;
       if (localAnswerCount > 0 && profileAnswerCount === 0) {
         const flush = await quizState.flushToProfile(user.id);
         if (flush.ok) {
@@ -48,6 +55,28 @@ export default function IndexRedirect() {
             .single();
           if (refreshed) {
             p = refreshed as Profile;
+          }
+        }
+        profileAnswerCount = Object.keys(p?.quiz_answers ?? {}).length;
+      }
+
+      // Retry skip-quiz default flush after sign-in if the first attempt failed offline.
+      if (
+        profileAnswerCount === 0 &&
+        localAnswerCount === 0 &&
+        (await getLoginFromPreQuizWelcomeIntent())
+      ) {
+        const skipFlush =
+          await quizState.flushSkipQuizDefaultsToProfile(user.id);
+        if (skipFlush.ok) {
+          await clearLoginFromPreQuizWelcomeIntent();
+          const { data: refreshedSkip } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", user.id)
+            .single();
+          if (refreshedSkip) {
+            p = refreshedSkip as Profile;
           }
         }
       }

@@ -4,6 +4,7 @@ import { format, isToday, parseISO } from "date-fns";
 import * as Haptics from "expo-haptics";
 import type { Entry } from "@/store/entryStore";
 import { useTheme } from "@/hooks/useTheme";
+import { momentTitleStyle } from "@/lib/momentTypography";
 import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 
@@ -148,11 +149,10 @@ export function TodayEntryCard({
         <View>
           {entry.title ? (
             <Text
-              style={{
-                fontFamily: "LibreBaskerville-Bold",
+              style={momentTitleStyle({
                 fontSize: 18,
                 color: cardText,
-              }}
+              })}
               numberOfLines={2}
             >
               {entry.title}

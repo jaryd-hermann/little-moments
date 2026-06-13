@@ -23,6 +23,7 @@ import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mirrorHeadlineForQ5 } from "@/lib/onboardingQuiz";
 import { requestPaywallTriggerSkips } from "@/lib/onboardingPaywallSession";
+import { routeToFirstMomentScreen } from "@/lib/onboardingRoute";
 
 const TERMS_URL = "https://getlittlemoments.com/terms";
 const PRIVACY_URL = "https://getlittlemoments.com/privacy";
@@ -88,12 +89,35 @@ export default function PaywallValueScreen() {
   const annualPrice = annualPackage?.product.price ?? FALLBACK_ANNUAL_PRICE;
   const annualPriceString =
     annualPackage?.product.priceString ?? `$${FALLBACK_ANNUAL_PRICE.toFixed(2)}`;
+  const annualCurrencyCode =
+    annualPackage?.product.currencyCode ?? "USD";
   const annualPerDay = useMemo(() => {
     const computed = annualPrice / 365;
     if (!Number.isFinite(computed) || computed <= 0) return FALLBACK_ANNUAL_PER_DAY;
     return computed;
   }, [annualPrice]);
-  const annualPerDayDisplay = annualPerDay.toFixed(2);
+  // Format the per-day price in the user's store currency. Without this
+  // the screen showed `$0.22` even when the annual price was in EUR/GBP/
+  // INR/etc — the daily anchor read as a different currency than the
+  // "billed yearly" line. Hermes ships full Intl support on RN 0.79+.
+  const annualPerDayDisplay = useMemo(() => {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: annualCurrencyCode,
+        // Most currencies render fine at the locale-default fraction
+        // digits (e.g. JPY: 0, USD: 2). For very small per-day numbers
+        // we still want 2 dp so "0" doesn't appear (e.g. INR ~₹16 looks
+        // wrong rounded). minimumFractionDigits handles that.
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(annualPerDay);
+    } catch {
+      // Bad currency code (RC rarely returns one), or Intl unavailable.
+      // Fall back to the bare number — better to show "0.22" than crash.
+      return annualPerDay.toFixed(2);
+    }
+  }, [annualPerDay, annualCurrencyCode]);
 
   const mountedAtRef = useRef<number>(Date.now());
 
@@ -107,14 +131,19 @@ export default function PaywallValueScreen() {
       ...onboardingEventProps(7),
       q5_option_id: answers["q5_commitment"] ?? null,
       annual_price: annualPrice,
-      annual_per_day: Number(annualPerDayDisplay),
+      annual_currency: annualCurrencyCode,
+      annual_per_day: annualPerDay,
       from_onboarding: fromOnboarding,
     });
   }, []);
 
   const headline = mirrorHeadlineForQ5(answers);
 
-  const exitToTodayWithCapture = () => {
+  const exitAfterOnboarding = () => {
+    if (fromOnboarding) {
+      routeToFirstMomentScreen();
+      return;
+    }
     router.replace({
       pathname: "/(tabs)/today",
       params: { capture: "1", onboardingFirstMoment: "1" },
@@ -166,7 +195,7 @@ export default function PaywallValueScreen() {
             source: "value_anchor_direct",
           })
         );
-        exitToTodayWithCapture();
+        exitAfterOnboarding();
       } else if (result.cancelled) {
         posthog.capture("value_anchor_trial_cancelled", onboardingEventProps(7));
         // User backed out of the StoreKit sheet — keep them on this screen.
@@ -212,7 +241,7 @@ export default function PaywallValueScreen() {
         "value_anchor_restored",
         onboardingEventProps(7, { source: "value_anchor" })
       );
-      exitToTodayWithCapture();
+      exitAfterOnboarding();
     } else {
       Alert.alert(
         "No subscription found",
@@ -229,7 +258,7 @@ export default function PaywallValueScreen() {
         ms_on_screen: Date.now() - mountedAtRef.current,
       })
     );
-    exitToTodayWithCapture();
+    exitAfterOnboarding();
   };
 
   return (
@@ -261,7 +290,7 @@ export default function PaywallValueScreen() {
         </View>
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
+            fontFamily: "PMGothicLudington-Text110",
             fontSize: 22,
             lineHeight: 30,
             color: colors.text,
@@ -307,7 +336,7 @@ export default function PaywallValueScreen() {
           <Text
             style={{
               marginTop: 6,
-              fontFamily: "LibreBaskerville-Bold",
+              fontFamily: "PMGothicLudington-Text110",
               fontSize: 22,
               lineHeight: 28,
               color: PREMIUM_ACCENT,
@@ -380,13 +409,13 @@ export default function PaywallValueScreen() {
           <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
             <Text
               style={{
-                fontFamily: "LibreBaskerville-Bold",
+                fontFamily: "PMGothicLudington-Text110",
                 fontSize: 34,
                 lineHeight: 38,
                 color: PREMIUM_ACCENT,
               }}
             >
-              ${annualPerDayDisplay}
+              {annualPerDayDisplay}
             </Text>
             <Text
               style={{

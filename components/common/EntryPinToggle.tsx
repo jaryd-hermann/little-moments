@@ -1,12 +1,11 @@
 import { useCallback } from "react";
-import { Pressable, View, StyleSheet } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useEntries } from "@/hooks/useEntries";
 import { useEntryStore } from "@/store/entryStore";
-import { useTheme } from "@/hooks/useTheme";
-import { ThumbtackIcon } from "@/components/common/ThumbtackIcon";
-import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
+import { CoreMemoryIcon } from "@/components/common/CoreMemoryIcon";
 import { notifyLifecycleEvent } from "@/lib/lifecycleEvent";
+import { useCoreMemoryAddedStore } from "@/store/coreMemoryAddedStore";
 
 type EntryPinToggleProps = {
   entryId: string;
@@ -18,46 +17,35 @@ type EntryPinToggleProps = {
 export function EntryPinToggle({
   entryId,
   enabled = true,
-  size = 22,
+  size = 36,
 }: EntryPinToggleProps) {
-  const { colors } = useTheme();
   const { editEntry } = useEntries();
-  const isPinned = useEntryStore(
+  const isCore = useEntryStore(
     (s) => s.entries.find((e) => e.id === entryId)?.is_pinned ?? false
   );
 
   const onPress = useCallback(() => {
     if (!enabled) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const next = !isPinned;
+    const next = !isCore;
     if (next) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
-    void editEntry(entryId, { is_pinned: next });
 
-    // First-pin celebration: fire only on the 0→1 transition, and only once
-    // per user (the persisted `hasSeenFirstPinCelebration` flag inside
-    // `useFirstPinCelebrationStore` gates re-shows). We compute the new pin
-    // count optimistically — `editEntry` updates the local entry store
-    // synchronously, but we read state immediately so we use `priorPinned`
-    // + the toggle direction instead of waiting for the next render.
     if (next) {
       const entries = useEntryStore.getState().entries;
-      const priorPinned = entries.filter(
+      const priorCore = entries.filter(
         (e) => e.is_pinned && e.id !== entryId
       ).length;
-      const nextPinned = priorPinned + 1;
-      const { hasSeenFirstPinCelebration, show } =
-        useFirstPinCelebrationStore.getState();
-      if (nextPinned === 1 && !hasSeenFirstPinCelebration) {
-        show();
-        // Fire the first-pin lifecycle push — server re-checks
-        // total_pinned === 1 before dispatching, so optimistic state
-        // here can't cause a false send.
+      const nextCore = priorCore + 1;
+      useCoreMemoryAddedStore.getState().show(nextCore);
+      if (nextCore === 1) {
         void notifyLifecycleEvent("first_pin");
       }
     }
-  }, [enabled, editEntry, entryId, isPinned]);
+
+    void editEntry(entryId, { is_pinned: next });
+  }, [enabled, editEntry, entryId, isCore]);
 
   if (!enabled) return null;
 
@@ -66,46 +54,21 @@ export function EntryPinToggle({
       onPress={onPress}
       hitSlop={10}
       accessibilityRole="button"
-      accessibilityLabel={isPinned ? "Unpin moment" : "Pin moment"}
+      accessibilityLabel={
+        isCore ? "Remove core memory" : "Mark as core memory"
+      }
       style={({ pressed }) => [
         styles.hit,
         { opacity: pressed ? 0.65 : 1 },
       ]}
     >
-      <View
-        style={[
-          styles.circle,
-          isPinned
-            ? {
-                borderColor: "#000000",
-                backgroundColor: colors.primary,
-              }
-            : {
-                borderColor: "rgba(0,0,0,0.14)",
-                backgroundColor: "#FFFFFF",
-              },
-        ]}
-      >
-        <ThumbtackIcon
-          size={Math.round(size * 0.82)}
-          color="#000000"
-          weight={isPinned ? "solid" : "regular"}
-        />
-      </View>
+      <CoreMemoryIcon size={size} active={isCore} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   hit: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  circle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 import { View, Text, SectionList, Pressable } from "react-native";
 import {
   format,
@@ -14,6 +13,7 @@ import {
 } from "./MemorySearchBar";
 import { EntryRow } from "./EntryRow";
 import { ThreadCard } from "@/components/threads/ThreadCard";
+import { MagicFillFeedButton } from "@/components/magic-fill/MagicFillFeedButton";
 import type { Entry } from "@/store/entryStore";
 import type { Thread } from "@/hooks/useThreads";
 import type { CapsuleFilter } from "./CapsuleStatBar";
@@ -51,6 +51,7 @@ interface ListViewMemoriesProps {
   capsuleFilter?: CapsuleFilter;
   threads?: Thread[];
   showSearch?: boolean;
+  showMagicFillButton?: boolean;
 }
 
 const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
@@ -85,10 +86,9 @@ export function ListViewMemories({
   capsuleFilter = "all",
   threads = [],
   showSearch = false,
+  showMagicFillButton = false,
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
-  const pinnedOnly = useCapsuleFlipbookStore((s) => s.pinnedOnly);
-
   const threadOrdinals = useMemo(
     () => threadOrdinalByIdMap(threads),
     [threads]
@@ -103,13 +103,8 @@ export function ListViewMemories({
     } else if (capsuleFilter === "chapters") {
       list = list.filter((e) => e.entry_type === "chapter");
     }
-    if (pinnedOnly) {
-      list = list.filter(
-        (e) => e.entry_type === "moment" && Boolean(e.is_pinned)
-      );
-    }
     return list;
-  }, [entries, capsuleFilter, pinnedOnly]);
+  }, [entries, capsuleFilter]);
 
   const sections = useMemo(() => {
     const today = new Date();
@@ -143,46 +138,13 @@ export function ListViewMemories({
       bucket.entries.push(entry);
     }
 
-    // Group threads by the same week buckets.
-    const threadGroups = new Map<string, Thread[]>();
-    for (const t of threads) {
-      if (t.dismissed) continue;
-      const created = new Date(t.created_at);
-      if (Number.isNaN(created.getTime())) continue;
-      const { label } = weekGroup(created, today);
-      if (!threadGroups.has(label)) threadGroups.set(label, []);
-      threadGroups.get(label)!.push(t);
-    }
-    for (const [label, arr] of threadGroups) {
-      const seen = new Set<string>();
-      const deduped: Thread[] = [];
-      for (const t of arr) {
-        if (seen.has(t.id)) continue;
-        seen.add(t.id);
-        deduped.push(t);
-      }
-      deduped.sort(
-        (a, b) =>
-          new Date(b.created_at).getTime() -
-          new Date(a.created_at).getTime()
-      );
-      threadGroups.set(label, deduped);
-    }
+    // Threads are intentionally **not** rendered on the Capsule. They live
+    // exclusively on the Connect tab now — the Capsule only shows moments
+    // and chapters.
+    const allLabels = new Set([...entryGroups.keys()]);
 
-    const allLabels = new Set([
-      ...entryGroups.keys(),
-      ...threadGroups.keys(),
-    ]);
-
-    const labelSortKey = (label: string): number => {
-      const eg = entryGroups.get(label);
-      if (eg) return eg.sortKey;
-      const tg = threadGroups.get(label);
-      if (tg?.[0]) {
-        return startOfWeek(new Date(tg[0].created_at), { weekStartsOn: 1 }).getTime();
-      }
-      return 0;
-    };
+    const labelSortKey = (label: string): number =>
+      entryGroups.get(label)?.sortKey ?? 0;
 
     return [...allLabels]
       .sort((a, b) => {
@@ -194,8 +156,7 @@ export function ListViewMemories({
         // Within each week, the chapter card always renders last — even
         // when the chosen sort would otherwise put it first (e.g. "oldest"
         // sort surfaces the Monday-dated chapter ahead of the rest of the
-        // week's moments). Threads first, then moments in their sorted
-        // order, then any chapter rows.
+        // week's moments). Moments in sorted order, then any chapter rows.
         const groupEntries = entryGroups.get(label)?.entries ?? [];
         const moments = groupEntries.filter((e) => e.entry_type !== "chapter");
         const chaptersInWeek = groupEntries.filter(
@@ -205,16 +166,13 @@ export function ListViewMemories({
           ...moments.map((entry) => ({ type: "entry" as const, entry })),
           ...chaptersInWeek.map((entry) => ({ type: "entry" as const, entry })),
         ];
-        const threadItems: ListItem[] = (threadGroups.get(label) ?? []).map(
-          (thread) => ({ type: "thread", thread })
-        );
         return {
           title: label,
           count: entryItems.length,
-          data: [...threadItems, ...entryItems],
+          data: entryItems,
         };
       });
-  }, [filteredByType, sortOrder, threads]);
+  }, [filteredByType, sortOrder]);
 
   const currentSortLabel =
     SORT_OPTIONS.find((o) => o.value === sortOrder)?.label ?? "Newest";
@@ -320,7 +278,13 @@ export function ListViewMemories({
       )}
 
       <SectionList
+        style={{ flex: 1 }}
         sections={sections}
+        ListHeaderComponent={
+          showMagicFillButton ? (
+            <MagicFillFeedButton source="capsule_banner" embedded compact />
+          ) : undefined
+        }
         keyExtractor={(item) =>
           item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
         }

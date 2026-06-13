@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
 import {
+  SKIP_QUIZ_DEFAULT_ANSWERS,
   derivePersonaFromAnswers,
   deriveCaptureRhythmFromAnswers,
   deriveReflectionTargetFromAnswers,
@@ -29,6 +30,10 @@ interface OnboardingQuizStore {
   flushToProfile: (
     userId: string
   ) => Promise<{ ok: true; answerCount: number } | { ok: false; reason: string }>;
+  /** Quiz skipped via pre-quiz Login → auth; persists defaults only (does not mutate local answers). */
+  flushSkipQuizDefaultsToProfile: (
+    userId: string
+  ) => Promise<{ ok: true } | { ok: false; reason: string }>;
 }
 
 export const useOnboardingQuizStore = create<OnboardingQuizStore>()(
@@ -83,6 +88,38 @@ export const useOnboardingQuizStore = create<OnboardingQuizStore>()(
         }
         set({ persistedToProfile: true });
         return { ok: true, answerCount };
+      },
+      flushSkipQuizDefaultsToProfile: async (userId) => {
+        const answers = SKIP_QUIZ_DEFAULT_ANSWERS;
+        const captureRhythm = deriveCaptureRhythmFromAnswers(answers);
+        const reflectionTarget = deriveReflectionTargetFromAnswers(answers);
+        const persona = derivePersonaFromAnswers(answers);
+
+        const update: Record<string, unknown> = {
+          quiz_answers: answers,
+          quiz_persona: persona,
+          onboarding_phase: "photo_permission",
+        };
+        if (captureRhythm) {
+          update.capture_rhythm = captureRhythm;
+        }
+        if (reflectionTarget) {
+          update.reflection_target_default = reflectionTarget;
+        }
+
+        const { error } = await supabase
+          .from("profiles")
+          .update(update)
+          .eq("id", userId);
+
+        if (error) {
+          console.error(
+            "[onboardingQuiz] flushSkipQuizDefaultsToProfile failed:",
+            error
+          );
+          return { ok: false, reason: error.message };
+        }
+        return { ok: true };
       },
     }),
     {

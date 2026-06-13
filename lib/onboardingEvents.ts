@@ -17,7 +17,7 @@ import type { PostHogEventProperties } from "@posthog/core";
  *   7. paywall value-anchor (skippable; not persisted as onboarding_phase)
  *   8. paywall (RevenueCat purchase; skippable; not persisted as onboarding_phase)
  */
-export const ONBOARDING_FUNNEL_VERSION = "photo_focus_quiz_v1" as const;
+export const ONBOARDING_FUNNEL_VERSION = "photo_focus_capture_v2" as const;
 
 export type OnboardingStepIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 

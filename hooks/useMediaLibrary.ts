@@ -61,11 +61,15 @@ export interface PickedPhoto {
 }
 
 function mapExpoAsset(a: MediaLibrary.Asset): MediaAsset {
+  const mediaType: "photo" | "video" =
+    (a as unknown as { mediaType?: string }).mediaType === "video"
+      ? "video"
+      : "photo";
   return {
     id: a.id,
     uri: a.uri,
     creationTime: a.creationTime,
-    mediaType: "photo",
+    mediaType,
     width: a.width,
     height: a.height,
   };
@@ -85,27 +89,42 @@ function isScreenshotDimensions(w: number, h: number): boolean {
   );
 }
 
-let _excludedIds: Set<string> | null = null;
-let _excludedIdsPromise: Promise<Set<string>> | null = null;
+interface ExcludedAssetIds {
+  /** Assets known to be screenshots (from a Screenshots album). */
+  screenshotIds: Set<string>;
+  /** Assets received via a messaging-app album (WhatsApp, Telegram, etc). */
+  messagingAppIds: Set<string>;
+}
 
-const EXCLUDED_ALBUM_RE =
-  /screenshot|screen\s*shot|whatsapp|whats\s*app|wa\s+images|telegram|messenger|signal|viber|wechat|snapchat/i;
+let _excludedIds: ExcludedAssetIds | null = null;
+let _excludedIdsPromise: Promise<ExcludedAssetIds> | null = null;
 
-async function loadExcludedAssetIds(): Promise<Set<string>> {
+const SCREENSHOT_ALBUM_RE = /screenshot|screen\s*shot/i;
+const MESSAGING_APP_ALBUM_RE =
+  /whatsapp|whats\s*app|wa\s+images|telegram|messenger|signal|viber|wechat|snapchat/i;
+const SCREENSHOT_FILENAME_RE = /screenshot|screen[-_ ]?shot/i;
+const MESSAGING_APP_FILENAME_RE = /img-?wa-|\bwa\d{4,}|whatsapp|_chat\.|inline\.png/i;
+
+async function loadExcludedAssetIds(): Promise<ExcludedAssetIds> {
   if (_excludedIds) return _excludedIds;
   if (_excludedIdsPromise) return _excludedIdsPromise;
 
   _excludedIdsPromise = (async () => {
-    const ids = new Set<string>();
+    const screenshotIds = new Set<string>();
+    const messagingAppIds = new Set<string>();
     try {
       const albums = await MediaLibrary.getAlbumsAsync({
         includeSmartAlbums: true,
       });
-      const toExclude = albums.filter((a) =>
-        EXCLUDED_ALBUM_RE.test(a.title.trim())
-      );
 
-      for (const album of toExclude) {
+      for (const album of albums) {
+        const title = album.title.trim();
+        const isScreenshotAlbum = SCREENSHOT_ALBUM_RE.test(title);
+        const isMessagingAlbum =
+          !isScreenshotAlbum && MESSAGING_APP_ALBUM_RE.test(title);
+        if (!isScreenshotAlbum && !isMessagingAlbum) continue;
+
+        const targetSet = isScreenshotAlbum ? screenshotIds : messagingAppIds;
         let cursor: string | undefined;
         let hasMore = true;
         while (hasMore) {
@@ -115,7 +134,7 @@ async function loadExcludedAssetIds(): Promise<Set<string>> {
             first: 2000,
             ...(cursor ? { after: cursor } : {}),
           });
-          for (const a of page.assets) ids.add(a.id);
+          for (const a of page.assets) targetSet.add(a.id);
           hasMore = page.hasNextPage;
           cursor = page.endCursor;
         }
@@ -123,32 +142,64 @@ async function loadExcludedAssetIds(): Promise<Set<string>> {
     } catch {
       // fail open — show all photos rather than crash
     }
-    _excludedIds = ids;
+    _excludedIds = { screenshotIds, messagingAppIds };
     _excludedIdsPromise = null;
-    return ids;
+    return _excludedIds;
   })();
 
   return _excludedIdsPromise;
 }
 
-function isCameraPhoto(
+function isScreenshotAsset(
   asset: { id: string; width: number; height: number; mediaSubtypes?: string[] },
-  excludedIds: Set<string>,
+  screenshotIds: Set<string>,
   opts?: { filename?: string | null }
 ): boolean {
-  if (excludedIds.has(asset.id)) return false;
-  if (asset.mediaSubtypes?.includes("screenshot")) return false;
+  if (screenshotIds.has(asset.id)) return true;
+  if (asset.mediaSubtypes?.includes("screenshot")) return true;
   const fn = opts?.filename?.toLowerCase() ?? "";
-  if (
-    fn &&
-    /screenshot|screen[-_ ]?shot|img-?wa-|\bwa\d{4,}|whatsapp|_chat\.|inline\.png/i.test(
-      fn
-    )
-  ) {
-    return false;
-  }
-  if (isScreenshotDimensions(asset.width, asset.height)) return false;
+  if (fn && SCREENSHOT_FILENAME_RE.test(fn)) return true;
+  if (isScreenshotDimensions(asset.width, asset.height)) return true;
+  return false;
+}
+
+function isMessagingAppAsset(
+  asset: { id: string },
+  messagingAppIds: Set<string>,
+  opts?: { filename?: string | null }
+): boolean {
+  if (messagingAppIds.has(asset.id)) return true;
+  const fn = opts?.filename?.toLowerCase() ?? "";
+  if (fn && MESSAGING_APP_FILENAME_RE.test(fn)) return true;
+  return false;
+}
+
+/**
+ * "Camera-only" predicate used by random rewind/throwback picks — excludes
+ * both screenshots and images received through messaging apps so old WhatsApp
+ * memes never surface as a memory.
+ */
+function isCameraPhoto(
+  asset: { id: string; width: number; height: number; mediaSubtypes?: string[] },
+  excluded: ExcludedAssetIds,
+  opts?: { filename?: string | null }
+): boolean {
+  if (isScreenshotAsset(asset, excluded.screenshotIds, opts)) return false;
+  if (isMessagingAppAsset(asset, excluded.messagingAppIds, opts)) return false;
   return true;
+}
+
+/**
+ * Day-capture predicate used by the day-range carousel — only screenshots are
+ * filtered out, so photos received via text / WhatsApp / other messengers on
+ * that day are still selectable.
+ */
+function isDayCapturePhoto(
+  asset: { id: string; width: number; height: number; mediaSubtypes?: string[] },
+  excluded: ExcludedAssetIds,
+  opts?: { filename?: string | null }
+): boolean {
+  return !isScreenshotAsset(asset, excluded.screenshotIds, opts);
 }
 
 /* ── Bucket cycle ──────────────────────────────────────────────────────── */
@@ -386,21 +437,39 @@ function pickFromIndex(
 const _timeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
   Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 
-async function resolveToFileUri(asset: MediaAsset): Promise<MediaAsset> {
-  try {
-    const manipulated = await _timeout(
-      manipulateAsync(asset.uri, [], { compress: 0.85, format: SaveFormat.JPEG }),
-      5000
-    );
-    if (manipulated?.uri) return { ...asset, uri: manipulated.uri };
-  } catch {}
+/** Resolve `ph://` library URIs to a displayable `file://` path. */
+export async function resolveMediaAssetUri(
+  asset: MediaAsset
+): Promise<MediaAsset> {
+  return enqueueMediaLibraryWork(async () => {
+    const isVideo = asset.mediaType === "video";
 
-  try {
-    const info = await _timeout(MediaLibrary.getAssetInfoAsync(asset.id), 8000);
-    if (info?.localUri) return { ...asset, uri: info.localUri };
-  } catch {}
+    if (!isVideo) {
+      try {
+        const manipulated = await _timeout(
+          manipulateAsync(asset.uri, [], {
+            compress: 0.85,
+            format: SaveFormat.JPEG,
+          }),
+          5000
+        );
+        if (manipulated?.uri) return { ...asset, uri: manipulated.uri };
+      } catch {}
+    }
 
-  return asset;
+    try {
+      const timeoutMs = isVideo ? 25000 : 8000;
+      const info = await _timeout(
+        MediaLibrary.getAssetInfoAsync(asset.id, {
+          shouldDownloadFromNetwork: true,
+        }),
+        timeoutMs
+      );
+      if (info?.localUri) return { ...asset, uri: info.localUri };
+    } catch {}
+
+    return asset;
+  });
 }
 
 /* ── Pre-buffer (resolve photos ahead of time for instant shuffle) ────── */
@@ -419,7 +488,7 @@ async function fillPreBuffer(): Promise<void> {
       if (_photoIndex) {
         const fromIdx = pickFromIndex(_photoIndex);
         if (fromIdx) {
-          const resolved = await resolveToFileUri(fromIdx.asset);
+          const resolved = await resolveMediaAssetUri(fromIdx.asset);
           next = {
             asset: resolved,
             bucket: fromIdx.bucket,
@@ -430,7 +499,7 @@ async function fillPreBuffer(): Promise<void> {
       if (!next) {
         const fallback = await pickRandomPhotoWithBucket();
         if (!fallback) break;
-        const resolved = await resolveToFileUri(fallback.asset);
+        const resolved = await resolveMediaAssetUri(fallback.asset);
         next = {
           ...fallback,
           asset: resolved,
@@ -451,12 +520,207 @@ export function warmUpPhotoCache(): void {
 /* ── Hook ───────────────────────────────────────────────────────────────── */
 
 /**
- * Fetch all camera photos for a local calendar day (paginated). Does not touch
- * hook state — safe for Capture / onboarding day-carousel.
+ * Look up a Live Photo's paired video asset on iOS. Returns `null` on Android,
+ * for non-Live photos, or when the device hasn't downloaded the paired video.
+ * Used at capture time to upload the loopable video alongside the still.
+ */
+/**
+ * Read the EXIF location off a MediaLibrary asset, if present. Returns
+ * `null` when geo metadata is missing, when permission is denied, or when
+ * the underlying call throws. Coordinates are exactly as the OS reports
+ * them — reverse-geocoding to a human label is done elsewhere
+ * (`lib/reverseGeocode.ts`).
+ */
+export async function getAssetGeoLocation(
+  assetId: string
+): Promise<{ latitude: number; longitude: number } | null> {
+  return enqueueMediaLibraryWork(async () => {
+    try {
+      const info = (await MediaLibrary.getAssetInfoAsync(assetId)) as
+        | (MediaLibrary.AssetInfo & {
+            location?: { latitude?: number; longitude?: number } | null;
+          })
+        | null;
+      const loc = info?.location;
+      if (!loc) return null;
+      const lat = loc.latitude;
+      const lng = loc.longitude;
+      if (typeof lat !== "number" || typeof lng !== "number") return null;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { latitude: lat, longitude: lng };
+    } catch {
+      return null;
+    }
+  });
+}
+
+const livePhotoVideoUriCache = new Map<
+  string,
+  Promise<{ uri: string; durationMs: number | null } | null>
+>();
+
+/** Serialize Photos `getAssetInfoAsync` / `requestAVAsset` work — concurrent calls crash iOS. */
+let mediaLibraryWorkTail: Promise<unknown> = Promise.resolve();
+
+export function enqueueMediaLibraryWork<T>(fn: () => Promise<T>): Promise<T> {
+  const next = mediaLibraryWorkTail.then(fn, fn);
+  mediaLibraryWorkTail = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
+async function fetchLivePhotoVideoUri(
+  assetId: string
+): Promise<{ uri: string; durationMs: number | null } | null> {
+  return enqueueMediaLibraryWork(async () => {
+    try {
+      const info = (await MediaLibrary.getAssetInfoAsync(
+        assetId
+      )) as MediaLibrary.AssetInfo & {
+        mediaSubtypes?: string[];
+        pairedVideoAsset?: { uri?: string; localUri?: string; duration?: number };
+      };
+      const isLive =
+        info?.mediaSubtypes?.includes("livePhoto") ||
+        info?.mediaSubtypes?.includes("photoLive");
+      if (!isLive) return null;
+      const paired = info.pairedVideoAsset;
+      if (!paired) return null;
+      const uri = paired.localUri ?? paired.uri ?? null;
+      if (!uri) return null;
+      const durationMs =
+        typeof paired.duration === "number" ? paired.duration * 1000 : null;
+      return { uri, durationMs };
+    } catch {
+      return null;
+    }
+  });
+}
+
+/** Paired Live Photo video URI (iOS). Dedupes concurrent lookups per asset id. */
+export async function getLivePhotoVideoUri(
+  assetId: string
+): Promise<{ uri: string; durationMs: number | null } | null> {
+  if (Platform.OS !== "ios") return null;
+  let pending = livePhotoVideoUriCache.get(assetId);
+  if (!pending) {
+    pending = fetchLivePhotoVideoUri(assetId);
+    livePhotoVideoUriCache.set(assetId, pending);
+  }
+  return pending;
+}
+
+/**
+ * Same-day-different-year photos. For "Today In Your Past" on the Capture
+ * feed: for each prior year (up to `maxYearsBack`), runs the day query and
+ * concatenates results, sorted newest first.
+ */
+export async function queryCameraPhotosForSameDateInPriorYears(
+  month: number,
+  day: number,
+  opts: {
+    maxYearsBack?: number;
+    nowYear?: number;
+    maxResults?: number;
+    /** Skip per-asset `getAssetInfoAsync` — much faster for carousels. */
+    lightweight?: boolean;
+  } = {}
+): Promise<MediaAsset[]> {
+  const maxYearsBack = opts.maxYearsBack ?? 10;
+  const nowYear = opts.nowYear ?? new Date().getFullYear();
+  const maxResults = opts.maxResults ?? 50;
+  const lightweight = opts.lightweight ?? true;
+
+  const dates: Date[] = [];
+  for (let i = 1; i <= maxYearsBack; i++) {
+    const year = nowYear - i;
+    const d = new Date(year, month, day);
+    if (d.getFullYear() !== year || d.getMonth() !== month || d.getDate() !== day) {
+      continue;
+    }
+    dates.push(d);
+  }
+
+  const lists = await Promise.all(
+    dates.map((d) => queryCameraPhotosForLocalDay(d, { lightweight }))
+  );
+  const out = lists.flat();
+  out.sort((a, b) => b.creationTime - a.creationTime);
+  return out.slice(0, maxResults);
+}
+
+/**
+ * Recent camera-roll photos/videos for onboarding montage backgrounds.
+ * Sorted newest-first, capped at `limit`.
+ */
+export async function queryRecentCameraPhotos(opts?: {
+  daysBack?: number;
+  limit?: number;
+  lightweight?: boolean;
+}): Promise<MediaAsset[]> {
+  const daysBack = opts?.daysBack ?? 30;
+  const limit = opts?.limit ?? 20;
+  const lightweight = opts?.lightweight ?? true;
+  const start = new Date();
+  start.setDate(start.getDate() - daysBack);
+  start.setHours(0, 0, 0, 0);
+
+  const excludedIds = await loadExcludedAssetIds();
+  const out: MediaAsset[] = [];
+  let after: string | undefined;
+  let guard = 0;
+  while (guard++ < 40 && out.length < limit) {
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+      createdAfter: start.getTime(),
+      first: 200,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      ...(after ? { after } : {}),
+    });
+    for (const a of page.assets) {
+      if (lightweight) {
+        if (isDayCapturePhoto(a, excludedIds)) {
+          out.push(mapExpoAsset(a));
+        }
+      } else {
+        let merged: MediaLibrary.Asset = a;
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(a.id);
+          merged = { ...a, ...info };
+        } catch {
+          /* use list row */
+        }
+        const filename =
+          ("filename" in merged && typeof merged.filename === "string"
+            ? merged.filename
+            : null) ?? null;
+        if (isDayCapturePhoto(merged, excludedIds, { filename })) {
+          out.push(mapExpoAsset(merged));
+        }
+      }
+      if (out.length >= limit) break;
+    }
+    if (!page.hasNextPage || !page.endCursor) break;
+    after = page.endCursor;
+  }
+  out.sort((a, b) => b.creationTime - a.creationTime);
+  return out.slice(0, limit);
+}
+
+/**
+ * Fetch all selectable photos for a local calendar day (paginated). Filters
+ * out screenshots only — photos received that day via text / WhatsApp /
+ * other messengers are intentionally included so the user can capture a
+ * moment around them. Does not touch hook state — safe for Capture /
+ * onboarding day-carousel.
  */
 export async function queryCameraPhotosForLocalDay(
-  date: Date
+  date: Date,
+  opts?: { lightweight?: boolean }
 ): Promise<MediaAsset[]> {
+  const lightweight = opts?.lightweight ?? false;
   const start = new Date(date);
   start.setHours(0, 0, 0, 0);
   const end = new Date(date);
@@ -468,7 +732,10 @@ export async function queryCameraPhotosForLocalDay(
   let guard = 0;
   while (guard++ < 30) {
     const page = await MediaLibrary.getAssetsAsync({
-      mediaType: [MediaLibrary.MediaType.photo],
+      // Include videos alongside photos so the day carousel can offer
+      // short clips for capture too — `mapExpoAsset` reads the asset's
+      // actual `mediaType` so videos surface as `{ mediaType: "video" }`.
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
       createdAfter: start.getTime(),
       createdBefore: end.getTime(),
       first: 200,
@@ -476,6 +743,12 @@ export async function queryCameraPhotosForLocalDay(
       ...(after ? { after } : {}),
     });
     for (const a of page.assets) {
+      if (lightweight) {
+        if (isDayCapturePhoto(a, excludedIds)) {
+          out.push(mapExpoAsset(a));
+        }
+        continue;
+      }
       let merged: MediaLibrary.Asset = a;
       try {
         const info = await MediaLibrary.getAssetInfoAsync(a.id);
@@ -487,7 +760,7 @@ export async function queryCameraPhotosForLocalDay(
         ("filename" in merged && typeof merged.filename === "string"
           ? merged.filename
           : null) ?? null;
-      if (isCameraPhoto(merged, excludedIds, { filename })) {
+      if (isDayCapturePhoto(merged, excludedIds, { filename })) {
         out.push(mapExpoAsset(merged));
       }
     }
@@ -495,6 +768,64 @@ export async function queryCameraPhotosForLocalDay(
     after = page.endCursor;
   }
   return out;
+}
+
+interface MagicFillPhotoMeta {
+  asset: MediaAsset;
+  isCamera: boolean;
+  isLivePhoto: boolean;
+  score: number;
+}
+
+/**
+ * Rank day photos for Magic Fill — prefer camera captures over messaging
+ * imports, Live Photos, higher resolution, and mid-day timestamps.
+ */
+export async function rankPhotosForMagicFill(
+  photos: MediaAsset[]
+): Promise<MediaAsset[]> {
+  if (photos.length <= 1) return photos;
+
+  const excludedIds = await loadExcludedAssetIds();
+  const metas: MagicFillPhotoMeta[] = [];
+
+  for (const asset of photos) {
+    let isCamera = true;
+    let isLivePhoto = false;
+    let filename: string | null = null;
+    try {
+      const info = (await MediaLibrary.getAssetInfoAsync(asset.id)) as
+        MediaLibrary.AssetInfo & { mediaSubtypes?: string[]; filename?: string };
+      filename =
+        typeof info.filename === "string" ? info.filename : null;
+      isCamera = isCameraPhoto(
+        { ...asset, mediaSubtypes: info.mediaSubtypes },
+        excludedIds,
+        { filename }
+      );
+      isLivePhoto = Boolean(
+        info.mediaSubtypes?.includes("livePhoto") ||
+          info.mediaSubtypes?.includes("photoLive")
+      );
+    } catch {
+      isCamera = isCameraPhoto(asset, excludedIds);
+    }
+
+    const pixels = asset.width * asset.height;
+    const hour = new Date(asset.creationTime).getHours();
+    const midDayBonus = hour >= 8 && hour <= 20 ? 1 : 0;
+
+    let score = 0;
+    if (isCamera) score += 1000;
+    if (isLivePhoto) score += 500;
+    score += Math.min(pixels / 10000, 200);
+    score += midDayBonus * 50;
+
+    metas.push({ asset, isCamera, isLivePhoto, score });
+  }
+
+  metas.sort((a, b) => b.score - a.score);
+  return metas.map((m) => m.asset);
 }
 
 export function useMediaLibrary() {
@@ -652,7 +983,7 @@ export function useMediaLibrary() {
       `[useMediaLibrary] picked via query fallback (bucket=${picked.bucket}):`,
       picked.asset.id
     );
-    const resolved = await resolveToFileUri(picked.asset);
+    const resolved = await resolveMediaAssetUri(picked.asset);
     void fillPreBuffer();
     return {
       ...picked,

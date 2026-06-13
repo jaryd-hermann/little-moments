@@ -80,7 +80,7 @@ export default function QuizMirrorScreen() {
 
         <Text
           style={{
-            fontFamily: "LibreBaskerville-Bold",
+            fontFamily: "PMGothicLudington-Text110",
             fontSize: 26,
             lineHeight: 34,
             color: colors.text,

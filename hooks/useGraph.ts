@@ -120,6 +120,10 @@ export function useGraph(): UseGraphResult {
     setError(null);
     try {
       // Three parallel queries — nodes, edges, canonical maps.
+      // Restrict to entry_type='moment' so server-side `chapter` entries
+      // (and any future `crash_and_burn` rows) don't leak into the graph
+      // as theme-less gray dots — only Moments run through process-threads
+      // and get embeddings + metadata.
       const [entriesRes, threadsRes, statsRes] = await Promise.all([
         supabase
           .from("entries")
@@ -130,6 +134,7 @@ export function useGraph(): UseGraphResult {
           `
           )
           .eq("user_id", userId)
+          .eq("entry_type", "moment")
           .order("created_at", { ascending: true }),
         supabase
           .from("threads")
