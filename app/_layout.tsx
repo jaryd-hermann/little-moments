@@ -458,10 +458,17 @@ export default function RootLayout() {
         // `captureLog` already gives us the same signal during a replay,
         // and we don't want the noise from non-error console.error calls
         // (eg. React component-stack warnings) showing up as exceptions.
+        //
+        // The exception rails are gated on `!__DEV__` so only release builds
+        // send `$exception` events. In development, Fast Refresh reloads
+        // modules mid-edit and throws temporal-dead-zone ReferenceErrors from
+        // the Metro dev bundle. Those are hot-reload noise, not user crashes,
+        // and each one opens a new error tracking issue that buries real
+        // exceptions.
         errorTracking: {
           autocapture: {
-            uncaughtExceptions: true,
-            unhandledRejections: true,
+            uncaughtExceptions: !__DEV__,
+            unhandledRejections: !__DEV__,
             console: false,
           },
         },
