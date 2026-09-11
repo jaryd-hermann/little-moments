@@ -458,10 +458,15 @@ export default function RootLayout() {
         // `captureLog` already gives us the same signal during a replay,
         // and we don't want the noise from non-error console.error calls
         // (eg. React component-stack warnings) showing up as exceptions.
+        //
+        // Guarded on `!__DEV__` so only production (release) builds send
+        // exceptions. Development builds red-screen and Fast Refresh restarts
+        // modules mid-edit. Both push ReferenceErrors from a Metro dev bundle
+        // into error tracking and hide real user exceptions.
         errorTracking: {
           autocapture: {
-            uncaughtExceptions: true,
-            unhandledRejections: true,
+            uncaughtExceptions: !__DEV__,
+            unhandledRejections: !__DEV__,
             console: false,
           },
         },
