@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
+import { useUnseenStore } from "@/store/unseenStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -25,11 +26,12 @@ import { usePostHog } from "posthog-react-native";
 import { DashedEmptyState } from "@/components/common/DashedEmptyState";
 import { ShareChapterModal } from "@/components/common/ShareChapterModal";
 import { ShareMashupModal } from "@/components/common/ShareMashupModal";
+import { ChaptersInfoModal } from "@/components/chapters/ChaptersInfoModal";
 import { InfoTipModal } from "@/components/common/InfoTipModal";
+import { CaptureInfoButton } from "@/components/capture/CaptureInfoButton";
 import { ChaptersGridMashupView } from "@/components/chapters/ChaptersGridMashupView";
 import {
   ChapterCoverCard,
-  ChapterCoverShimmer,
   ChapterLockedOverlay,
 } from "@/components/chapters/ChapterCoverCard";
 import { MashupPlayer, type MashupCloseReason } from "@/components/chapters/MashupPlayer";
@@ -40,9 +42,13 @@ import {
 import type { MashupBucket } from "@/lib/mashupBuckets";
 import {
   bucketMomentsByMonth,
+  bucketMomentsByPerson,
+  bucketMomentsByTheme,
   bucketMomentsByWeek,
   bucketMomentsByYear,
+  MIN_MOMENTS_FOR_WEEK_MOVIE,
 } from "@/lib/mashupBuckets";
+import { useCanonicalPeople } from "@/hooks/useCanonicalPeople";
 import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 
 const REQUIRED_PER_WEEK = 4;
@@ -84,6 +90,7 @@ export default function ChaptersScreen() {
   const realOrDummy = dummyEnabled ? dummyChapters : chapters;
 
   const { entries } = useEntries();
+  const { lookup: peopleLookup } = useCanonicalPeople();
   const thisWeekMomentsCount = useMemo(() => {
     const start = startOfMondayWeek(new Date());
     const startTs = start.getTime();
@@ -102,6 +109,7 @@ export default function ChaptersScreen() {
   const [toasterBucket, setToasterBucket] = useState<MashupBucket | null>(null);
   const [shareMashup, setShareMashup] = useState<MashupBucket | null>(null);
   const [weeklyStoriesInfoOpen, setWeeklyStoriesInfoOpen] = useState(false);
+  const [chaptersInfoOpen, setChaptersInfoOpen] = useState(false);
 
   // Fade-to-black overlay when opening a chapter.
   const fadeOpacity = useSharedValue(0);
@@ -118,6 +126,9 @@ export default function ChaptersScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchChapters();
+      // Stop the tab icon spinning: they're looking at the list now, even if
+      // they don't open any individual chapter.
+      useUnseenStore.getState().markChaptersTabSeen();
     }, [fetchChapters])
   );
 
@@ -170,14 +181,20 @@ export default function ChaptersScreen() {
       const intentView = useTabViewIntentStore.getState().consumeChaptersView();
       if (intentView) setViewMode(intentView);
 
-      const mashupKey = useTabViewIntentStore.getState().consumeOpenMashupKey();
-      if (mashupKey) {
+      const mashupIntent = useTabViewIntentStore.getState().consumeOpenMashup();
+      if (mashupIntent) {
         const allBuckets = [
           ...bucketMomentsByWeek(entries),
           ...bucketMomentsByMonth(entries),
           ...bucketMomentsByYear(entries),
+          ...bucketMomentsByPerson(entries, peopleLookup),
+          ...bucketMomentsByTheme(entries),
         ];
-        const bucket = allBuckets.find((b) => b.key === mashupKey);
+        const bucket = allBuckets.find(
+          (b) =>
+            b.key === mashupIntent.key &&
+            (mashupIntent.kind == null || b.type === mashupIntent.kind)
+        );
         if (bucket) setOpenMashup(bucket);
       }
 
@@ -186,7 +203,7 @@ export default function ChaptersScreen() {
         const target = realOrDummy.find((c) => c.id === chapterId);
         if (target) triggerFadeAndOpen(target);
       }
-    }, [entries, realOrDummy, triggerFadeAndOpen])
+    }, [entries, peopleLookup, realOrDummy, triggerFadeAndOpen])
   );
 
   const handleSwipe = useCallback(
@@ -225,7 +242,14 @@ export default function ChaptersScreen() {
 
   const current = realOrDummy[activeIdx];
 
+  // Two different bars: a written chapter needs REQUIRED_PER_WEEK moments,
+  // a weekly movie needs MIN_MOMENTS_FOR_WEEK_MOVIE. They aren't the same
+  // number, so each empty state has to quote its own.
   const remainingForChapters = Math.max(0, REQUIRED_PER_WEEK - thisWeekMomentsCount);
+  const remainingForMovie = Math.max(
+    0,
+    MIN_MOMENTS_FOR_WEEK_MOVIE - thisWeekMomentsCount
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -240,16 +264,24 @@ export default function ChaptersScreen() {
           gap: 8,
         }}
       >
-        <Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 26,
-            color: colors.text,
-            flexShrink: 1,
-          }}
-        >
-          Chapters
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexShrink: 1 }}>
+          <Text
+            style={{
+              fontFamily: "PMGothicLudington-Text110",
+              fontSize: 26,
+              color: colors.text,
+            }}
+          >
+            Chapters
+          </Text>
+          <CaptureInfoButton
+            accessibilityLabel="About Chapters"
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setChaptersInfoOpen(true);
+            }}
+          />
+        </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View
             style={{
@@ -301,10 +333,11 @@ export default function ChaptersScreen() {
       {viewMode === "grid" ? (
         <ChaptersGridMashupView
           entries={entries}
+          peopleLookup={peopleLookup}
           emptySubtitle={
-            remainingForChapters > 0
-              ? `Add ${remainingForChapters} more moment${remainingForChapters === 1 ? "" : "s"} this week to start building your montages.`
-              : "You're set for this week — keep capturing and your montages will grow."
+            remainingForMovie > 0
+              ? `Capture ${remainingForMovie} more moment${remainingForMovie === 1 ? "" : "s"} this week to get a movie made for you.`
+              : "You're set for this week — keep capturing and your movies will grow."
           }
           onEmptyCtaPress={() => router.push("/(tabs)/today")}
           onOpenMashup={(bucket) => {
@@ -327,6 +360,8 @@ export default function ChaptersScreen() {
         />
       ) : realOrDummy.length === 0 ? (
         <DashedEmptyState
+          image={require("@/assets/images/chapters-2.png")}
+          imageAspectRatio={735 / 826}
           title="Your weekly chapter lives here"
           singleLineTitle
           subtitle={
@@ -373,10 +408,6 @@ export default function ChaptersScreen() {
               ]}
             >
               <ChapterCoverCard chapter={current} />
-              <ChapterCoverShimmer
-                chapterId={current.id}
-                viewedAt={current.viewed_at}
-              />
               {isChapterLocked(current) && <ChapterLockedOverlay />}
             </Animated.View>
           </GestureDetector>
@@ -454,6 +485,11 @@ export default function ChaptersScreen() {
         visible={!!shareMashup}
         bucket={shareMashup}
         onDismiss={() => setShareMashup(null)}
+      />
+
+      <ChaptersInfoModal
+        visible={chaptersInfoOpen}
+        onClose={() => setChaptersInfoOpen(false)}
       />
 
       <InfoTipModal
@@ -603,28 +639,13 @@ function ChapterListView({
         >
           Stories of your weeks
         </Text>
-        <Pressable
+        <CaptureInfoButton
+          accessibilityLabel="About weekly chapters"
           onPress={() => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             onInfoPress();
           }}
-          hitSlop={10}
-          accessibilityLabel="About weekly chapters"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: colors.surfaceSecondary,
-          }}
-        >
-          <Ionicons
-            name="information-circle-outline"
-            size={20}
-            color={colors.textMuted}
-          />
-        </Pressable>
+        />
       </View>
 
       {chapters.map((chapter) => {
@@ -641,10 +662,6 @@ function ChapterListView({
             }}
           >
             <ChapterCoverCard chapter={chapter} />
-            <ChapterCoverShimmer
-              chapterId={chapter.id}
-              viewedAt={chapter.viewed_at}
-            />
             {locked ? <ChapterLockedOverlay /> : null}
             {!locked ? (
               <Pressable

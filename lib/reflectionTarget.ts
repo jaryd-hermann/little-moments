@@ -5,12 +5,12 @@ import type { Entry } from "@/store/entryStore";
 export type ReflectionTarget = "yesterday" | "today";
 
 export function defaultReflectionTarget(
-  profile: Profile | null
+  _profile: Profile | null
 ): ReflectionTarget {
-  const t = profile?.reflection_target_default;
-  if (t === "today" || t === "yesterday") return t;
-  if (profile?.capture_rhythm === "evening") return "today";
-  return "yesterday";
+  // Capture always defaults to today now. Users can scroll back to earlier
+  // days via the recent-moments carousel, so we no longer key the landing day
+  // off the saved reflection preference or capture rhythm.
+  return "today";
 }
 
 export function calendarDateForReflectionTarget(

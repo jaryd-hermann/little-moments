@@ -38,9 +38,19 @@ interface EllieMessageProps {
   showAvatar?: boolean;
   /** Map exact **inner** text to a text color (e.g. activation highlights). */
   boldColorMap?: Record<string, string>;
+  /** Override the avatar image — e.g. Jaryd in the first-moment chat. */
+  avatarSource?: number;
+  /** Round the avatar, for a face rather than an icon. */
+  avatarRounded?: boolean;
 }
 
-export function EllieMessage({ content, showAvatar = false, boldColorMap }: EllieMessageProps) {
+export function EllieMessage({
+  content,
+  showAvatar = false,
+  boldColorMap,
+  avatarSource,
+  avatarRounded = false,
+}: EllieMessageProps) {
   const { colors } = useTheme();
 
   const baseStyle = {
@@ -54,8 +64,14 @@ export function EllieMessage({ content, showAvatar = false, boldColorMap }: Elli
     <View style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 16, paddingRight: 32 }}>
       {showAvatar && (
         <Image
-          source={APP_ICON}
-          style={{ width: 28, height: 28, borderRadius: 8, marginRight: 10, marginTop: 2 }}
+          source={avatarSource ?? APP_ICON}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: avatarRounded ? 14 : 8,
+            marginRight: 10,
+            marginTop: 2,
+          }}
         />
       )}
       <View style={{ flex: 1 }}>

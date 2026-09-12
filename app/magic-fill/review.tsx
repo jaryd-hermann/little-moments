@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   FlatList,
@@ -13,8 +13,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
+import { prefetchNeighborMediaUris } from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
 import { formatMagicFillDateShort } from "@/lib/magicFill";
+import { collectSelectedVideosFromDrafts } from "@/lib/magicFillYouPick";
 import {
   MAGIC_FILL_DATE_PILL,
   magicFillHeadlineStyle,
@@ -22,6 +24,9 @@ import {
 import {
   useMagicFillStore,
   type MagicFillDraft,
+  type PickedVideoClip,
+  displayPhotoAsset,
+  videoClipStartForPhoto,
 } from "@/store/magicFillStore";
 import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
 import { MagicFillScreenHeader } from "@/components/magic-fill/MagicFillScreenHeader";
@@ -29,28 +34,62 @@ import { MagicFillPrimaryButton } from "@/components/magic-fill/MagicFillPrimary
 
 const CARD_HEIGHT = Math.round(Dimensions.get("window").width * 0.72);
 
-function ReviewCard({
+const ReviewCard = memo(function ReviewCard({
   draft,
+  pickedVideoClips,
   onShuffle,
   onSkip,
   onPhotoIndexChange,
 }: {
   draft: MagicFillDraft;
-  onShuffle: () => void;
-  onSkip: () => void;
-  onPhotoIndexChange: (index: number) => void;
+  pickedVideoClips: Record<string, PickedVideoClip>;
+  onShuffle: (ymd: string) => void;
+  onSkip: (ymd: string) => void;
+  onPhotoIndexChange: (ymd: string, index: number) => void;
 }) {
   const { colors } = useTheme();
   const photoWidth = Dimensions.get("window").width - 40;
   const listRef = useRef<FlatList>(null);
 
-  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = e.nativeEvent.contentOffset.x;
-    const idx = Math.round(x / photoWidth);
-    if (idx !== draft.selectedIndex && idx >= 0 && idx < draft.photos.length) {
-      onPhotoIndexChange(idx);
-    }
-  };
+  /** Page actually on screen — drives which cell is allowed to animate. */
+  const [activeIndex, setActiveIndex] = useState(0);
+  /** Debounced active index so swiping doesn't spin up players mid-gesture. */
+  const [animateIndex, setAnimateIndex] = useState(0);
+  /** Lazily resolved (`ph://` → `file://`) URIs for the active page ±1. */
+  const [displayUriByAsset, setDisplayUriByAsset] = useState<
+    Record<string, string>
+  >({});
+  const resolvedDisplayUriIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const t = setTimeout(() => setAnimateIndex(activeIndex), 120);
+    return () => clearTimeout(t);
+  }, [activeIndex]);
+
+  useEffect(() => {
+    if (draft.photos.length === 0) return;
+    prefetchNeighborMediaUris(
+      draft.photos,
+      activeIndex,
+      resolvedDisplayUriIdsRef.current,
+      (resolved) => {
+        setDisplayUriByAsset((prev) => ({
+          ...prev,
+          [resolved.id]: resolved.uri,
+        }));
+      }
+    );
+  }, [draft.photos, activeIndex]);
+
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const idx = Math.round(e.nativeEvent.contentOffset.x / photoWidth);
+      if (idx < 0 || idx >= draft.photos.length) return;
+      setActiveIndex(idx);
+      if (idx !== draft.selectedIndex) onPhotoIndexChange(draft.ymd, idx);
+    },
+    [photoWidth, draft.photos.length, draft.selectedIndex, draft.ymd, onPhotoIndexChange]
+  );
 
   return (
     <View style={{ marginBottom: 20 }}>
@@ -70,11 +109,34 @@ function ReviewCard({
           showsHorizontalScrollIndicator={false}
           keyExtractor={(item) => item.id}
           onMomentumScrollEnd={handleScroll}
-          renderItem={({ item }) => (
-            <View style={{ width: photoWidth, height: CARD_HEIGHT }}>
-              <DayAssetPreview asset={item} forceLivePlayback />
-            </View>
-          )}
+          initialNumToRender={1}
+          maxToRenderPerBatch={2}
+          windowSize={3}
+          removeClippedSubviews
+          getItemLayout={(_, index) => ({
+            length: photoWidth,
+            offset: photoWidth * index,
+            index,
+          })}
+          renderItem={({ item, index }) => {
+            const resolvedUri = displayUriByAsset[item.id];
+            const base =
+              resolvedUri != null ? { ...item, uri: resolvedUri } : item;
+            const display = displayPhotoAsset(base, pickedVideoClips);
+            return (
+              <View style={{ width: photoWidth, height: CARD_HEIGHT }}>
+                <DayAssetPreview
+                  asset={display}
+                  animate={index === animateIndex}
+                  forceLivePlayback
+                  videoClipStartSec={videoClipStartForPhoto(
+                    item,
+                    pickedVideoClips
+                  )}
+                />
+              </View>
+            );
+          }}
         />
 
         <View
@@ -111,7 +173,7 @@ function ReviewCard({
         >
           <Pressable
             accessibilityLabel="Shuffle photo"
-            onPress={onShuffle}
+            onPress={() => onShuffle(draft.ymd)}
             style={{
               width: 36,
               height: 36,
@@ -125,7 +187,7 @@ function ReviewCard({
           </Pressable>
           <Pressable
             accessibilityLabel="Skip day"
-            onPress={onSkip}
+            onPress={() => onSkip(draft.ymd)}
             style={{
               width: 36,
               height: 36,
@@ -171,13 +233,15 @@ function ReviewCard({
       </View>
     </View>
   );
-}
+});
 
 export default function MagicFillReviewScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
   const drafts = useMagicFillStore((s) => s.drafts);
+  const fillMode = useMagicFillStore((s) => s.fillMode);
+  const pickedVideoClips = useMagicFillStore((s) => s.pickedVideoClips);
   const skipDay = useMagicFillStore((s) => s.skipDay);
   const shufflePhoto = useMagicFillStore((s) => s.shufflePhoto);
   const setSelectedPhotoIndex = useMagicFillStore((s) => s.setSelectedPhotoIndex);
@@ -187,8 +251,54 @@ export default function MagicFillReviewScreen() {
     [drafts]
   );
 
+  const handleShuffle = useCallback(
+    (ymd: string) => {
+      posthog.capture("magic_fill_review_shuffle", { ymd });
+      shufflePhoto(ymd);
+    },
+    [posthog, shufflePhoto]
+  );
+
+  const handleSkip = useCallback(
+    (ymd: string) => {
+      posthog.capture("magic_fill_review_skip", { ymd });
+      skipDay(ymd);
+    },
+    [posthog, skipDay]
+  );
+
+  const handlePhotoIndexChange = useCallback(
+    (ymd: string, index: number) => {
+      setSelectedPhotoIndex(ymd, index);
+    },
+    [setSelectedPhotoIndex]
+  );
+
+  const renderDraft = useCallback(
+    ({ item }: { item: MagicFillDraft }) => (
+      <ReviewCard
+        draft={item}
+        pickedVideoClips={pickedVideoClips}
+        onShuffle={handleShuffle}
+        onSkip={handleSkip}
+        onPhotoIndexChange={handlePhotoIndexChange}
+      />
+    ),
+    [pickedVideoClips, handleShuffle, handleSkip, handlePhotoIndexChange]
+  );
+
   const handleContinue = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (fillMode === "you_pick" || fillMode === "favorites") {
+      const videos = collectSelectedVideosFromDrafts(
+        activeDrafts,
+        pickedVideoClips
+      );
+      if (videos.length > 0) {
+        router.push("/magic-fill/trim-queue");
+        return;
+      }
+    }
     router.push("/magic-fill/caption-mode");
   };
 
@@ -198,6 +308,10 @@ export default function MagicFillReviewScreen() {
       <FlatList
         data={activeDrafts}
         keyExtractor={(d) => d.ymd}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        windowSize={3}
+        removeClippedSubviews
         contentContainerStyle={{
           paddingHorizontal: 20,
           paddingTop: 4,
@@ -213,7 +327,10 @@ export default function MagicFillReviewScreen() {
                 marginBottom: 6,
               })}
             >
-              {activeDrafts.length} moments found
+              {activeDrafts.length}{" "}
+              {fillMode === "you_pick" || fillMode === "favorites"
+                ? "moments queued"
+                : "moments found"}
             </Text>
             <Text
               style={{
@@ -222,26 +339,15 @@ export default function MagicFillReviewScreen() {
                 color: colors.textSecondary,
               }}
             >
-              We picked the best photo per day. Swap or skip any.
+              {fillMode === "favorites"
+                ? "Your favorite moments — one per day. Swap or skip any."
+                : fillMode === "you_pick"
+                  ? "Your picks, grouped by day. Swap or skip any."
+                  : "We picked the best photo per day. Swap or skip any."}
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <ReviewCard
-            draft={item}
-            onShuffle={() => {
-              posthog.capture("magic_fill_review_shuffle", { ymd: item.ymd });
-              shufflePhoto(item.ymd);
-            }}
-            onSkip={() => {
-              posthog.capture("magic_fill_review_skip", { ymd: item.ymd });
-              skipDay(item.ymd);
-            }}
-            onPhotoIndexChange={(index) =>
-              setSelectedPhotoIndex(item.ymd, index)
-            }
-          />
-        )}
+        renderItem={renderDraft}
       />
       <View
         style={{

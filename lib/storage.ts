@@ -122,6 +122,48 @@ export async function uploadEntryMedia(
   return { publicUrl: data.publicUrl, storagePath };
 }
 
+/**
+ * Upload the original audio from a voice-captured moment.
+ *
+ * Shares the `entry-media` bucket but is stored under a `voice-` filename and
+ * recorded on `entries` (not `entry_media`), so it never reaches the share and
+ * summary-card render paths.
+ */
+export async function uploadEntryVoiceNote(
+  userId: string,
+  entryId: string,
+  fileUri: string
+): Promise<{ publicUrl: string; storagePath: string }> {
+  const storagePath = `${userId}/${entryId}/voice-${Date.now()}.m4a`;
+  const contentType = "audio/m4a";
+
+  const b64 = await withTimeout(
+    FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    }),
+    15_000,
+    "Reading voice note"
+  );
+  const body = base64ToArrayBuffer(b64);
+  if (body.byteLength === 0) {
+    throw new Error("Voice note is empty (0 bytes)");
+  }
+
+  const { error } = await withTimeout(
+    supabase.storage
+      .from("entry-media")
+      .upload(storagePath, body, { contentType, upsert: false }),
+    UPLOAD_TIMEOUT_MS,
+    "Voice note upload"
+  );
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("entry-media")
+    .getPublicUrl(storagePath);
+  return { publicUrl: data.publicUrl, storagePath };
+}
+
 export async function deleteEntryMedia(
   storagePath: string
 ): Promise<void> {

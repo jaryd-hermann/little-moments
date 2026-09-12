@@ -65,7 +65,7 @@ export function InfoTipModal({
         >
           <Text
             style={{
-              fontFamily: "LibreBaskerville-Bold",
+              fontFamily: "Roboto-Bold",
               fontSize: 18,
               color: colors.text,
               marginBottom: 10,

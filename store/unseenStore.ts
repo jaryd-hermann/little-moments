@@ -2,8 +2,8 @@ import { create } from "zustand";
 
 /**
  * Process-global "unseen content" counters consumed by `CustomTabBar` to drive
- * the slow-rotate + shimmer attention loop on the Connect (threads) and
- * Chapters tab icons.
+ * the slow-rotate attention loop on the Connect (threads) and Chapters tab
+ * icons.
  *
  * Writers:
  *   - `useThreads` calls `setUnseenThreadCount` after every fetch.
@@ -18,6 +18,21 @@ interface UnseenStore {
   unseenChapterCount: number;
   setUnseenThreadCount: (n: number) => void;
   setUnseenChapterCount: (n: number) => void;
+
+  /**
+   * High-water mark of how much unseen content the user has already been
+   * shown on each tab, recorded when they actually visit it.
+   *
+   * The raw counts can't drive the tab icon on their own: they're recomputed
+   * from server data on every fetch, so visiting the tab without opening an
+   * individual item left the icon spinning forever. Comparing against this
+   * mark means "you've seen that there were 3 waiting" silences the icon,
+   * while a 4th arriving still wakes it up.
+   */
+  threadsSeenAtCount: number;
+  chaptersSeenAtCount: number;
+  markThreadsTabSeen: () => void;
+  markChaptersTabSeen: () => void;
   /** Decrement by one (clamped at 0) — used when a single item is marked viewed. */
   decrementUnseenThread: () => void;
   decrementUnseenChapter: () => void;
@@ -50,12 +65,47 @@ interface UnseenStore {
 export const useUnseenStore = create<UnseenStore>((set) => ({
   unseenThreadCount: 0,
   unseenChapterCount: 0,
-  setUnseenThreadCount: (n) => set({ unseenThreadCount: Math.max(0, n) }),
-  setUnseenChapterCount: (n) => set({ unseenChapterCount: Math.max(0, n) }),
+  // Clamp the seen mark down with the count, so it stays a mark of "seen"
+  // rather than drifting above the real number and masking new content.
+  setUnseenThreadCount: (n) =>
+    set((s) => {
+      const next = Math.max(0, n);
+      return {
+        unseenThreadCount: next,
+        threadsSeenAtCount: Math.min(s.threadsSeenAtCount, next),
+      };
+    }),
+  setUnseenChapterCount: (n) =>
+    set((s) => {
+      const next = Math.max(0, n);
+      return {
+        unseenChapterCount: next,
+        chaptersSeenAtCount: Math.min(s.chaptersSeenAtCount, next),
+      };
+    }),
   decrementUnseenThread: () =>
-    set((s) => ({ unseenThreadCount: Math.max(0, s.unseenThreadCount - 1) })),
+    set((s) => {
+      const next = Math.max(0, s.unseenThreadCount - 1);
+      return {
+        unseenThreadCount: next,
+        threadsSeenAtCount: Math.min(s.threadsSeenAtCount, next),
+      };
+    }),
   decrementUnseenChapter: () =>
-    set((s) => ({ unseenChapterCount: Math.max(0, s.unseenChapterCount - 1) })),
+    set((s) => {
+      const next = Math.max(0, s.unseenChapterCount - 1);
+      return {
+        unseenChapterCount: next,
+        chaptersSeenAtCount: Math.min(s.chaptersSeenAtCount, next),
+      };
+    }),
+
+  threadsSeenAtCount: 0,
+  chaptersSeenAtCount: 0,
+  markThreadsTabSeen: () =>
+    set((s) => ({ threadsSeenAtCount: s.unseenThreadCount })),
+  markChaptersTabSeen: () =>
+    set((s) => ({ chaptersSeenAtCount: s.unseenChapterCount })),
 
   viewedThreadIds: new Set<string>(),
   viewedChapterIds: new Set<string>(),

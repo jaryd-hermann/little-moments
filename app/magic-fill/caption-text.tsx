@@ -17,7 +17,9 @@ import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
 import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import {
-  selectedPhoto,
+  selectedPhotoForDraft,
+  displayPhotoAsset,
+  videoClipStartForPhoto,
   useMagicFillStore,
 } from "@/store/magicFillStore";
 import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
@@ -47,6 +49,7 @@ export default function MagicFillCaptionTextScreen() {
   const setRawCaption = useMagicFillStore((s) => s.setRawCaption);
   const skipDay = useMagicFillStore((s) => s.skipDay);
   const setCaptionMode = useMagicFillStore((s) => s.setCaptionMode);
+  const pickedVideoClips = useMagicFillStore((s) => s.pickedVideoClips);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   const activeDrafts = useMemo(
@@ -110,6 +113,19 @@ export default function MagicFillCaptionTextScreen() {
     saveAndAdvance(textCaptionIndex + 1, text);
   }, [saveAndAdvance, text, textCaptionIndex]);
 
+  const handleBackMoment = useCallback(() => {
+    // At the first moment, Back leaves the flow; otherwise step to the previous
+    // moment (saving the current text first) so it can be reviewed / edited.
+    if (textCaptionIndex <= 0) {
+      if (router.canGoBack()) router.back();
+      else router.replace("/(tabs)/today");
+      return;
+    }
+    if (draft) setRawCaption(draft.ymd, text.trim(), "text");
+    Keyboard.dismiss();
+    setTextCaptionIndex(textCaptionIndex - 1);
+  }, [draft, setRawCaption, setTextCaptionIndex, text, textCaptionIndex]);
+
   const handleSwitchToVoice = useCallback(() => {
     if (draft && text.trim()) {
       setRawCaption(draft.ymd, text.trim(), "text");
@@ -122,7 +138,10 @@ export default function MagicFillCaptionTextScreen() {
     return null;
   }
 
-  const photo = selectedPhoto(draft);
+  const photo = selectedPhotoForDraft(draft, pickedVideoClips);
+  const photoForPreview = photo
+    ? displayPhotoAsset(photo, pickedVideoClips)
+    : null;
 
   return (
     <KeyboardAvoidingView
@@ -130,7 +149,7 @@ export default function MagicFillCaptionTextScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
-      <MagicFillScreenHeader />
+      <MagicFillScreenHeader onBack={() => handleBackMoment()} />
 
       <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
         <Text
@@ -178,7 +197,16 @@ export default function MagicFillCaptionTextScreen() {
             backgroundColor: colors.surfaceSecondary,
           }}
         >
-          {photo ? <DayAssetPreview asset={photo} forceLivePlayback /> : null}
+          {photoForPreview ? (
+            <DayAssetPreview
+              asset={photoForPreview}
+              forceLivePlayback
+              videoClipStartSec={videoClipStartForPhoto(
+                photo,
+                pickedVideoClips
+              )}
+            />
+          ) : null}
           <MagicFillDatePill
             date={draft.date}
             style={{ position: "absolute", top: 12, left: 12 }}

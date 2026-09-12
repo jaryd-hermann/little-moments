@@ -39,6 +39,7 @@ export function MagicFillFeedButton({
         onPress={handlePress}
         fullWidth
         size="large"
+        shimmer={false}
       />
     </View>
   );

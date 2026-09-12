@@ -42,19 +42,27 @@ For each real connection found, return:
   "entry_id_b": "[past entry id]",
   "connection_type": "thematic | emotional | person | place | pattern | evolution",
   "confidence": 0.85-1.0,
-  "ellie_observation": "2–4 short sentences, first person as Ellie, warm and vivid. Put your single sharpest takeaway in **double asterisks** so it shows as bold (e.g. **Both entries keep circling the same quiet fear of being left out.**). After that bold line, add 1–2 sentences with specific color from the entries—echo a phrase, image, or feeling from each moment, or spell out how the pattern shows up across time. Do not be generic. Bad: 'These share similar themes.'",
-  "questions": [
-    "One thoughtful, specific question for the user to sit with — not answerable immediately.",
-    "Optional second question — only if genuinely distinct from the first. Omit if not."
-  ]
+  "statement": "≤8 words. Second-person hook — the sharpest pattern only, not a summary. No em-dashes. Good: 'You're calmest near water.' Bad: 'Seth keeps showing up at the moments that mark time passing — and so does this same core group of guys.'",
+  "question": "≤10 words. One short, punchy question the user can answer in a sentence. No compound questions, no em-dashes, no setup clauses. Good: 'Could the early morning be your real luxury?' Bad: 'The New Orleans night felt like its own thing — does the Brooklyn afternoon feel the same way?'",
+  "ellie_observation": "2–4 short sentences, first person as Ellie, warm and vivid. Do NOT repeat the statement verbatim — expand with specific color from the entries. Put nothing in **bold**; the statement field carries the hook. Not generic.",
+  "questions": ["Same text as question — for backward compatibility"]
 }
 
-The questions should:
-- Name the insight specifically, then ask something that opens inward reflection
+The statement should:
+- Be ≤8 words — a punchy hook, not a sentence summary
+- The single highest-signal takeaway only
+- Address the user as "you" (second person)
+- Never use markdown or em-dashes
+
+The question should:
+- Be ≤10 words — short enough to scan in one glance
+- One simple question mark, no compound or multi-part questions
+- Specific to the insight but easy to answer thoughtfully in a sentence
 - Sound like a curious friend, not a therapist or coach
 - Never give advice
 - Never be generic ("How does this make you feel?")
-- Give the user something to think about, not something to do
+- Never use em-dashes or long setup clauses before the actual question
+- Good examples: "Could the early morning be your real luxury?" / "What does Seth represent for you now?" / "Is water your only calm?"
 
 If no real connection exists:
 { "has_connection": false }
@@ -96,8 +104,10 @@ For each real connection found, return:
   "entry_id_b": "[past entry id]",
   "connection_type": "pattern | evolution | thematic | emotional | person | place",
   "confidence": 0.85-1.0,
-  "ellie_observation": "2–4 short sentences, first person as Ellie, warm and vivid. Put your sharpest takeaway in **double asterisks** for bold, then 1–2 sentences with specific color from the entries (images, phrases, how the pattern evolves). Not generic.",
-  "questions": ["One thoughtful question for the user to sit with — specific to the insight, not generic."]
+  "statement": "≤8 words. Second-person hook — sharpest pattern only, no em-dashes.",
+  "question": "≤10 words. Short, punchy, one simple question — easy to answer in a sentence. No compound questions or em-dashes.",
+  "ellie_observation": "2–4 short sentences, first person as Ellie. Do NOT repeat the statement or use **bold**. Expand with specific color from the entries. Not generic.",
+  "questions": ["Same text as question — for backward compatibility"]
 }
 
 If no real connection exists:

@@ -15,3 +15,6 @@ export const MAGIC_FILL_DATE_PILL = {
   borderWidth: 2,
   borderColor: "#000000",
 } as const;
+
+/** Magic Fill primary CTA + done-badge fill — always pink, not user accent. */
+export const MAGIC_FILL_CTA_FILL = "#F0D7FF";

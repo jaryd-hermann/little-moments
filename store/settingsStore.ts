@@ -16,7 +16,8 @@ interface SettingsStore {
   accentColor: AccentColor;
   notificationEnabled: boolean;
   notificationTime: { hour: number; minute: number };
-  streakAtRiskEnabled: boolean;
+  /** Master toggle for streak UI + streak-related pushes. Synced to profiles.streak_at_risk_enabled. */
+  streaksEnabled: boolean;
   storyProgress: Record<string, number>;
   graphIntroSeen: boolean;
   /**
@@ -35,13 +36,11 @@ interface SettingsStore {
   magicFillBannerDismissedCapsule: boolean;
   magicFillBannerDismissedCapture: boolean;
   magicFillPreferredCaptionMode: "text" | "voice" | null;
-  /** Mashup bucket ids we've already scheduled a "montage started" push for. */
-  notifiedMashupKeys: string[];
   setTheme: (theme: ThemePreference) => void;
   setAccentColor: (color: AccentColor) => void;
   setNotificationEnabled: (val: boolean) => void;
   setNotificationTime: (hour: number, minute: number) => void;
-  setStreakAtRiskEnabled: (val: boolean) => void;
+  setStreaksEnabled: (val: boolean) => void;
   setStoryProgress: (storyIndex: string | number, slideReached: number) => void;
   setGraphIntroSeen: (val: boolean) => void;
   setLivePhotoPlaybackEnabled: (val: boolean) => void;
@@ -51,7 +50,12 @@ interface SettingsStore {
   setMagicFillBannerDismissedCapsule: (val: boolean) => void;
   setMagicFillBannerDismissedCapture: (val: boolean) => void;
   setMagicFillPreferredCaptionMode: (mode: "text" | "voice" | null) => void;
-  markMashupNotified: (key: string) => void;
+  /**
+   * Reset per-account onboarding / feature-completion flags so a new user on
+   * the same device starts clean. Device-level *preferences* (theme, accent,
+   * notification time, live-photo playback) are intentionally preserved.
+   */
+  resetUserScopedFlags: () => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -61,7 +65,7 @@ export const useSettingsStore = create<SettingsStore>()(
       accentColor: "pink",
       notificationEnabled: true,
       notificationTime: { hour: 6, minute: 0 },
-      streakAtRiskEnabled: true,
+      streaksEnabled: true,
       storyProgress: {},
       graphIntroSeen: false,
       livePhotoPlaybackEnabled: true,
@@ -71,15 +75,13 @@ export const useSettingsStore = create<SettingsStore>()(
       magicFillBannerDismissedCapsule: false,
       magicFillBannerDismissedCapture: false,
       magicFillPreferredCaptionMode: null,
-      notifiedMashupKeys: [],
       setTheme: (theme) => set({ theme }),
       setAccentColor: (accentColor) => set({ accentColor }),
       setNotificationEnabled: (notificationEnabled) =>
         set({ notificationEnabled }),
       setNotificationTime: (hour, minute) =>
         set({ notificationTime: { hour, minute } }),
-      setStreakAtRiskEnabled: (streakAtRiskEnabled) =>
-        set({ streakAtRiskEnabled }),
+      setStreaksEnabled: (streaksEnabled) => set({ streaksEnabled }),
       setStoryProgress: (storyIndex, slideReached) => {
         const prev = get().storyProgress;
         const current = prev[storyIndex] ?? 0;
@@ -102,15 +104,30 @@ export const useSettingsStore = create<SettingsStore>()(
         set({ magicFillBannerDismissedCapture }),
       setMagicFillPreferredCaptionMode: (magicFillPreferredCaptionMode) =>
         set({ magicFillPreferredCaptionMode }),
-      markMashupNotified: (key) => {
-        const prev = get().notifiedMashupKeys;
-        if (prev.includes(key)) return;
-        set({ notifiedMashupKeys: [...prev, key] });
-      },
+      resetUserScopedFlags: () =>
+        set({
+          storyProgress: {},
+          graphIntroSeen: false,
+          hasCompletedDigDeeper: false,
+          hasSeenMagicFillIntro: false,
+          hasCompletedMagicFill: false,
+          magicFillBannerDismissedCapsule: false,
+          magicFillBannerDismissedCapture: false,
+          magicFillPreferredCaptionMode: null,
+        }),
     }),
     {
       name: "little-moments-settings",
       storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      migrate: (persisted, version) => {
+        const state = persisted as Record<string, unknown> | undefined;
+        if (!state) return persisted as SettingsStore;
+        if (version === 0 && state.streaksEnabled === undefined) {
+          state.streaksEnabled = state.streakAtRiskEnabled ?? true;
+        }
+        return state as SettingsStore;
+      },
     }
   )
 );

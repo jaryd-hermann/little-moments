@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  Animated,
   View,
   Text,
   Pressable,
@@ -27,6 +28,7 @@ export function CaptureBrowseHeading({
   titleAccessory,
   tagBubble,
   statsRow,
+  tickerKey,
 }: {
   title: string;
   /** Inline muted suffix rendered after the title (e.g. ", Jun 8"). */
@@ -42,8 +44,42 @@ export function CaptureBrowseHeading({
   tagBubble?: ReactNode;
   /** Lifetime stats (streak + total moments). Rendered on the upperLabel row. */
   statsRow?: ReactNode;
+  /**
+   * When provided, the day/date text animates (slide + fade, like a clock
+   * ticking over) each time this key changes — used by the continuous
+   * recent-moments carousel as the centred day shifts.
+   */
+  tickerKey?: string;
 }) {
   const { colors } = useTheme();
+
+  const tickerOpacity = useRef(new Animated.Value(1)).current;
+  const tickerTranslate = useRef(new Animated.Value(0)).current;
+  const prevTickerKey = useRef(tickerKey);
+  useEffect(() => {
+    if (tickerKey == null) return;
+    if (prevTickerKey.current === tickerKey) return;
+    prevTickerKey.current = tickerKey;
+    tickerOpacity.setValue(0);
+    tickerTranslate.setValue(10);
+    Animated.parallel([
+      Animated.timing(tickerOpacity, {
+        toValue: 1,
+        duration: 260,
+        useNativeDriver: true,
+      }),
+      Animated.timing(tickerTranslate, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [tickerKey, tickerOpacity, tickerTranslate]);
+
+  const animatedTitleStyle =
+    tickerKey != null
+      ? { opacity: tickerOpacity, transform: [{ translateY: tickerTranslate }] }
+      : undefined;
 
   const titleRow = (
     <View
@@ -56,29 +92,36 @@ export function CaptureBrowseHeading({
         minWidth: 0,
       }}
     >
-      <Text
-        style={{
-          fontFamily: "PMGothicLudington-Text110",
-          fontSize: 32,
-          color: colors.text,
-          lineHeight: 38,
-        }}
+      <Animated.View
+        style={[
+          { flexDirection: "row", alignItems: "flex-end", flexShrink: 1, minWidth: 0 },
+          animatedTitleStyle,
+        ]}
       >
-        {title}
-      </Text>
-      {titleSecondary ? (
         <Text
           style={{
             fontFamily: "PMGothicLudington-Text110",
             fontSize: 32,
             color: colors.text,
-            opacity: 0.6,
             lineHeight: 38,
           }}
         >
-          {titleSecondary}
+          {title}
         </Text>
-      ) : null}
+        {titleSecondary ? (
+          <Text
+            style={{
+              fontFamily: "PMGothicLudington-Text110",
+              fontSize: 32,
+              color: colors.text,
+              opacity: 0.6,
+              lineHeight: 38,
+            }}
+          >
+            {titleSecondary}
+          </Text>
+        ) : null}
+      </Animated.View>
       {!hideChangeDay ? (
         <View style={{ marginBottom: 6, marginLeft: 2 }}>
           <Ionicons name="chevron-down" size={22} color={colors.textMuted} />
@@ -315,13 +358,18 @@ export function CaptureStatsCarousel({
   chapters,
   coreMemories,
   movies,
+  threads,
   currentStreak,
+  streaksEnabled = true,
 }: {
   moments: number;
   chapters: number;
   coreMemories: number;
   movies: number;
+  threads: number;
   currentStreak: number;
+  /** When false, the streak ring is hidden (user opted out in Settings). */
+  streaksEnabled?: boolean;
 }) {
   const setMemoriesView = useTabViewIntentStore((s) => s.setMemoriesView);
   const setChaptersView = useTabViewIntentStore((s) => s.setChaptersView);
@@ -329,64 +377,82 @@ export function CaptureStatsCarousel({
   const loopAdjustingRef = useRef(false);
 
   const stats: StatItem[] = useMemo(
-    () => [
-      {
-        key: "moments",
-        count: moments,
-        chipColor: "#A6E3E0",
-        label: "Moments",
-        onPress: () => {
-          setMemoriesView("grid");
-          router.push("/(tabs)/memories");
+    () => {
+      // Streak leads the tray when enabled — it is the stat we most want the
+      // user to notice on open.
+      const items: StatItem[] = [
+        {
+          key: "moments",
+          count: moments,
+          chipColor: "#A6E3E0",
+          label: "Moments",
+          onPress: () => {
+            setMemoriesView("grid");
+            router.push("/(tabs)/memories");
+          },
         },
-      },
-      {
-        key: "chapters",
-        count: chapters,
-        chipColor: "#F5C97A",
-        label: "Chapters",
-        onPress: () => {
-          setChaptersView("list");
-          router.push("/(tabs)/chapters");
+        {
+          key: "chapters",
+          count: chapters,
+          chipColor: "#F5C97A",
+          label: "Chapters",
+          onPress: () => {
+            setChaptersView("list");
+            router.push("/(tabs)/chapters");
+          },
         },
-      },
-      {
-        key: "core",
-        count: coreMemories,
-        chipColor: "#FECFB4",
-        label: "Core",
-        onPress: () => {
-          useCapsuleFlipbookStore.getState().setPinnedOnly(true);
-          setMemoriesView("grid");
-          router.push({
-            pathname: "/(tabs)/memories",
-            params: { filter: "core" },
-          });
+        {
+          key: "core",
+          count: coreMemories,
+          chipColor: "#FECFB4",
+          label: "Core",
+          onPress: () => {
+            useCapsuleFlipbookStore.getState().setPinnedOnly(true);
+            setMemoriesView("grid");
+            router.push({
+              pathname: "/(tabs)/memories",
+              params: { filter: "core" },
+            });
+          },
         },
-      },
-      {
-        key: "movies",
-        count: movies,
-        chipColor: "#C8B6FF",
-        label: "Movies",
-        onPress: () => {
-          setChaptersView("grid");
-          router.push("/(tabs)/chapters");
+        {
+          key: "movies",
+          count: movies,
+          chipColor: "#C8B6FF",
+          label: "Movies",
+          onPress: () => {
+            setChaptersView("grid");
+            router.push("/(tabs)/chapters");
+          },
         },
-      },
-      {
-        key: "current_streak",
-        count: currentStreak,
-        chipColor: "#FEEEB1",
-        label: "Streak",
-      },
-    ],
+        {
+          key: "threads",
+          count: threads,
+          chipColor: "#9FD4FF",
+          label: "Threads",
+          onPress: () => {
+            router.push("/(tabs)/brain");
+          },
+        },
+      ];
+      if (streaksEnabled) {
+        items.unshift({
+          key: "current_streak",
+          count: currentStreak,
+          chipColor: "#FEEEB1",
+          label: "Streak",
+        });
+      }
+      return items;
+    },
     [
       chapters,
       coreMemories,
       currentStreak,
       moments,
       movies,
+      streaksEnabled,
+      threads,
       setChaptersView,
       setMemoriesView,
     ]

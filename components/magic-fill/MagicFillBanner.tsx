@@ -1,10 +1,10 @@
+import { CaptureSectionHeading } from "@/components/capture/CaptureSectionHeading";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
 import { launchMagicFill, type MagicFillEntrySource } from "@/lib/magicFillLaunch";
-import { magicFillHeadlineStyle } from "@/lib/magicFillTypography";
 import { MagicFillPeachPillButton } from "./MagicFillPeachPillButton";
 
 type MagicFillBannerProps = {
@@ -15,6 +15,7 @@ type MagicFillBannerProps = {
   prominent?: boolean;
   title?: string;
   subtitle?: string;
+  infoDescription?: string;
   ctaLabel?: string;
   /** Omit outer horizontal padding when nested inside a padded parent. */
   embedded?: boolean;
@@ -26,6 +27,7 @@ export function MagicFillBanner({
   prominent = false,
   title = "Magic fill recent moments",
   subtitle = "Log life quickly, capture several past moments in one go!",
+  infoDescription = "We'll find gaps in your Capsule and help you fill the blanks with a special fast-capture flow",
   ctaLabel = "✦ Magic fill",
   embedded = false,
 }: MagicFillBannerProps) {
@@ -79,17 +81,13 @@ export function MagicFillBanner({
           </Pressable>
         ) : null}
 
-        <Text
-          style={magicFillHeadlineStyle({
-            fontSize: prominent ? 28 : 22,
-            lineHeight: prominent ? 34 : 28,
-            color: colors.text,
-            marginBottom: 8,
-            paddingRight: dismissable ? 28 : 0,
-          })}
-        >
-          {title}
-        </Text>
+        <CaptureSectionHeading
+          title={title}
+          description={infoDescription}
+          gutter={0}
+          style={{ marginBottom: prominent ? 10 : 8 }}
+        />
+
         <Text
           style={{
             fontFamily: "Roboto-Regular",

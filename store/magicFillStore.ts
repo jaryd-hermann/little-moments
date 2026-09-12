@@ -1,7 +1,17 @@
 import { create } from "zustand";
 import type { MediaAsset } from "@/hooks/useMediaLibrary";
 
-export type MagicFillGapTarget = 5 | 10 | 15;
+export type MagicFillGapTarget = 5 | 10;
+export type MagicFillFillMode =
+  | "recent_gaps"
+  | "month"
+  | "you_pick"
+  | "favorites";
+
+export type PickedVideoClip = {
+  clipStartSec: number;
+  resolvedUri: string;
+};
 
 /** @deprecated Use MagicFillGapTarget */
 export type MagicFillDaysBack = MagicFillGapTarget;
@@ -22,6 +32,9 @@ export type MagicFillDraft = {
 
 interface MagicFillStore {
   gapTarget: MagicFillGapTarget;
+  fillMode: MagicFillFillMode;
+  /** yyyy-MM when fillMode === "month" */
+  targetMonthKey: string | null;
   /** @deprecated alias — use gapTarget */
   daysBack: MagicFillGapTarget;
   drafts: MagicFillDraft[];
@@ -36,8 +49,11 @@ interface MagicFillStore {
     gapTarget: MagicFillGapTarget;
     at: number;
   } | null;
+  pickedVideoClips: Record<string, PickedVideoClip>;
 
   setGapTarget: (target: MagicFillGapTarget) => void;
+  setFillMode: (mode: MagicFillFillMode) => void;
+  setTargetMonthKey: (key: string | null) => void;
   /** @deprecated — use setGapTarget */
   setDaysBack: (target: MagicFillGapTarget) => void;
   setDrafts: (drafts: MagicFillDraft[]) => void;
@@ -62,14 +78,18 @@ interface MagicFillStore {
       at: number;
     } | null
   ) => void;
+  setPickedVideoClip: (assetId: string, clip: PickedVideoClip) => void;
+  clearPickedVideoClips: () => void;
   activeDrafts: () => MagicFillDraft[];
   reset: () => void;
   resetForRestart: () => void;
 }
 
 const initialState = {
-  gapTarget: 10 as MagicFillGapTarget,
-  daysBack: 10 as MagicFillGapTarget,
+  gapTarget: 5 as MagicFillGapTarget,
+  fillMode: "recent_gaps" as MagicFillFillMode,
+  targetMonthKey: null as string | null,
+  daysBack: 5 as MagicFillGapTarget,
   drafts: [] as MagicFillDraft[],
   captionMode: null as "text" | "voice" | null,
   textCaptionIndex: 0,
@@ -78,12 +98,15 @@ const initialState = {
   isSaving: false,
   savedCount: 0,
   gapCountCache: null as MagicFillStore["gapCountCache"],
+  pickedVideoClips: {} as Record<string, PickedVideoClip>,
 };
 
 export const useMagicFillStore = create<MagicFillStore>((set, get) => ({
   ...initialState,
 
   setGapTarget: (gapTarget) => set({ gapTarget, daysBack: gapTarget }),
+  setFillMode: (fillMode) => set({ fillMode }),
+  setTargetMonthKey: (targetMonthKey) => set({ targetMonthKey }),
   setDaysBack: (gapTarget) => set({ gapTarget, daysBack: gapTarget }),
   setDrafts: (drafts) => set({ drafts }),
   skipDay: (ymd) =>
@@ -149,8 +172,13 @@ export const useMagicFillStore = create<MagicFillStore>((set, get) => ({
   setIsSaving: (isSaving) => set({ isSaving }),
   setSavedCount: (savedCount) => set({ savedCount }),
   setGapCountCache: (gapCountCache) => set({ gapCountCache }),
+  setPickedVideoClip: (assetId, clip) =>
+    set((s) => ({
+      pickedVideoClips: { ...s.pickedVideoClips, [assetId]: clip },
+    })),
+  clearPickedVideoClips: () => set({ pickedVideoClips: {} }),
   activeDrafts: () => get().drafts.filter((d) => !d.skipped),
-  reset: () => set({ ...initialState }),
+  reset: () => set({ ...initialState, pickedVideoClips: {} }),
   resetForRestart: () =>
     set((s) => ({
       drafts: [],
@@ -160,6 +188,7 @@ export const useMagicFillStore = create<MagicFillStore>((set, get) => ({
       isProcessing: false,
       isSaving: false,
       savedCount: 0,
+      pickedVideoClips: {},
       daysBack: s.gapTarget,
       gapTarget: s.gapTarget,
       gapCountCache: s.gapCountCache,
@@ -170,4 +199,36 @@ export function selectedPhoto(draft: MagicFillDraft): MediaAsset | null {
   if (draft.photos.length === 0) return null;
   const idx = Math.min(draft.selectedIndex, draft.photos.length - 1);
   return draft.photos[idx] ?? null;
+}
+
+export function selectedPhotoForDraft(
+  draft: MagicFillDraft,
+  pickedVideoClips: Record<string, PickedVideoClip>
+): MediaAsset | null {
+  const photo = selectedPhoto(draft);
+  if (!photo) return null;
+  const clip = pickedVideoClips[photo.id];
+  if (clip?.resolvedUri) {
+    return { ...photo, uri: clip.resolvedUri };
+  }
+  return photo;
+}
+
+export function videoClipStartForPhoto(
+  photo: MediaAsset | null,
+  pickedVideoClips: Record<string, PickedVideoClip>
+): number {
+  if (!photo || photo.mediaType !== "video") return 0;
+  return pickedVideoClips[photo.id]?.clipStartSec ?? 0;
+}
+
+export function displayPhotoAsset(
+  photo: MediaAsset,
+  pickedVideoClips: Record<string, PickedVideoClip>
+): MediaAsset {
+  const clip = pickedVideoClips[photo.id];
+  if (clip?.resolvedUri) {
+    return { ...photo, uri: clip.resolvedUri };
+  }
+  return photo;
 }

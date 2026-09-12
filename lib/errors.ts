@@ -54,3 +54,24 @@ export function captureException(
     console.error("captureException (no client):", err, properties);
   }
 }
+
+/** Property bag the SDK accepts — derived from the client so it can't drift. */
+type EventProperties = Parameters<PostHog["capture"]>[1];
+
+/**
+ * Captures a product event from non-component code, using the same registered
+ * instance as {@link captureException}. No-ops when PostHog isn't configured.
+ */
+export function captureEvent(
+  event: string,
+  properties?: EventProperties,
+): void {
+  if (!client) return;
+  try {
+    client.capture(event, properties);
+  } catch (err) {
+    if (__DEV__) {
+      console.error("captureEvent SDK failed:", err);
+    }
+  }
+}

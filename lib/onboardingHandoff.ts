@@ -27,3 +27,23 @@ export function consumeFirstCaptureAsset(): MediaAsset | undefined {
   firstCaptureAsset = undefined;
   return v;
 }
+
+/** What the onboarding chat picked, and how they said they'd caption it. */
+export interface FirstCaptureHandoff {
+  asset: MediaAsset;
+  method: "speaking" | "typing";
+}
+
+let firstCaptureHandoff: FirstCaptureHandoff | undefined;
+
+export function setFirstCaptureHandoff(
+  handoff: FirstCaptureHandoff | undefined
+): void {
+  firstCaptureHandoff = handoff;
+}
+
+export function consumeFirstCaptureHandoff(): FirstCaptureHandoff | undefined {
+  const v = firstCaptureHandoff;
+  firstCaptureHandoff = undefined;
+  return v;
+}

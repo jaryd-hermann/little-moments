@@ -28,11 +28,13 @@ import { useTheme } from "@/hooks/useTheme";
 import { useThreads } from "@/hooks/useThreads";
 import { shareInvite } from "@/lib/inviteShare";
 import type { PromptType } from "@/lib/momentAssist";
-import { uploadEntryMedia } from "@/lib/storage";
-import { supabase } from "@/lib/supabase";
+import { attachEntryMedia } from "@/lib/attachEntryMedia";
+import { attachVoiceNoteToEntry } from "@/lib/entryVoiceNote";
+import type { VoiceClip } from "@/components/composer/MicRecorder";
 import { useAuthStore } from "@/store/authStore";
 import type { Entry } from "@/store/entryStore";
 import { useTabBarStore } from "@/store/tabBarStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { format } from "date-fns";
@@ -133,6 +135,7 @@ export default function AddScreen() {
     requestPermission,
   });
   const { totalConnections } = useThreads();
+  const streaksEnabled = useSettingsStore((s) => s.streaksEnabled);
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
   const addResetTrigger = useTabBarStore((s) => s.addResetTrigger);
   const userId = useAuthStore((s) => s.user?.id ?? null);
@@ -335,6 +338,7 @@ export default function AddScreen() {
       rawText: string;
       attachedPhotoUri?: string;
       attachedPhotoTakenAtMs?: number;
+      voiceClip?: VoiceClip;
       analytics?: any;
     }) => {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -366,6 +370,10 @@ export default function AddScreen() {
 
       if (saved?.id) setLastSavedEntryId(saved.id);
 
+      if (entry.voiceClip && userId && saved?.id) {
+        void attachVoiceNoteToEntry(userId, saved.id, entry.voiceClip);
+      }
+
       posthog.capture("moment_saved", {
         source: "add_tab",
         prompt_type: promptType,
@@ -386,30 +394,15 @@ export default function AddScreen() {
       if (entry.attachedPhotoUri && userId && saved?.id) {
         const entryId = saved.id;
         void (async () => {
-          try {
-            console.log("[AddScreen] Uploading attached photo...", entry.attachedPhotoUri!.substring(0, 60));
-            const { publicUrl, storagePath } = await uploadEntryMedia(
-              userId,
-              entryId,
-              entry.attachedPhotoUri!,
-              "image"
-            );
-            await supabase.from("entry_media").insert({
-              entry_id: entryId,
-              user_id: userId,
-              storage_path: storagePath,
-              storage_url: publicUrl,
-              media_type: "image",
-              display_order: 0,
-              taken_at: entry.attachedPhotoTakenAtMs
-                ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
-                : null,
-            });
-            console.log("[AddScreen] Photo uploaded and linked to entry");
-            await fetchEntries(entryId);
-          } catch (err) {
-            console.error("[AddScreen] Failed to upload media:", err);
-          }
+          const row = await attachEntryMedia({
+            userId,
+            entryId,
+            uri: entry.attachedPhotoUri!,
+            takenAtIso: entry.attachedPhotoTakenAtMs
+              ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
+              : null,
+          });
+          if (row) await fetchEntries(entryId);
         })();
       }
 
@@ -575,6 +568,7 @@ export default function AddScreen() {
             headline="Moment saved!"
             totalMoments={totalDisplayed}
             streakCount={stats.streakCount}
+            showStreak={streaksEnabled}
             threadsCount={totalConnections}
             onPressMoments={goCapsule}
             onPressThreads={goThreads}

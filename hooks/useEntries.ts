@@ -1,6 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
+import { InteractionManager } from "react-native";
 import { supabase } from "@/lib/supabase";
-import { useEntryStore, type Entry } from "@/store/entryStore";
+import {
+  useEntryStore,
+  type Entry,
+  type EntryMetadata,
+} from "@/store/entryStore";
 import { useAuthStore } from "@/store/authStore";
 import { updateStreakAfterEntry } from "@/lib/streak";
 import { format } from "date-fns";
@@ -21,21 +26,50 @@ export function useEntries() {
     deleteEntry: removeEntry,
   } = useEntryStore();
   const userId = useAuthStore((s) => s.user?.id ?? null);
+  const lastFetchAtRef = useRef(0);
 
-  const fetchEntries = useCallback(async (pinnedEntryId?: string) => {
+  const fetchEntries = useCallback(
+    async (
+      pinnedEntryId?: string,
+      opts?: { force?: boolean; background?: boolean }
+    ) => {
     if (!userId) return;
-    setIsLoading(true);
+    const force = opts?.force ?? Boolean(pinnedEntryId);
+    if (
+      !force &&
+      Date.now() - lastFetchAtRef.current < 60_000 &&
+      useEntryStore.getState().entries.length > 0
+    ) {
+      return;
+    }
+    if (!opts?.background) {
+      setIsLoading(true);
+    }
+    // `entry_metadata` rides along for the People / Themes movie buckets on
+    // Chapters. It's two small columns per moment — cheaper than a second
+    // round trip on a screen that already has every entry in hand.
     const { data } = await supabase
       .from("entries")
-      .select("*, entry_media(*)")
+      .select("*, entry_media(*), entry_metadata(people, primary_theme)")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (data) {
-      const mapped = data.map((e) => ({
-        ...e,
-        media: e.entry_media ?? [],
-        is_pinned: Boolean((e as { is_pinned?: boolean }).is_pinned),
-      })) as Entry[];
+      const mapped = data.map((e) => {
+        const { entry_metadata, ...rest } = e as typeof e & {
+          entry_metadata?: EntryMetadata | EntryMetadata[] | null;
+        };
+        const meta = Array.isArray(entry_metadata)
+          ? (entry_metadata[0] ?? null)
+          : (entry_metadata ?? null);
+        return {
+          ...rest,
+          media: e.entry_media ?? [],
+          is_pinned: Boolean((e as { is_pinned?: boolean }).is_pinned),
+          metadata: meta
+            ? { people: meta.people ?? [], primary_theme: meta.primary_theme }
+            : null,
+        };
+      }) as Entry[];
       const prev = useEntryStore.getState().entries;
       const serverIds = new Set(mapped.map((e) => e.id));
       let merged: Entry[];
@@ -50,20 +84,23 @@ export function useEntries() {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       setEntries(merged);
+      lastFetchAtRef.current = Date.now();
 
       const today = format(new Date(), "yyyy-MM-dd");
       const todayE = merged.find((e) => e.entry_date === today) ?? null;
       setTodayEntry(todayE);
 
-      // Warm the media cache in the background. The prefetcher is a singleton
-      // priority worker (lib/mediaPrefetch.ts) — calling this from every
-      // `fetchEntries` is cheap because completed items are de-duped. By
-      // doing this as soon as entries land we give the Chapters grid the
-      // best chance of hitting the disk cache on first paint.
-      enqueueEntriesForPrefetch(merged);
+      // Still-only warm — defer until after navigation/scroll so Capture stays snappy.
+      InteractionManager.runAfterInteractions(() => {
+        enqueueEntriesForPrefetch(merged);
+      });
     }
-    setIsLoading(false);
-  }, [userId]);
+    if (!opts?.background) {
+      setIsLoading(false);
+    }
+  },
+    [userId, setEntries, setTodayEntry, setIsLoading]
+  );
 
   const saveEntry = useCallback(
     async (

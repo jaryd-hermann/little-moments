@@ -1,11 +1,13 @@
+import { CaptureSectionHeading } from "@/components/capture/CaptureSectionHeading";
 import { CaptureDatePill } from "@/components/capture/CaptureDatePill";
+import { CaptureVideoPreview } from "@/components/capture/CaptureVideoPreview";
 import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
 import { LocationTag } from "@/components/common/LocationTag";
 import {
   getAssetGeoLocation,
   hasFullPhotoLibraryAccess,
-  queryCameraPhotosForSameDateInPriorYears,
-  resolveMediaAssetUri,
+  prefetchNeighborMediaUris,
+  querySameDateInPastCatalog,
   type MediaAsset,
   type PhotoLibraryAccessPrivileges,
 } from "@/hooks/useMediaLibrary";
@@ -30,6 +32,10 @@ import {
 } from "react-native";
 
 const GUTTER = 20;
+const INITIAL_BATCH = 5;
+const SCROLL_BATCH = 5;
+const MAX_YEARS_BACK = 10;
+const MAX_DOT_INDICATORS = 10;
 
 export interface TodayInYourPastCarouselProps {
   /** The section date — month/day used for the lookup. */
@@ -47,12 +53,6 @@ export interface TodayInYourPastCarouselProps {
   onPressPhoto?: (asset: MediaAsset) => void;
 }
 
-function isPlayableMediaUri(uri: string): boolean {
-  return uri.startsWith("file://") || uri.startsWith("http");
-}
-
-const MAX_DOT_INDICATORS = 10;
-
 export function TodayInYourPastCarousel({
   date,
   isToday = true,
@@ -66,7 +66,11 @@ export function TodayInYourPastCarousel({
   const CARD_HEIGHT = Math.round(CARD_WIDTH * 1.1);
   const PAGE_WIDTH = screenWidth;
 
+  /** Full lightweight catalog (metadata only) — slice into `photos` on demand. */
+  const catalogRef = useRef<MediaAsset[]>([]);
   const [photos, setPhotos] = useState<MediaAsset[] | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loadedCount, setLoadedCount] = useState(0);
   const [index, setIndex] = useState(0);
   const [animateIndex, setAnimateIndex] = useState(0);
   const [locationByAsset, setLocationByAsset] = useState<
@@ -87,7 +91,10 @@ export function TodayInYourPastCarousel({
 
   useEffect(() => {
     let cancelled = false;
+    catalogRef.current = [];
     setPhotos(null);
+    setTotalCount(0);
+    setLoadedCount(0);
     setIndex(0);
     setAnimateIndex(0);
     setLocationByAsset({});
@@ -106,12 +113,18 @@ export function TodayInYourPastCarousel({
           return;
         }
 
-        const list = await queryCameraPhotosForSameDateInPriorYears(
+        const catalog = await querySameDateInPastCatalog(
           dayParts.month,
           dayParts.day,
-          { maxYearsBack: 10, lightweight: true, maxResults: 50 }
+          { maxYearsBack: MAX_YEARS_BACK, lightweight: true }
         );
-        if (!cancelled) setPhotos(list);
+        if (cancelled) return;
+
+        catalogRef.current = catalog;
+        const initial = Math.min(INITIAL_BATCH, catalog.length);
+        setTotalCount(catalog.length);
+        setLoadedCount(initial);
+        setPhotos(catalog.slice(0, initial));
       } catch {
         if (!cancelled) setPhotos([]);
       }
@@ -121,6 +134,13 @@ export function TodayInYourPastCarousel({
       cancelled = true;
     };
   }, [dayParts.dayKey, dayParts.month, dayParts.day, permissionStatus, accessPrivileges]);
+
+  const appendMoreMedia = useCallback(() => {
+    if (loadedCount >= totalCount) return;
+    const next = Math.min(totalCount, loadedCount + SCROLL_BATCH);
+    setLoadedCount(next);
+    setPhotos(catalogRef.current.slice(0, next));
+  }, [loadedCount, totalCount]);
 
   useEffect(() => {
     const t = setTimeout(() => setAnimateIndex(index), 120);
@@ -163,32 +183,17 @@ export function TodayInYourPastCarousel({
   useEffect(() => {
     if (!photos || photos.length === 0) return;
 
-    const prefetchIndices = [index - 1, index, index + 1].filter(
-      (i) => i >= 0 && i < photos.length
+    prefetchNeighborMediaUris(
+      photos,
+      index,
+      resolvedDisplayUriIdsRef.current,
+      (resolved) => {
+        setDisplayUriByAsset((prev) => ({
+          ...prev,
+          [resolved.id]: resolved.uri,
+        }));
+      }
     );
-
-    for (const i of prefetchIndices) {
-      const asset = photos[i];
-      if (!asset || resolvedDisplayUriIdsRef.current.has(asset.id)) continue;
-      if (isPlayableMediaUri(asset.uri)) continue;
-
-      resolvedDisplayUriIdsRef.current.add(asset.id);
-      void (async () => {
-        try {
-          const resolved = await resolveMediaAssetUri(asset);
-          if (isPlayableMediaUri(resolved.uri)) {
-            setDisplayUriByAsset((prev) => ({
-              ...prev,
-              [asset.id]: resolved.uri,
-            }));
-          } else {
-            resolvedDisplayUriIdsRef.current.delete(asset.id);
-          }
-        } catch {
-          resolvedDisplayUriIdsRef.current.delete(asset.id);
-        }
-      })();
-    }
   }, [photos, index]);
 
   const onScroll = useCallback(
@@ -198,25 +203,27 @@ export function TodayInYourPastCarousel({
         setIndex(page);
         void Haptics.selectionAsync();
       }
+      if (
+        photos &&
+        page >= photos.length - 2 &&
+        loadedCount < totalCount
+      ) {
+        appendMoreMedia();
+      }
     },
-    [PAGE_WIDTH, index]
+    [PAGE_WIDTH, index, photos, loadedCount, totalCount, appendMoreMedia]
   );
 
   if (photos == null) {
     return (
       <View style={{ marginTop: 28 }}>
-        <View style={{ paddingHorizontal: GUTTER, marginBottom: 12 }}>
-          <Text
-            style={{
-              fontFamily: "PMGothicLudington-Text110",
-              fontSize: 28,
-              lineHeight: 32,
-              color: colors.text,
-            }}
-          >
-            {sectionTitle}
-          </Text>
-        </View>
+        <CaptureSectionHeading
+          title={sectionTitle}
+          description={
+            "Quickly add moments from your past on this date.\n\nDon't just create the story of your year, fill up your Capsule and create a movie of your life!"
+          }
+          gutter={GUTTER}
+        />
         <View style={{ paddingHorizontal: GUTTER, paddingBottom: 8 }}>
           <Text
             style={{
@@ -239,23 +246,13 @@ export function TodayInYourPastCarousel({
 
   return (
     <View style={{ marginTop: 28 }}>
-      <View
-        style={{
-          paddingHorizontal: GUTTER,
-          marginBottom: 12,
-        }}
-      >
-        <Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 28,
-            lineHeight: 32,
-            color: colors.text,
-          }}
-        >
-          {sectionTitle}
-        </Text>
-      </View>
+      <CaptureSectionHeading
+        title={sectionTitle}
+        description={
+          "Quickly add moments from your past on this date.\n\nDon't just create the story of your year, fill up your Capsule and create a movie of your life!"
+        }
+        gutter={GUTTER}
+      />
       <FlatList
         ref={listRef}
         data={photos}
@@ -268,6 +265,10 @@ export function TodayInYourPastCarousel({
         snapToInterval={PAGE_WIDTH}
         decelerationRate="fast"
         style={{ height: CARD_HEIGHT }}
+        initialNumToRender={1}
+        maxToRenderPerBatch={2}
+        windowSize={3}
+        removeClippedSubviews
         renderItem={({ item, index: itemIndex }) => {
           const taken = new Date(item.creationTime);
           const year = format(taken, "yyyy");
@@ -276,9 +277,7 @@ export function TodayInYourPastCarousel({
           const resolvedUri = displayUriByAsset[item.id];
           const displayAsset =
             resolvedUri != null ? { ...item, uri: resolvedUri } : item;
-          const shouldAnimate =
-            itemIndex === animateIndex &&
-            (item.mediaType !== "video" || isPlayableMediaUri(displayAsset.uri));
+          const shouldAnimate = itemIndex === animateIndex;
           return (
             <View
               style={{
@@ -303,9 +302,21 @@ export function TodayInYourPastCarousel({
                 <View style={{ flex: 1, overflow: "hidden" }}>
                   <View
                     style={StyleSheet.absoluteFillObject}
-                    pointerEvents="none"
+                    pointerEvents={item.mediaType === "video" ? "box-none" : "none"}
                   >
-                    <DayAssetPreview asset={displayAsset} animate={shouldAnimate} />
+                    {item.mediaType === "video" ? (
+                      <CaptureVideoPreview
+                        asset={displayAsset}
+                        resolvedUri={resolvedUri}
+                        isActive={shouldAnimate}
+                      />
+                    ) : (
+                      <DayAssetPreview
+                        asset={displayAsset}
+                        animate={shouldAnimate}
+                        forceLivePlayback
+                      />
+                    )}
                   </View>
 
                   <View
@@ -323,6 +334,21 @@ export function TodayInYourPastCarousel({
                     >
                       <CaptureDatePill label={year} />
                       <CaptureDatePill label={time} compact />
+                      {item.mediaType === "video" ? (
+                        <View
+                          style={{
+                            alignSelf: "flex-start",
+                            paddingHorizontal: 8,
+                            paddingVertical: 6,
+                            borderRadius: 9999,
+                            backgroundColor: "#FFC100",
+                            borderWidth: 2,
+                            borderColor: "#000000",
+                          }}
+                        >
+                          <Ionicons name="videocam" size={12} color="#1A1A1A" />
+                        </View>
+                      ) : null}
                       {locationName ? (
                         <LocationTag name={locationName} variant="overlay" />
                       ) : null}
@@ -382,8 +408,8 @@ export function TodayInYourPastCarousel({
         }}
       />
 
-      {photos.length > 1 ? (
-        photos.length > MAX_DOT_INDICATORS ? (
+      {totalCount > 1 ? (
+        totalCount > MAX_DOT_INDICATORS ? (
           <Text
             style={{
               marginTop: 10,
@@ -394,7 +420,7 @@ export function TodayInYourPastCarousel({
               color: colors.textMuted,
             }}
           >
-            {index + 1}/{photos.length}
+            {index + 1}/{totalCount}
           </Text>
         ) : (
           <View
@@ -406,7 +432,7 @@ export function TodayInYourPastCarousel({
               marginTop: 10,
             }}
           >
-            {photos.map((_, i) => (
+            {Array.from({ length: totalCount }, (_, i) => (
               <View
                 key={i}
                 style={{
@@ -414,6 +440,7 @@ export function TodayInYourPastCarousel({
                   height: 6,
                   borderRadius: 3,
                   backgroundColor: i === index ? dotActive : dotMuted,
+                  opacity: i < loadedCount ? 1 : 0.35,
                 }}
               />
             ))}

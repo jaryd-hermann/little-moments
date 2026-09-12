@@ -1,8 +1,10 @@
+import { useTwoSecondVideoLoop } from "@/hooks/useTwoSecondVideoLoop";
 import { useSettingsStore } from "@/store/settingsStore";
+import { MOMENT_VIDEO_CLIP_SEC } from "@/lib/videoClip";
 import { useTheme } from "@/hooks/useTheme";
 import { Image, type ImageContentFit } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Platform, StyleProp, View, ViewStyle, Text } from "react-native";
 
 export interface LivePhotoImageProps {
@@ -22,6 +24,8 @@ export interface LivePhotoImageProps {
   hideBadge?: boolean;
   /** Ignore the user's Live Photo playback setting (e.g. onboarding montage). */
   forceLivePlayback?: boolean;
+  /** Loop only the first N seconds of the paired clip (montage / preview). */
+  clipDurationSec?: number;
 }
 
 /**
@@ -39,6 +43,7 @@ export function LivePhotoImage({
   previewOnly = false,
   hideBadge = false,
   forceLivePlayback = false,
+  clipDurationSec = MOMENT_VIDEO_CLIP_SEC,
 }: LivePhotoImageProps) {
   const { colors } = useTheme();
   const livePhotoEnabled = useSettingsStore((s) => s.livePhotoPlaybackEnabled);
@@ -50,15 +55,25 @@ export function LivePhotoImage({
       !previewOnly
   );
 
-  const player = useVideoPlayer(shouldLoop ? videoUri ?? null : null, (p) => {
-    p.loop = true;
+  const [videoReady, setVideoReady] = useState(false);
+
+  useEffect(() => {
+    setVideoReady(false);
+  }, [videoUri]);
+
+  const loopActive = shouldLoop;
+
+  const player = useVideoPlayer(loopActive ? videoUri ?? null : null, (p) => {
+    p.loop = false;
     p.muted = true;
     p.play();
   });
 
+  useTwoSecondVideoLoop(player, loopActive, 0);
+
   const badge = useMemo(
     () =>
-      shouldLoop && !hideBadge ? (
+      loopActive && videoReady && !hideBadge ? (
         <View
           pointerEvents="none"
           style={{
@@ -83,7 +98,7 @@ export function LivePhotoImage({
           </Text>
         </View>
       ) : null,
-    [shouldLoop, hideBadge]
+    [loopActive, videoReady, hideBadge]
   );
 
   if (shouldLoop) {
@@ -94,13 +109,31 @@ export function LivePhotoImage({
           style,
         ]}
       >
-        <VideoView
-          player={player}
+        <Image
+          source={{ uri: staticUri }}
           style={{ width: "100%", height: "100%" }}
-          contentFit={contentFit === "contain" ? "contain" : "cover"}
-          nativeControls={false}
-          allowsPictureInPicture={false}
+          contentFit={contentFit}
+          cachePolicy="memory-disk"
         />
+        {loopActive ? (
+          <VideoView
+            player={player}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              opacity: videoReady ? 1 : 0,
+            }}
+            contentFit={contentFit === "contain" ? "contain" : "cover"}
+            nativeControls={false}
+            allowsPictureInPicture={false}
+            onFirstFrameRender={() => {
+              setVideoReady(true);
+            }}
+          />
+        ) : null}
         {badge}
       </View>
     );

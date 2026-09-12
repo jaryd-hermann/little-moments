@@ -1,13 +1,16 @@
 import { useState, useCallback, useRef } from "react";
 import { Dimensions, PixelRatio, Platform } from "react-native";
 import * as MediaLibrary from "expo-media-library";
+import * as FileSystem from "expo-file-system/legacy";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import {
   PHOTO_BUCKET_CYCLE,
-  PHOTO_BUCKET_RECENT_MAX_MS,
-  PHOTO_BUCKET_OLDER_MAX_MS,
-  type PhotoBucket,
 } from "@/lib/photoBucket";
+import {
+  peekVideoPosterUri,
+  prefetchVideoPosterUri,
+  resolveVideoPosterUri,
+} from "@/lib/videoPoster";
 
 /** iOS 14+ returns `limited`; TS enum in expo-modules-core omits it. */
 export function hasPhotoLibraryAccess(
@@ -75,6 +78,104 @@ function mapExpoAsset(a: MediaLibrary.Asset): MediaAsset {
   };
 }
 
+/** URIs that expo-video and upload paths can read reliably. */
+export function isPlayableMediaUri(uri: string | null | undefined): boolean {
+  if (!uri) return false;
+  return (
+    uri.startsWith("file://") ||
+    uri.startsWith("http://") ||
+    uri.startsWith("https://")
+  );
+}
+
+const libraryVideoCache = new Map<string, string>();
+
+/**
+ * iOS returns video `localUri`s with a trailing `#<base64 bplist>` fragment
+ * (spatial-video "RecommendedForImmersiveMode" metadata). AVFoundation and
+ * expo-video-thumbnails fail to open the file when the fragment is present —
+ * strip everything from `#` onward before touching the file system.
+ */
+export function stripUriFragment(uri: string): string {
+  const hash = uri.indexOf("#");
+  return hash === -1 ? uri : uri.slice(0, hash);
+}
+
+/** True when the file already lives in our own sandbox (safe to play directly). */
+function isAppSandboxFile(uri: string): boolean {
+  const cache = FileSystem.cacheDirectory;
+  const docs = FileSystem.documentDirectory;
+  return (
+    (!!cache && uri.startsWith(cache)) || (!!docs && uri.startsWith(docs))
+  );
+}
+
+/**
+ * Copy Photos library video URIs (`ph://`, `assets-library://`, or raw
+ * `/var/mobile/Media/...` paths) into `FileSystem.cacheDirectory` so expo-video
+ * can play them on physical devices. Raw Photos paths are sandbox-protected and
+ * cannot be opened directly by AVFoundation in production builds.
+ */
+async function ensureCachedLibraryVideoFile(
+  sourceUri: string,
+  cacheKey: string,
+  fallbackUri?: string
+): Promise<string | null> {
+  const cleanSource = stripUriFragment(sourceUri);
+
+  // Reuse if it's already a playable copy inside our own sandbox. We must NOT
+  // short-circuit for raw Photos paths — those throw "permission" on device.
+  if (cleanSource.startsWith("file://") && isAppSandboxFile(cleanSource)) {
+    try {
+      const info = await FileSystem.getInfoAsync(cleanSource);
+      if (info.exists && (info.size ?? 0) > 0) return cleanSource;
+    } catch {
+      /* fall through to copy */
+    }
+  }
+
+  const cached = libraryVideoCache.get(cacheKey);
+  if (cached) {
+    try {
+      const info = await FileSystem.getInfoAsync(cached);
+      if (info.exists && (info.size ?? 0) > 0) return cached;
+    } catch {
+      libraryVideoCache.delete(cacheKey);
+    }
+  }
+
+  const cacheDir = FileSystem.cacheDirectory;
+  if (!cacheDir) return null;
+  const safeKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const dest = `${cacheDir}lm-lib-vid-${safeKey}.mp4`;
+
+  // Try the resolved local path first, then the original `ph://` URI which the
+  // Photos framework can always read via expo-file-system.
+  const candidates = [
+    cleanSource,
+    fallbackUri ? stripUriFragment(fallbackUri) : null,
+  ].filter((u): u is string => !!u && u !== "");
+
+  for (const from of candidates) {
+    try {
+      try {
+        await FileSystem.deleteAsync(dest, { idempotent: true });
+      } catch {
+        /* no stale file */
+      }
+      await FileSystem.copyAsync({ from, to: dest });
+      const info = await FileSystem.getInfoAsync(dest);
+      if (info.exists && (info.size ?? 0) > 0) {
+        libraryVideoCache.set(cacheKey, dest);
+        return dest;
+      }
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return null;
+}
+
 /* ── Camera-only filtering ─────────────────────────────────────────────── */
 
 const SCREEN = Dimensions.get("screen");
@@ -87,6 +188,25 @@ function isScreenshotDimensions(w: number, h: number): boolean {
     (w === SCREEN_PX_W && h === SCREEN_PX_H) ||
     (w === SCREEN_PX_H && h === SCREEN_PX_W)
   );
+}
+
+/**
+ * Modern phone screens are far taller than any camera sensor produces
+ * (square=1.0, 4:3=1.33, 3:2=1.5, 16:9=1.78). A full-screen grab keeps that
+ * tall ratio even after a messaging app downscales/recompresses it, so a
+ * still whose long:short ratio lands in the phone-screen band (~18:9 to 20:9)
+ * is almost certainly a screenshot — even when it arrived via WhatsApp from
+ * another device and so carries no Screenshots-album membership, no
+ * `screenshot` mediaSubtype, and foreign dimensions. Panoramas are
+ * proportionally wider (ratio above the band) and pass through untouched.
+ */
+const PHONE_SCREEN_ASPECT_MIN = 1.95;
+const PHONE_SCREEN_ASPECT_MAX = 2.28;
+
+function isPhoneScreenAspect(w: number, h: number): boolean {
+  if (w <= 0 || h <= 0) return false;
+  const ratio = Math.max(w, h) / Math.min(w, h);
+  return ratio >= PHONE_SCREEN_ASPECT_MIN && ratio <= PHONE_SCREEN_ASPECT_MAX;
 }
 
 interface ExcludedAssetIds {
@@ -160,6 +280,7 @@ function isScreenshotAsset(
   const fn = opts?.filename?.toLowerCase() ?? "";
   if (fn && SCREENSHOT_FILENAME_RE.test(fn)) return true;
   if (isScreenshotDimensions(asset.width, asset.height)) return true;
+  if (isPhoneScreenAspect(asset.width, asset.height)) return true;
   return false;
 }
 
@@ -444,31 +565,175 @@ export async function resolveMediaAssetUri(
   return enqueueMediaLibraryWork(async () => {
     const isVideo = asset.mediaType === "video";
 
-    if (!isVideo) {
+    if (isVideo) {
       try {
-        const manipulated = await _timeout(
-          manipulateAsync(asset.uri, [], {
-            compress: 0.85,
-            format: SaveFormat.JPEG,
+        const info = await _timeout(
+          MediaLibrary.getAssetInfoAsync(asset.id, {
+            shouldDownloadFromNetwork: true,
           }),
-          5000
+          25000
         );
-        if (manipulated?.uri) return { ...asset, uri: manipulated.uri };
-      } catch {}
+        const source = info?.localUri ?? asset.uri;
+        const fileUri = await ensureCachedLibraryVideoFile(
+          source,
+          asset.id,
+          asset.uri
+        );
+        if (fileUri) return { ...asset, uri: fileUri };
+      } catch {
+        /* keep thumbnail fallback */
+      }
+      return asset;
+    }
+
+    if (isPlayableMediaUri(asset.uri)) {
+      return asset;
     }
 
     try {
-      const timeoutMs = isVideo ? 25000 : 8000;
+      const manipulated = await _timeout(
+        manipulateAsync(asset.uri, [], {
+          compress: 0.85,
+          format: SaveFormat.JPEG,
+        }),
+        5000
+      );
+      if (manipulated?.uri) return { ...asset, uri: manipulated.uri };
+    } catch {}
+
+    try {
       const info = await _timeout(
         MediaLibrary.getAssetInfoAsync(asset.id, {
           shouldDownloadFromNetwork: true,
         }),
-        timeoutMs
+        8000
       );
       if (info?.localUri) return { ...asset, uri: info.localUri };
     } catch {}
 
     return asset;
+  });
+}
+
+export function mediaAssetNeedsUriResolve(asset: MediaAsset): boolean {
+  return asset.mediaType === "video" || !isPlayableMediaUri(asset.uri);
+}
+
+/**
+ * Fast poster path for camera-roll videos — resolves a JPEG thumbnail via
+ * `getAssetInfoAsync` + `getThumbnailAsync` without copying the full clip to
+ * cache. Use for carousel previews; defer `resolveMediaAssetUri` until play.
+ */
+export async function resolveVideoPosterForAsset(
+  asset: MediaAsset,
+  timeSec = 0
+): Promise<string | null> {
+  const cached = peekVideoPosterUri(asset.id, timeSec);
+  if (cached) return cached;
+
+  return enqueueMediaLibraryWork(async () => {
+    try {
+      const info = await _timeout(
+        MediaLibrary.getAssetInfoAsync(asset.id, {
+          shouldDownloadFromNetwork: true,
+        }),
+        15000
+      );
+      const source = info?.localUri ?? asset.uri;
+      if (!source) return null;
+
+      // Raw Photos paths can't be opened by expo-video-thumbnails on device —
+      // always copy into the sandbox first, then thumbnail the local copy.
+      const fileUri = await ensureCachedLibraryVideoFile(
+        source,
+        asset.id,
+        asset.uri
+      );
+      if (fileUri) {
+        return resolveVideoPosterUri(asset.id, fileUri, timeSec);
+      }
+    } catch {
+      /* fall back to gray + play */
+    }
+    return null;
+  });
+}
+
+function prefetchMediaAssetUri(
+  asset: MediaAsset,
+  resolvedIds: Set<string>,
+  onResolved: (asset: MediaAsset) => void,
+  opts?: { posterOnly?: boolean }
+): void {
+  if (resolvedIds.has(asset.id)) return;
+
+  if (asset.mediaType === "video" && opts?.posterOnly) {
+    resolvedIds.add(asset.id);
+    void resolveVideoPosterForAsset(asset, 0)
+      .catch(() => {
+        resolvedIds.delete(asset.id);
+      });
+    return;
+  }
+
+  if (!mediaAssetNeedsUriResolve(asset)) return;
+
+  resolvedIds.add(asset.id);
+  void resolveMediaAssetUri(asset)
+    .then((resolved) => {
+      if (isPlayableMediaUri(resolved.uri)) {
+        if (resolved.mediaType === "video") {
+          prefetchVideoPosterUri(resolved.id, resolved.uri, 0);
+        }
+        onResolved(resolved);
+      } else {
+        resolvedIds.delete(asset.id);
+      }
+    })
+    .catch(() => {
+      resolvedIds.delete(asset.id);
+    });
+}
+
+/**
+ * Resolve playable URIs for the active carousel slide and its neighbors
+ * (±1). Videos get poster-only work unless `prefetchPlayableVideos` is set
+ * (e.g. when the user taps play). Center index runs first so the visible
+ * card wins the serialized Photos queue on device.
+ */
+export function prefetchNeighborMediaUris(
+  items: MediaAsset[],
+  centerIndex: number,
+  resolvedIds: Set<string>,
+  onResolved: (asset: MediaAsset) => void,
+  opts?: { prefetchPlayableVideos?: boolean }
+): void {
+  const posterOnly = !opts?.prefetchPlayableVideos;
+  const indices = [centerIndex, centerIndex - 1, centerIndex + 1].filter(
+    (i) => i >= 0 && i < items.length
+  );
+  const uniqueIndices = [...new Set(indices)];
+
+  uniqueIndices.forEach((i, order) => {
+    const asset = items[i];
+    if (!asset) return;
+
+    const run = () => {
+      if (asset.mediaType === "video" && posterOnly) {
+        prefetchMediaAssetUri(asset, resolvedIds, onResolved, { posterOnly: true });
+        return;
+      }
+      if (asset.mediaType !== "video" && mediaAssetNeedsUriResolve(asset)) {
+        prefetchMediaAssetUri(asset, resolvedIds, onResolved);
+        return;
+      }
+      if (asset.mediaType === "video" && !posterOnly) {
+        prefetchMediaAssetUri(asset, resolvedIds, onResolved);
+      }
+    };
+
+    if (order === 0) run();
+    else setTimeout(run, order * 120);
   });
 }
 
@@ -588,11 +853,31 @@ async function fetchLivePhotoVideoUri(
       if (!isLive) return null;
       const paired = info.pairedVideoAsset;
       if (!paired) return null;
-      const uri = paired.localUri ?? paired.uri ?? null;
-      if (!uri) return null;
+      // `pairedVideoAsset` is a bare `Asset` — it carries a `ph://` uri but no
+      // `localUri`. Resolve the paired asset's own info to get a real file
+      // path; that copies far more reliably into the sandbox than the raw
+      // `ph://` paired uri. Fall back to the `ph://` uri if that lookup fails.
+      let localUri = paired.localUri ?? null;
+      if (!localUri && paired.id) {
+        try {
+          const pairedInfo = await MediaLibrary.getAssetInfoAsync(paired.id);
+          localUri = pairedInfo?.localUri ?? null;
+        } catch {
+          /* fall back to the paired ph:// uri below */
+        }
+      }
+      const fallbackUri = paired.uri ?? null;
+      const raw = localUri ?? fallbackUri;
+      if (!raw) return null;
+      const fileUri = await ensureCachedLibraryVideoFile(
+        raw,
+        `${assetId}-live`,
+        localUri ? fallbackUri ?? undefined : undefined
+      );
+      if (!fileUri) return null;
       const durationMs =
         typeof paired.duration === "number" ? paired.duration * 1000 : null;
-      return { uri, durationMs };
+      return { uri: fileUri, durationMs };
     } catch {
       return null;
     }
@@ -613,6 +898,65 @@ export async function getLivePhotoVideoUri(
 }
 
 /**
+ * Same-day-different-year photos for a contiguous prior-year window.
+ * `fromYearsBack` / `toYearsBack` are inclusive (1 = one year ago).
+ */
+export async function queryCameraPhotosForPriorYearsWindow(
+  month: number,
+  day: number,
+  opts: {
+    fromYearsBack: number;
+    toYearsBack: number;
+    nowYear?: number;
+    lightweight?: boolean;
+  }
+): Promise<MediaAsset[]> {
+  const nowYear = opts.nowYear ?? new Date().getFullYear();
+  const lightweight = opts.lightweight ?? true;
+  const from = Math.max(1, opts.fromYearsBack);
+  const to = Math.max(from, opts.toYearsBack);
+
+  const dates: Date[] = [];
+  for (let i = from; i <= to; i++) {
+    const year = nowYear - i;
+    const d = new Date(year, month, day);
+    if (d.getFullYear() !== year || d.getMonth() !== month || d.getDate() !== day) {
+      continue;
+    }
+    dates.push(d);
+  }
+
+  const lists = await Promise.all(
+    dates.map((d) => queryCameraPhotosForLocalDay(d, { lightweight }))
+  );
+  const out = lists.flat();
+  out.sort((a, b) => b.creationTime - a.creationTime);
+  return out;
+}
+
+/**
+ * Lightweight index of every camera photo/video on this month/day in prior
+ * years (newest first). Metadata only — no URI resolution or thumbnails.
+ */
+export async function querySameDateInPastCatalog(
+  month: number,
+  day: number,
+  opts?: {
+    maxYearsBack?: number;
+    nowYear?: number;
+    lightweight?: boolean;
+  }
+): Promise<MediaAsset[]> {
+  const maxYearsBack = opts?.maxYearsBack ?? 10;
+  return queryCameraPhotosForPriorYearsWindow(month, day, {
+    fromYearsBack: 1,
+    toYearsBack: maxYearsBack,
+    nowYear: opts?.nowYear,
+    lightweight: opts?.lightweight ?? true,
+  });
+}
+
+/**
  * Same-day-different-year photos. For "Today In Your Past" on the Capture
  * feed: for each prior year (up to `maxYearsBack`), runs the day query and
  * concatenates results, sorted newest first.
@@ -628,26 +972,8 @@ export async function queryCameraPhotosForSameDateInPriorYears(
     lightweight?: boolean;
   } = {}
 ): Promise<MediaAsset[]> {
-  const maxYearsBack = opts.maxYearsBack ?? 10;
-  const nowYear = opts.nowYear ?? new Date().getFullYear();
   const maxResults = opts.maxResults ?? 50;
-  const lightweight = opts.lightweight ?? true;
-
-  const dates: Date[] = [];
-  for (let i = 1; i <= maxYearsBack; i++) {
-    const year = nowYear - i;
-    const d = new Date(year, month, day);
-    if (d.getFullYear() !== year || d.getMonth() !== month || d.getDate() !== day) {
-      continue;
-    }
-    dates.push(d);
-  }
-
-  const lists = await Promise.all(
-    dates.map((d) => queryCameraPhotosForLocalDay(d, { lightweight }))
-  );
-  const out = lists.flat();
-  out.sort((a, b) => b.creationTime - a.creationTime);
+  const out = await querySameDateInPastCatalog(month, day, opts);
   return out.slice(0, maxResults);
 }
 
@@ -657,7 +983,7 @@ export async function queryCameraPhotosForSameDateInPriorYears(
  */
 export async function queryRecentCameraPhotos(opts?: {
   daysBack?: number;
-  limit?: number;
+  limit?: number | null;
   lightweight?: boolean;
 }): Promise<MediaAsset[]> {
   const daysBack = opts?.daysBack ?? 30;
@@ -671,7 +997,8 @@ export async function queryRecentCameraPhotos(opts?: {
   const out: MediaAsset[] = [];
   let after: string | undefined;
   let guard = 0;
-  while (guard++ < 40 && out.length < limit) {
+  const hasLimit = limit != null;
+  while (guard++ < 40 && (!hasLimit || out.length < limit!)) {
     const page = await MediaLibrary.getAssetsAsync({
       mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
       createdAfter: start.getTime(),
@@ -700,13 +1027,149 @@ export async function queryRecentCameraPhotos(opts?: {
           out.push(mapExpoAsset(merged));
         }
       }
-      if (out.length >= limit) break;
+      if (out.length >= limit!) break;
     }
     if (!page.hasNextPage || !page.endCursor) break;
     after = page.endCursor;
   }
   out.sort((a, b) => b.creationTime - a.creationTime);
-  return out.slice(0, limit);
+  return hasLimit ? out.slice(0, limit!) : out;
+}
+
+export interface RecentMediaPage {
+  assets: MediaAsset[];
+  /** Opaque cursor to pass back as `after` to fetch the next page. */
+  endCursor: string | null;
+  hasNextPage: boolean;
+}
+
+/**
+ * Cursor-paginated stream of recent camera media (photos + videos), newest
+ * first, filtered by the standard day-capture filter. Powers the continuous
+ * "recent moments" carousel on Capture — start with no cursor for the most
+ * recent page, then pass `endCursor` back as `after` to lazily extend as the
+ * user swipes toward the end. `lightweight` skips per-asset `getAssetInfoAsync`
+ * for speed (URIs are resolved lazily elsewhere).
+ */
+export async function queryRecentCameraMediaPage(opts?: {
+  after?: string | null;
+  /** Target number of filtered assets to collect per call. */
+  pageSize?: number;
+  lightweight?: boolean;
+}): Promise<RecentMediaPage> {
+  const pageSize = opts?.pageSize ?? 24;
+  const lightweight = opts?.lightweight ?? true;
+  const excludedIds = await loadExcludedAssetIds();
+  const out: MediaAsset[] = [];
+  let after: string | undefined = opts?.after ?? undefined;
+  let endCursor: string | null = opts?.after ?? null;
+  let hasNextPage = true;
+  let guard = 0;
+  while (guard++ < 40 && out.length < pageSize) {
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+      first: 100,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      ...(after ? { after } : {}),
+    });
+    for (const a of page.assets) {
+      if (lightweight) {
+        if (isDayCapturePhoto(a, excludedIds)) out.push(mapExpoAsset(a));
+      } else {
+        let merged: MediaLibrary.Asset = a;
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(a.id);
+          merged = { ...a, ...info };
+        } catch {
+          /* use list row */
+        }
+        const filename =
+          ("filename" in merged && typeof merged.filename === "string"
+            ? merged.filename
+            : null) ?? null;
+        if (isDayCapturePhoto(merged, excludedIds, { filename })) {
+          out.push(mapExpoAsset(merged));
+        }
+      }
+    }
+    endCursor = page.endCursor ?? endCursor;
+    after = page.endCursor ?? undefined;
+    if (!page.hasNextPage || !page.endCursor) {
+      hasNextPage = false;
+      break;
+    }
+  }
+  return { assets: out, endCursor, hasNextPage };
+}
+
+/** Photos/videos taken during a calendar month (yyyy-MM), newest first. */
+export async function queryCameraPhotosForMonth(
+  monthKey: string,
+  opts?: { limit?: number | null; lightweight?: boolean }
+): Promise<MediaAsset[]> {
+  return queryAllCameraPhotosForMonth(monthKey, {
+    lightweight: opts?.lightweight,
+    limit: opts?.limit ?? null,
+  });
+}
+
+/**
+ * Every selectable photo/video in a calendar month — paginated, no day cap.
+ *
+ * Pass `limit` when the caller only needs a handful (e.g. montage
+ * backgrounds); paging stops as soon as the limit is met rather than walking
+ * the whole month, which on a heavy month is thousands of assets.
+ */
+export async function queryAllCameraPhotosForMonth(
+  monthKey: string,
+  opts?: { lightweight?: boolean; limit?: number | null }
+): Promise<MediaAsset[]> {
+  const [y, m] = monthKey.split("-").map(Number);
+  const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+  const end = new Date(y, m, 0, 23, 59, 59, 999);
+  const lightweight = opts?.lightweight ?? true;
+  const limit = opts?.limit ?? null;
+  const excludedIds = await loadExcludedAssetIds();
+  const out: MediaAsset[] = [];
+  let after: string | undefined;
+  let guard = 0;
+  while (guard++ < 200 && (limit == null || out.length < limit)) {
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+      createdAfter: start.getTime(),
+      createdBefore: end.getTime(),
+      first: 500,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      ...(after ? { after } : {}),
+    });
+    for (const a of page.assets) {
+      if (lightweight) {
+        if (isDayCapturePhoto(a, excludedIds)) {
+          out.push(mapExpoAsset(a));
+        }
+      } else {
+        let merged: MediaLibrary.Asset = a;
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(a.id);
+          merged = { ...a, ...info };
+        } catch {
+          /* use list row */
+        }
+        const filename =
+          ("filename" in merged && typeof merged.filename === "string"
+            ? merged.filename
+            : null) ?? null;
+        if (isDayCapturePhoto(merged, excludedIds, { filename })) {
+          out.push(mapExpoAsset(merged));
+        }
+      }
+      if (limit != null && out.length >= limit) break;
+    }
+    if (!page.hasNextPage || !page.endCursor) break;
+    after = page.endCursor;
+  }
+  out.sort((a, b) => b.creationTime - a.creationTime);
+  return limit == null ? out : out.slice(0, limit);
 }
 
 /**

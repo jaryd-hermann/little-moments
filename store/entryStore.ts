@@ -23,9 +23,29 @@ export interface Entry {
   photo_bucket_at_save?: PhotoBucket | null;
   /** Days between photo capture and save time (null if no photo). */
   photo_age_days_at_save?: number | null;
+  /**
+   * Original audio from a voice capture. Surfaced on the moment detail screen
+   * only — deliberately never on shares, summary cards or movies.
+   */
+  voice_note_storage_path?: string | null;
+  voice_note_storage_url?: string | null;
+  voice_note_duration_seconds?: number | null;
   created_at: string;
   updated_at: string;
   media?: EntryMedia[];
+  /**
+   * People + theme extracted by `process-threads`. Undefined until a surface
+   * that needs it asks for it, and null for moments that never ran through
+   * extraction (photo-only saves with no text).
+   */
+  metadata?: EntryMetadata | null;
+}
+
+/** The slice of `entry_metadata` the movie buckets care about. */
+export interface EntryMetadata {
+  /** Raw mentions — resolve through `lib/canonicalPeople` before counting. */
+  people: string[];
+  primary_theme: string | null;
 }
 
 export interface EntryMedia {

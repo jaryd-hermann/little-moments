@@ -31,6 +31,10 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { dispatch } from "../_shared/dispatch.ts";
+import {
+  hasRecentMovieUnlock,
+  syncMovieUnlocks,
+} from "../_shared/movie-unlocks.ts";
 import { createPostHogLogger } from "../_shared/posthog-logs.ts";
 
 type EventType =
@@ -41,6 +45,9 @@ type EventType =
   | "moment_saved";
 
 const STREAK_MILESTONES = new Set([3, 7, 30, 100]);
+
+/** How recent a movie unlock has to be to suppress the save confirmation. */
+const MOVIE_UNLOCK_QUIET_MS = 2 * 60 * 1000;
 
 interface RequestBody {
   type: EventType;
@@ -208,9 +215,13 @@ async function handleStreakMilestone(
 ) {
   const { data: profile } = await supabase
     .from("profiles")
-    .select("streak_count")
+    .select("streak_count, streak_at_risk_enabled")
     .eq("id", userId)
     .maybeSingle();
+
+  if (profile?.streak_at_risk_enabled === false) {
+    return { sent: false, reason: "streaks_disabled" };
+  }
 
   const streak = profile?.streak_count ?? 0;
   if (!STREAK_MILESTONES.has(streak)) {
@@ -385,6 +396,18 @@ async function handleMomentSaved(
   if (!entry) return { sent: false, reason: "entry_not_found" };
   if (entry.entry_type !== "moment") {
     return { sent: false, reason: "not_a_moment" };
+  }
+
+  // A movie unlock outranks the save confirmation — both landing within
+  // seconds of each other would read as spam, and "you unlocked a movie" is
+  // the more interesting of the two.
+  //
+  // We record here but never announce: `process-threads` owns the push, since
+  // it also knows the moment's people and theme. It races this handler, so the
+  // stand-down check is time-based rather than "did I insert the row".
+  await syncMovieUnlocks(supabase, userId, { notify: false });
+  if (await hasRecentMovieUnlock(supabase, userId, MOVIE_UNLOCK_QUIET_MS)) {
+    return { sent: false, reason: "movie_unlock_supersedes" };
   }
 
   // Pull the first attached photo's public URL (display_order = 0). The

@@ -7,6 +7,7 @@ import {
 import { supabase } from "./supabase";
 import { notifyLifecycleEvent } from "./lifecycleEvent";
 import { captureException } from "./errors";
+import { useSettingsStore } from "@/store/settingsStore";
 
 const STREAK_MILESTONES = new Set([3, 7, 30, 100]);
 
@@ -155,7 +156,7 @@ export async function updateStreakAfterEntry(
     const previousStreak = profile?.streak_count ?? 0;
     const streakJustHitMilestone =
       STREAK_MILESTONES.has(streakCount) && previousStreak < streakCount;
-    if (streakJustHitMilestone) {
+    if (streakJustHitMilestone && useSettingsStore.getState().streaksEnabled) {
       void notifyLifecycleEvent("streak_milestone");
     }
 

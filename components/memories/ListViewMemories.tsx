@@ -1,5 +1,11 @@
-import { useMemo, useState } from "react";
-import { View, Text, SectionList, Pressable } from "react-native";
+import { useMemo, useState, useCallback, useRef } from "react";
+import {
+  View,
+  Text,
+  SectionList,
+  Pressable,
+  type ViewToken,
+} from "react-native";
 import {
   format,
   isSameWeek,
@@ -14,11 +20,14 @@ import {
 import { EntryRow } from "./EntryRow";
 import { ThreadCard } from "@/components/threads/ThreadCard";
 import { MagicFillFeedButton } from "@/components/magic-fill/MagicFillFeedButton";
+import { YearCaptureProgressBlock } from "@/components/common/YearCaptureProgressBlock";
+import type { YearCaptureProgress } from "@/lib/yearCapture";
 import type { Entry } from "@/store/entryStore";
 import type { Thread } from "@/hooks/useThreads";
+import type { ChapterRecord } from "@/lib/chapters";
 import type { CapsuleFilter } from "./CapsuleStatBar";
 import { useTheme } from "@/hooks/useTheme";
-import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
+import { enqueueMomentsMediaPrefetch } from "@/lib/viewportMediaPrefetch";
 
 type SortOrder = "newest" | "oldest";
 
@@ -39,6 +48,12 @@ interface ListViewMemoriesProps {
    */
   isChapterLockedById?: (chapterId: string) => boolean;
   /**
+   * Resolves the full chapter record behind a chapter entry so the row can
+   * render the same cover card the Chapters tab list uses. Rows fall back to
+   * a plain text card while chapters are still loading.
+   */
+  chapterById?: (chapterId: string) => ChapterRecord | undefined;
+  /**
    * Reports whether a given thread is paywalled-locked for the current user.
    * Without this the list would render thread cards fully openable even
    * when they sit past the free-tier cap (the Connect tab flipbook applies
@@ -48,10 +63,18 @@ interface ListViewMemoriesProps {
    * `paywall` flag-aware entry on tap.
    */
   isThreadLocked?: (thread: Thread) => boolean;
+  connectionsTabSeenAt?: string | null;
+  onThreadAnswerSaved?: (threadId: string, answer: string) => void;
   capsuleFilter?: CapsuleFilter;
   threads?: Thread[];
   showSearch?: boolean;
   showMagicFillButton?: boolean;
+  /**
+   * Share of the year captured, for the bar above the Magic Fill button. Comes
+   * from the parent rather than `entries` because that list is search- and
+   * filter-narrowed, which would make the percentage jump around.
+   */
+  yearProgress?: YearCaptureProgress | null;
 }
 
 const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
@@ -60,6 +83,11 @@ const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
 ];
 
 const ORDINALS = ["", "1st", "2nd", "3rd", "4th", "5th", "6th"];
+
+const LIST_VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 25,
+  minimumViewTime: 120,
+};
 
 /** Monday-start ISO week. Returns a stable group label and a sort key (epoch ms). */
 function weekGroup(date: Date, today: Date): { label: string; sortKey: number } {
@@ -82,17 +110,17 @@ export function ListViewMemories({
   onChangeQuery,
   onOpenChapter,
   isChapterLockedById,
+  chapterById,
   isThreadLocked,
+  connectionsTabSeenAt = null,
+  onThreadAnswerSaved,
   capsuleFilter = "all",
   threads = [],
   showSearch = false,
   showMagicFillButton = false,
+  yearProgress = null,
 }: ListViewMemoriesProps) {
   const { colors } = useTheme();
-  const threadOrdinals = useMemo(
-    () => threadOrdinalByIdMap(threads),
-    [threads]
-  );
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
@@ -176,6 +204,112 @@ export function ListViewMemories({
 
   const currentSortLabel =
     SORT_OPTIONS.find((o) => o.value === sortOrder)?.label ?? "Newest";
+
+  const keyExtractor = useCallback(
+    (
+      item: ListItem | undefined,
+      index: number,
+      section?: { title: string }
+    ) => {
+      if (item?.type === "entry" && item.entry?.id) return item.entry.id;
+      if (item?.type === "thread" && item.thread?.id) {
+        return `thread-${item.thread.id}`;
+      }
+      return `capsule-${section?.title ?? "row"}-${index}`;
+    },
+    []
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: ListItem }) => {
+      if (item?.type === "thread" && item.thread) {
+        return (
+          <View style={{ marginBottom: 12 }}>
+            <ThreadCard
+              thread={item.thread}
+              locked={isThreadLocked?.(item.thread) ?? false}
+              connectionsTabSeenAt={connectionsTabSeenAt}
+              onAnswerSaved={onThreadAnswerSaved}
+            />
+          </View>
+        );
+      }
+      if (item?.type !== "entry" || !item.entry) return null;
+      const isChapterEntry = item.entry.entry_type === "chapter";
+      const chapterLocked =
+        isChapterEntry && item.entry.chapter_id
+          ? (isChapterLockedById?.(item.entry.chapter_id) ?? false)
+          : false;
+      const chapterRecord =
+        isChapterEntry && item.entry.chapter_id
+          ? chapterById?.(item.entry.chapter_id)
+          : undefined;
+      return (
+        <View style={{ marginBottom: 12 }}>
+          <EntryRow
+            entry={item.entry}
+            onOpenChapter={onOpenChapter}
+            chapterLocked={chapterLocked}
+            chapterRecord={chapterRecord}
+          />
+        </View>
+      );
+    },
+    [
+      chapterById,
+      connectionsTabSeenAt,
+      isChapterLockedById,
+      isThreadLocked,
+      onOpenChapter,
+      onThreadAnswerSaved,
+    ]
+  );
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: { title: string } }) => (
+      <View style={{ paddingTop: 18, paddingBottom: 10 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Medium",
+            fontSize: 11,
+            color: colors.textMuted,
+            letterSpacing: 1.4,
+          }}
+        >
+          {section.title}
+        </Text>
+      </View>
+    ),
+    [colors.textMuted]
+  );
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const batch: Entry[] = [];
+      for (const token of viewableItems) {
+        const item = token.item as ListItem | undefined;
+        if (item?.type === "entry" && item.entry) batch.push(item.entry);
+      }
+      if (batch.length > 0) {
+        enqueueMomentsMediaPrefetch(batch, 8000);
+      }
+    }
+  ).current;
+
+  const listHeader =
+    yearProgress || showMagicFillButton ? (
+      <View style={{ gap: 12, marginBottom: 4 }}>
+        {yearProgress ? (
+          <YearCaptureProgressBlock
+            year={yearProgress.year}
+            progress={yearProgress.ratio}
+          />
+        ) : null}
+        {showMagicFillButton ? (
+          <MagicFillFeedButton source="capsule_banner" embedded compact />
+        ) : null}
+      </View>
+    ) : undefined;
 
   return (
     <View className="flex-1">
@@ -280,58 +414,20 @@ export function ListViewMemories({
       <SectionList
         style={{ flex: 1 }}
         sections={sections}
-        ListHeaderComponent={
-          showMagicFillButton ? (
-            <MagicFillFeedButton source="capsule_banner" embedded compact />
-          ) : undefined
-        }
-        keyExtractor={(item) =>
-          item.type === "entry" ? item.entry.id : `thread-${item.thread.id}`
-        }
-        renderItem={({ item }) => {
-          if (item.type === "thread") {
-            return (
-              <View style={{ marginBottom: 12 }}>
-                <ThreadCard
-                  thread={item.thread}
-                  locked={isThreadLocked?.(item.thread) ?? false}
-                  ordinalRank={threadOrdinals.get(item.thread.id) ?? 1}
-                />
-              </View>
-            );
-          }
-          const isChapterEntry = item.entry.entry_type === "chapter";
-          const chapterLocked =
-            isChapterEntry && item.entry.chapter_id
-              ? (isChapterLockedById?.(item.entry.chapter_id) ?? false)
-              : false;
-          return (
-            <View style={{ marginBottom: 12 }}>
-              <EntryRow
-                entry={item.entry}
-                onOpenChapter={onOpenChapter}
-                chapterLocked={chapterLocked}
-              />
-            </View>
-          );
-        }}
-        renderSectionHeader={({ section }) => (
-          <View style={{ paddingTop: 18, paddingBottom: 10 }}>
-            <Text
-              style={{
-                fontFamily: "Roboto-Medium",
-                fontSize: 11,
-                color: colors.textMuted,
-                letterSpacing: 1.4,
-              }}
-            >
-              {section.title}
-            </Text>
-          </View>
-        )}
+        ListHeaderComponent={listHeader}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        renderSectionHeader={renderSectionHeader}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
         stickySectionHeadersEnabled={false}
+        removeClippedSubviews
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={9}
+        updateCellsBatchingPeriod={50}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={LIST_VIEWABILITY_CONFIG}
       />
     </View>
   );

@@ -14,12 +14,14 @@ import {
 } from "date-fns";
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  FlatList,
   Pressable,
   Text,
   useWindowDimensions,
   View,
+  type ViewToken,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import { enqueueMomentsMediaPrefetch } from "@/lib/viewportMediaPrefetch";
 
 interface GridViewMemoriesProps {
   entries: Entry[];
@@ -148,6 +150,33 @@ export function GridViewMemories({
   );
   const CELL_H = CELL_W + 30;
 
+  const estimateMonthBlockHeight = useCallback(
+    (dayCount: number) => {
+      const headerHeight = 52;
+      const rows = Math.ceil(Math.max(dayCount, 1) / COLUMNS);
+      const gridHeight = rows * CELL_H + Math.max(0, rows - 1) * INNER_GAP;
+      return headerHeight + gridHeight + 12;
+    },
+    [CELL_H, INNER_GAP]
+  );
+
+  const defaultMonthEstimate = useMemo(
+    () => estimateMonthBlockHeight(30),
+    [estimateMonthBlockHeight]
+  );
+
+  const overrideMonthLayout = useCallback(
+    (
+      layout: { span?: number; size?: number },
+      item: MonthBlock | CoreMonthBlock
+    ) => {
+      const dayCount =
+        "visibleDays" in item ? item.visibleDays : item.days.length;
+      layout.size = estimateMonthBlockHeight(dayCount);
+    },
+    [estimateMonthBlockHeight]
+  );
+
   const today = useMemo(() => new Date(), []);
   const todayYmd = format(today, "yyyy-MM-dd");
 
@@ -182,6 +211,43 @@ export function GridViewMemories({
       setMonthsBack((m) => m + 1);
     }
   }, [coreOnly]);
+
+  const prefetchVisibleMonths = useCallback(
+    (viewableItems: ViewToken[]) => {
+      const batch: Entry[] = [];
+      for (const token of viewableItems) {
+        if (!token.isViewable || token.item == null) continue;
+        if (coreOnly) {
+          const block = token.item as CoreMonthBlock;
+          for (const day of block.days) {
+            const list = entriesByYmd.get(day.ymd);
+            if (list?.[0]) batch.push(list[0]);
+          }
+        } else {
+          const block = token.item as MonthBlock;
+          for (let d = 1; d <= block.visibleDays; d++) {
+            const date = new Date(
+              block.start.getFullYear(),
+              block.start.getMonth(),
+              d
+            );
+            const ymd = format(date, "yyyy-MM-dd");
+            const list = entriesByYmd.get(ymd);
+            if (list?.[0]) batch.push(list[0]);
+          }
+        }
+      }
+      enqueueMomentsMediaPrefetch(batch, 8000);
+    },
+    [coreOnly, entriesByYmd]
+  );
+
+  const onViewableMonthsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      prefetchVisibleMonths(viewableItems);
+    },
+    [prefetchVisibleMonths]
+  );
 
   const Cell = useMemo(
     () =>
@@ -235,6 +301,8 @@ export function GridViewMemories({
                   media={firstMedia}
                   style={{ width: "100%", height: "100%" }}
                   transition={220}
+                  recyclingKey={firstMedia.id}
+                  showLoadingShimmer={false}
                 />
               ) : (
                 <View
@@ -539,13 +607,19 @@ export function GridViewMemories({
 
   if (coreOnly) {
     return (
-      <FlatList
+      <View style={{ flex: 1 }}>
+      <FlashList
         data={coreMonths}
         inverted
         keyExtractor={(item) => item.label}
         renderItem={({ item }) => renderCoreMonth(item)}
+        estimatedItemSize={defaultMonthEstimate}
+        drawDistance={280}
+        overrideItemLayout={overrideMonthLayout}
         contentContainerStyle={{ paddingTop: 60, paddingBottom: 8 }}
         showsVerticalScrollIndicator={false}
+        onViewableItemsChanged={onViewableMonthsChanged}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 20 }}
         ListHeaderComponent={magicFillInline}
         ListEmptyComponent={
           <View style={{ paddingHorizontal: OUTER_PAD, paddingTop: 40 }}>
@@ -562,24 +636,29 @@ export function GridViewMemories({
           </View>
         }
       />
+      </View>
     );
   }
 
   return (
-    <FlatList
+    <View style={{ flex: 1 }}>
+    <FlashList
       data={months}
       inverted
       keyExtractor={(item) => item.label}
       renderItem={({ item }) => renderMonth(item)}
+      estimatedItemSize={defaultMonthEstimate}
+      drawDistance={280}
+      overrideItemLayout={overrideMonthLayout}
       onEndReached={handleEndReached}
       onEndReachedThreshold={0.5}
+      onViewableItemsChanged={onViewableMonthsChanged}
+      viewabilityConfig={{ itemVisiblePercentThreshold: 20 }}
       contentContainerStyle={{ paddingTop: 60, paddingBottom: 8 }}
       showsVerticalScrollIndicator={false}
-      initialNumToRender={1}
-      maxToRenderPerBatch={1}
-      windowSize={3}
       ListHeaderComponent={magicFillInline}
     />
+    </View>
   );
 }
 

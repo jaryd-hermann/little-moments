@@ -24,6 +24,7 @@ import {
   inferMorningEveningSlotFromTime,
   type ReminderSlot,
 } from "@/lib/notificationTimeSync";
+import { syncStreaksEnabledToProfile } from "@/lib/streakSettingsSync";
 import { PINK_CTA_INK } from "@/lib/themedShadow";
 import { openStoreSubscriptionManagement } from "@/lib/revenuecat";
 import { uploadAvatar } from "@/lib/storage";
@@ -32,10 +33,10 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useChapterDevStore } from "@/store/chapterStore";
 import { useThreadDevStore } from "@/store/threadDevStore";
 import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
+import { useMagicFillDevStore } from "@/store/magicFillDevStore";
 import { useUnseenStore } from "@/store/unseenStore";
 import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
-import { useFirstMomentOnboardingSheetStore } from "@/store/firstMomentOnboardingSheetStore";
-import { useCaptureFirstMomentCoachmarkStore } from "@/store/captureFirstMomentCoachmarkStore";
+import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
 import { useEntryStore } from "@/store/entryStore";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -84,11 +85,9 @@ const SETTINGS_RHYTHM_TOGGLE_BORDER = "rgba(0,0,0,0.14)";
 
 function SettingsDailyPromptTimeSection({
   notificationEnabled,
-  reflectionTargetDefault,
   captureRhythm,
 }: {
   notificationEnabled: boolean;
-  reflectionTargetDefault?: "yesterday" | "today" | null;
   captureRhythm?: "morning" | "evening" | null;
 }) {
   const { colors } = useTheme();
@@ -102,25 +101,12 @@ function SettingsDailyPromptTimeSection({
       { captureRhythm }
     );
 
-  const [reflectionTarget, setReflectionTarget] = useState<
-    "yesterday" | "today"
-  >(() =>
-    reflectionTargetDefault === "today" ? "today" : "yesterday"
-  );
-
-  useEffect(() => {
-    setReflectionTarget(
-      reflectionTargetDefault === "today" ? "today" : "yesterday"
-    );
-  }, [reflectionTargetDefault]);
-
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestRef = useRef({ times, selectedSlot, reflectionTarget });
-  latestRef.current = { times, selectedSlot, reflectionTarget };
+  const latestRef = useRef({ times, selectedSlot });
+  latestRef.current = { times, selectedSlot };
 
   const flushPersist = useCallback(async () => {
-    const { times: tm, selectedSlot: sl, reflectionTarget: rt } =
-      latestRef.current;
+    const { times: tm, selectedSlot: sl } = latestRef.current;
     const t = tm[sl];
     const rhythmForProfile =
       sl === "morning" || sl === "evening"
@@ -131,7 +117,9 @@ function SettingsDailyPromptTimeSection({
       notificationsEnabled: notificationEnabled,
       reminderHour: t.hour,
       reminderMinute: t.minute,
-      reflectionTargetDefault: rt,
+      // Moments always default to "today" now (recent-moments carousel lets
+      // users scroll back to earlier days).
+      reflectionTargetDefault: "today",
       captureRhythm: rhythmForProfile,
     });
     await fetchProfile();
@@ -259,68 +247,6 @@ function SettingsDailyPromptTimeSection({
       <Text
         style={{
           fontFamily: "Roboto-Light",
-          fontSize: 11,
-          color: colors.textMuted,
-          letterSpacing: 1,
-          textTransform: "uppercase",
-          marginTop: 20,
-          marginBottom: 8,
-        }}
-      >
-        Reflect on
-      </Text>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        {(
-          [
-            { id: "yesterday" as const, label: "Yesterday" },
-            { id: "today" as const, label: "Today" },
-          ] as const
-        ).map((opt) => {
-          const selected = reflectionTarget === opt.id;
-          return (
-            <Pressable
-              key={opt.id}
-              onPress={() => {
-                void Haptics.selectionAsync();
-                setReflectionTarget(opt.id);
-                schedulePersist();
-                posthog.capture("settings_reflection_target_selected", {
-                  reflection_target: opt.id,
-                });
-              }}
-              style={{
-                flex: 1,
-                paddingVertical: 10,
-                borderRadius: 999,
-                backgroundColor: selected
-                  ? SETTINGS_RHYTHM_TOGGLE_BG
-                  : "transparent",
-                borderWidth: 1.5,
-                borderColor: selected
-                  ? SETTINGS_RHYTHM_TOGGLE_BORDER
-                  : colors.border,
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 13,
-                  color: selected
-                    ? SETTINGS_RHYTHM_TOGGLE_FG
-                    : colors.textSecondary,
-                }}
-              >
-                {opt.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Text
-        style={{
-          fontFamily: "Roboto-Light",
           fontSize: 13,
           color: colors.textMuted,
           lineHeight: 20,
@@ -424,6 +350,8 @@ export default function SettingsScreen() {
   const notificationTime = useSettingsStore(
     (s) => s.notificationTime
   );
+  const streaksEnabled = useSettingsStore((s) => s.streaksEnabled);
+  const setStreaksEnabled = useSettingsStore((s) => s.setStreaksEnabled);
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
   const { philosophyStories, bySlug } = useMarketingStories();
@@ -478,6 +406,14 @@ export default function SettingsScreen() {
           ? profile.capture_rhythm
           : undefined,
     });
+  };
+
+  const handleToggleStreaks = async (val: boolean) => {
+    setStreaksEnabled(val);
+    posthog.capture("streaks_toggled", { enabled: val });
+    if (user) {
+      await syncStreaksEnabledToProfile(val);
+    }
   };
 
   const handleThemeChoice = (next: "light" | "dark" | "system") => {
@@ -919,13 +855,18 @@ export default function SettingsScreen() {
               <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                 <SettingsDailyPromptTimeSection
                   notificationEnabled={notificationEnabled}
-                  reflectionTargetDefault={profile?.reflection_target_default}
                   captureRhythm={profile?.capture_rhythm ?? null}
                 />
               </View>
             </>
           ) : null}
         </View>
+
+        <StreaksSettingRow
+          colors={colors}
+          enabled={streaksEnabled}
+          onToggle={handleToggleStreaks}
+        />
 
         <LivePhotoSettingRow colors={colors} />
 
@@ -991,9 +932,18 @@ export default function SettingsScreen() {
               <SettingDivider colors={colors} />
               <DummyFirstPinTester colors={colors} />
               <SettingDivider colors={colors} />
-              <DummyFirstMomentOnboardingTester colors={colors} />
+              <DevFirstMomentChatTester colors={colors} />
               <SettingDivider colors={colors} />
-              <DevCaptureCoachmarkTourTester colors={colors} />
+              <DevOnboardingChatCaptureTester colors={colors} />
+              <SettingDivider colors={colors} />
+              <SettingDivider colors={colors} />
+              <MagicFillOnboardingBannerDevToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <MagicFillOnboardingVariantDevPicker colors={colors} />
+              <SettingDivider colors={colors} />
+              <MagicFillIgnoreCompletedDevToggle colors={colors} />
+              <SettingDivider colors={colors} />
+              <MagicFillResetCompletedDevButton colors={colors} />
             </View>
           </>
         )}
@@ -1173,6 +1123,73 @@ function SettingDivider({ colors }: { colors: ThemePalette }) {
         marginHorizontal: 16,
       }}
     />
+  );
+}
+
+/**
+ * Toggle for streak count in the app and streak-related push reminders.
+ */
+function StreaksSettingRow({
+  colors,
+  enabled,
+  onToggle,
+}: {
+  colors: ThemePalette;
+  enabled: boolean;
+  onToggle: (val: boolean) => void;
+}) {
+  return (
+    <View
+      style={{
+        marginTop: 16,
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+        }}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text
+            style={{
+              fontFamily: "Roboto-Regular",
+              fontSize: 15,
+              color: colors.text,
+            }}
+          >
+            Streaks
+          </Text>
+          <Text
+            style={{
+              fontFamily: "Roboto-Light",
+              fontSize: 12,
+              color: colors.textMuted,
+              marginTop: 2,
+            }}
+          >
+            Show streak count and get streak reminders. Your moments are always
+            saved either way.
+          </Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={onToggle}
+          trackColor={{
+            true: colors.primary,
+            false: colors.surfaceSecondary,
+          }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+    </View>
   );
 }
 
@@ -1508,7 +1525,7 @@ function DummyFirstPinTester({ colors }: { colors: ThemePalette }) {
   );
 }
 
-function DummyFirstMomentOnboardingTester({ colors }: { colors: ThemePalette }) {
+function DevFirstMomentChatTester({ colors }: { colors: ThemePalette }) {
   return (
     <Pressable
       onPress={() => {
@@ -1523,50 +1540,17 @@ function DummyFirstMomentOnboardingTester({ colors }: { colors: ThemePalette }) 
           );
           return;
         }
-        useFirstMomentOnboardingSheetStore.getState().show(e.id);
-      }}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: "Roboto-Regular",
-          fontSize: 15,
-          color: colors.text,
-        }}
-      >
-        First capture onboarding sheet
-      </Text>
-      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
-    </Pressable>
-  );
-}
-
-function DevCaptureCoachmarkTourTester({ colors }: { colors: ThemePalette }) {
-  return (
-    <Pressable
-      onPress={() => {
-        const momentCount = useEntryStore
-          .getState()
-          .entries.filter((e) => e.entry_type === "moment").length;
-        if (momentCount === 0) {
-          Alert.alert(
-            "No moments yet",
-            "Save at least one moment first so the pin and Dig deeper steps have targets to highlight.",
-          );
-          return;
-        }
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        useCaptureFirstMomentCoachmarkStore.getState().restartForDev();
         router.dismiss();
+        // Only once Settings is actually gone. The chat is a `Modal` presented
+        // by the tabs layout, and iOS silently drops a presentation from a
+        // view controller that's still covered by another modal — which is
+        // exactly what Settings is.
         setTimeout(() => {
-          router.replace("/(tabs)/today");
-        }, 80);
+          // The chat is once-per-account, so clear the completion flag first.
+          useFirstMomentChatStore.getState().resetForNewAccount();
+          useFirstMomentChatStore.getState().start(e.id);
+        }, 450);
       }}
       style={{
         flexDirection: "row",
@@ -1584,7 +1568,7 @@ function DevCaptureCoachmarkTourTester({ colors }: { colors: ThemePalette }) {
             color: colors.text,
           }}
         >
-          Capture onboarding tooltips
+          First moment onboarding chat
         </Text>
         <Text
           style={{
@@ -1594,10 +1578,270 @@ function DevCaptureCoachmarkTourTester({ colors }: { colors: ThemePalette }) {
             marginTop: 2,
           }}
         >
-          Reset and rerun the 6-step Capture tour.
+          Replay the post-first-capture chat with Jaryd.
         </Text>
       </View>
       <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+/**
+ * Opens the chat at the pre-capture picker, as a brand-new user sees it. Needs
+ * no moments — the point is QAing the favorites picking flow itself.
+ */
+function DevOnboardingChatCaptureTester({ colors }: { colors: ThemePalette }) {
+  return (
+    <Pressable
+      onPress={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.dismiss();
+        // See the note in `DevFirstMomentChatTester`: the chat can't present
+        // until Settings has finished dismissing.
+        setTimeout(() => {
+          // The chat is once-per-account, so clear the completion flag first.
+          useFirstMomentChatStore.getState().resetForNewAccount();
+          useFirstMomentChatStore.getState().startBeforeCapture();
+        }, 450);
+      }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: colors.text,
+          }}
+        >
+          Launch onboarding chat
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 12,
+            color: colors.textMuted,
+            marginTop: 2,
+          }}
+        >
+          Start at the favorites picker, as a first-time user.
+        </Text>
+      </View>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+function MagicFillOnboardingBannerDevToggle({
+  colors,
+}: {
+  colors: ThemePalette;
+}) {
+  const enabled = useMagicFillDevStore((s) => s.forceOnboardingBanner);
+  const toggle = useMagicFillDevStore((s) => s.toggleForceOnboardingBanner);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: colors.text,
+          }}
+        >
+          MF onboarding banner
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 12,
+            color: colors.textMuted,
+            marginTop: 2,
+          }}
+        >
+          Force the post-capture Magic Fill banner on Capture (view a day with a
+          moment).
+        </Text>
+      </View>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
+function MagicFillOnboardingVariantDevPicker({
+  colors,
+}: {
+  colors: ThemePalette;
+}) {
+  const variant = useMagicFillDevStore((s) => s.forceOnboardingVariant);
+  const setVariant = useMagicFillDevStore((s) => s.setForceOnboardingVariant);
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 14 }}>
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+          marginBottom: 10,
+        }}
+      >
+        MF banner variant
+      </Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {(
+          [
+            ["first_moment", "1st moment"],
+            ["second_moment", "2nd moment"],
+          ] as const
+        ).map(([id, label]) => {
+          const selected = variant === id;
+          return (
+            <Pressable
+              key={id}
+              onPress={() => setVariant(id)}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: 10,
+                borderWidth: 1.5,
+                borderColor: selected ? colors.primary : colors.border,
+                backgroundColor: selected
+                  ? `${colors.primary}33`
+                  : colors.surfaceSecondary,
+                alignItems: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 13,
+                  color: colors.text,
+                }}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function MagicFillIgnoreCompletedDevToggle({
+  colors,
+}: {
+  colors: ThemePalette;
+}) {
+  const enabled = useMagicFillDevStore((s) => s.ignoreMagicFillCompleted);
+  const toggle = useMagicFillDevStore((s) => s.toggleIgnoreMagicFillCompleted);
+
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: colors.text,
+          }}
+        >
+          Ignore MF completed
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 12,
+            color: colors.textMuted,
+            marginTop: 2,
+          }}
+        >
+          Treat Magic Fill as not done so the real banner rules can show again.
+        </Text>
+      </View>
+      <Switch
+        value={enabled}
+        onValueChange={toggle}
+        trackColor={{ true: colors.primary, false: colors.surfaceSecondary }}
+        thumbColor="#FFFFFF"
+      />
+    </View>
+  );
+}
+
+function MagicFillResetCompletedDevButton({
+  colors,
+}: {
+  colors: ThemePalette;
+}) {
+  return (
+    <Pressable
+      onPress={() => {
+        useSettingsStore.getState().setHasCompletedMagicFill(false);
+        Alert.alert(
+          "Reset",
+          "Local Magic Fill completed flag cleared. Open Capture on a day with 1–2 moments to preview the real banner."
+        );
+      }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <View style={{ flex: 1, paddingRight: 12 }}>
+        <Text
+          style={{
+            fontFamily: "Roboto-Regular",
+            fontSize: 15,
+            color: colors.text,
+          }}
+        >
+          Reset MF completed flag
+        </Text>
+        <Text
+          style={{
+            fontFamily: "Roboto-Light",
+            fontSize: 12,
+            color: colors.textMuted,
+            marginTop: 2,
+          }}
+        >
+          Clears hasCompletedMagicFill in local settings.
+        </Text>
+      </View>
+      <Ionicons name="refresh-outline" size={18} color={colors.textMuted} />
     </Pressable>
   );
 }

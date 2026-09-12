@@ -1,4 +1,4 @@
-import { MicRecorder } from "@/components/composer/MicRecorder";
+import { MicRecorder, type VoiceClip } from "@/components/composer/MicRecorder";
 import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 import { CountdownProgressBar } from "@/components/ellie/CountdownProgressBar";
 import { useTheme } from "@/hooks/useTheme";
@@ -87,6 +87,9 @@ interface EllieChatFlowProps {
   promptType: PromptType;
   promptValue: string;
   photoUri?: string;
+  /** Resolved library asset for photo/video preview (videos need DayAssetPreview). */
+  photoPreviewAsset?: MediaAsset | null;
+  photoVideoClipStartSec?: number;
   photoDate?: number;
   /**
    * Recency bucket of the currently displayed photo. If omitted but
@@ -105,6 +108,8 @@ interface EllieChatFlowProps {
       rawText: string;
       attachedPhotoUri?: string;
       attachedPhotoTakenAtMs?: number;
+      /** Original recording, when the moment was captured by voice. */
+      voiceClip?: VoiceClip;
       analytics?: MomentCaptureAnalytics;
     }
   ) => void | Promise<void | Entry | null>;
@@ -195,6 +200,8 @@ export function EllieChatFlow({
   promptType,
   promptValue,
   photoUri,
+  photoPreviewAsset,
+  photoVideoClipStartSec = 0,
   photoDate,
   photoBucket,
   shufflesBeforeSave = 0,
@@ -263,6 +270,8 @@ export function EllieChatFlow({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtMsRef = useRef<number | null>(null);
   const inputMethodRef = useRef<InputMethod | null>(null);
+  /** Last voice recording of this session, handed to the parent on save. */
+  const voiceClipRef = useRef<VoiceClip | null>(null);
   const firstShareMetricsRef = useRef<{
     elapsedSeconds: number;
     chars: number;
@@ -602,6 +611,7 @@ export function EllieChatFlow({
             rawText: text,
             attachedPhotoUri: photoUri,
             attachedPhotoTakenAtMs: photoDate,
+            voiceClip: voiceClipRef.current ?? undefined,
             analytics,
           })
         );
@@ -922,6 +932,7 @@ export function EllieChatFlow({
             rawText: allRawText,
             attachedPhotoUri,
             attachedPhotoTakenAtMs: effectivePhotoDate,
+            voiceClip: voiceClipRef.current ?? undefined,
             analytics,
           })
         );
@@ -1087,6 +1098,8 @@ export function EllieChatFlow({
                 promptType={promptType}
                 promptValue={promptValue}
                 photoUri={photoUri}
+                photoPreviewAsset={photoPreviewAsset}
+                photoVideoClipStartSec={photoVideoClipStartSec}
                 photoDate={photoDate}
                 isShuffling={isShufflingPhoto}
                 onShuffle={onPhotoShuffle}
@@ -1119,6 +1132,9 @@ export function EllieChatFlow({
           <MicRecorder
             onTranscription={(text) => {
               handleMicTranscription(text);
+            }}
+            onRecordingComplete={(clip) => {
+              voiceClipRef.current = clip;
             }}
             onCancel={() => setPhase("recording")}
             durationSeconds={DURATION_SECONDS}
@@ -1171,6 +1187,8 @@ export function EllieChatFlow({
                   promptType={promptType}
                   promptValue={promptValue}
                   photoUri={photoUri}
+                  photoPreviewAsset={photoPreviewAsset}
+                  photoVideoClipStartSec={photoVideoClipStartSec}
                   photoDate={photoDate}
                   isShuffling={isShufflingPhoto}
                   onShuffle={onPhotoShuffle}

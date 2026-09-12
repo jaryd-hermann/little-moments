@@ -28,6 +28,7 @@ import { useEntryStore } from "@/store/entryStore";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryMediaVideo } from "@/components/common/EntryMediaVideo";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
+import { VoiceNotePill } from "@/components/entry/VoiceNotePill";
 import { EntryPinToggle } from "@/components/common/EntryPinToggle";
 import { LocationTag } from "@/components/common/LocationTag";
 import { momentTitleStyle } from "@/lib/momentTypography";
@@ -438,7 +439,7 @@ export default function EntryDetailScreen() {
               <Text
                 key={i}
                 style={{
-                  fontFamily: "LibreBaskerville-Regular",
+                  fontFamily: "Roboto-Regular",
                   fontSize: 16,
                   lineHeight: 28,
                   color: colors.text,
@@ -473,7 +474,7 @@ export default function EntryDetailScreen() {
               <Text
                 key={i}
                 style={{
-                  fontFamily: "LibreBaskerville-Regular",
+                  fontFamily: "Roboto-Regular",
                   fontSize: 16,
                   lineHeight: 28,
                   color: colors.textMuted,
@@ -490,7 +491,7 @@ export default function EntryDetailScreen() {
               <Text
                 key={i}
                 style={{
-                  fontFamily: "LibreBaskerville-Regular",
+                  fontFamily: "Roboto-Regular",
                   fontSize: 16,
                   lineHeight: 28,
                   color: colors.text,
@@ -502,6 +503,15 @@ export default function EntryDetailScreen() {
             ))}
           </View>
         )}
+
+        {entry.voice_note_storage_url ? (
+          <View style={{ marginTop: 20 }}>
+            <VoiceNotePill
+              url={entry.voice_note_storage_url}
+              durationSeconds={entry.voice_note_duration_seconds}
+            />
+          </View>
+        ) : null}
 
         {entry.entry_type !== "chapter" ? (
           <Pressable
@@ -517,12 +527,12 @@ export default function EntryDetailScreen() {
               gap: 8,
             }}
           >
-            <Ionicons name="share-outline" size={18} color={colors.text} />
+            <Ionicons name="share-outline" size={18} color="#1A1A1A" />
             <Text
               style={{
                 fontFamily: "Roboto-Medium",
                 fontSize: 14,
-                color: colors.text,
+                color: "#1A1A1A",
               }}
             >
               Share with someone
@@ -564,7 +574,7 @@ export default function EntryDetailScreen() {
             >
               <Text
                 style={{
-                  fontFamily: "LibreBaskerville-Bold",
+                  fontFamily: "Roboto-Bold",
                   fontSize: 16,
                   color: "#FFFFFF",
                   flex: 1,

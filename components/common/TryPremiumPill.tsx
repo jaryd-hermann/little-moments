@@ -35,6 +35,8 @@ type TryPremiumPillProps = {
    * Default: true. The pill only shows to `free | expired | cancelled` users.
    */
   hideWhenSubscribed?: boolean;
+  /** Smaller chip (e.g. beside the wordmark). */
+  compact?: boolean;
 };
 
 /**
@@ -50,6 +52,7 @@ export function TryPremiumPill({
   source,
   style,
   hideWhenSubscribed = true,
+  compact = false,
 }: TryPremiumPillProps) {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -128,8 +131,8 @@ export function TryPremiumPill({
         onLayout={handleLayout}
         hitSlop={8}
         style={{
-          height: 36,
-          paddingHorizontal: 14,
+          height: compact ? 28 : 36,
+          paddingHorizontal: compact ? 11 : 14,
           borderRadius: 9999,
           backgroundColor: PILL_FILL,
           borderWidth: 2,
@@ -142,7 +145,7 @@ export function TryPremiumPill({
         <Text
           style={{
             fontFamily: "Roboto-Medium",
-            fontSize: 12,
+            fontSize: compact ? 11 : 12,
             color: "#1A1A1A",
             letterSpacing: 0.6,
             textTransform: "uppercase",

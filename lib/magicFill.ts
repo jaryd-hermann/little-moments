@@ -1,19 +1,39 @@
 import { format, subDays } from "date-fns";
 import {
+  queryAllCameraPhotosForMonth,
   queryCameraPhotosForLocalDay,
-  rankPhotosForMagicFill,
-  getLivePhotoVideoUri,
-  getAssetGeoLocation,
+  type MediaAsset,
 } from "@/hooks/useMediaLibrary";
+import { attachEntryMedia } from "@/lib/attachEntryMedia";
 import { callMomentAssemble } from "@/lib/momentAssist";
 import { categorizePhotoBucket, photoAgeDays } from "@/lib/photoBucket";
-import { reverseGeocode } from "@/lib/reverseGeocode";
-import { uploadEntryMedia } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
-import type { MagicFillGapTarget, MagicFillDraft } from "@/store/magicFillStore";
+import type {
+  MagicFillGapTarget,
+  MagicFillDraft,
+  PickedVideoClip,
+} from "@/store/magicFillStore";
+import { selectedPhotoForDraft } from "@/store/magicFillStore";
 import { MAGIC_FILL_MAX_SCAN_DAYS } from "@/lib/magicFillGapCache";
 
 export { isGapCountCacheValid } from "@/lib/magicFillGapCache";
+
+/** Fast ranking without per-asset getAssetInfoAsync — used during gap scans. */
+export function rankPhotosForMagicFillLightweight(
+  photos: MediaAsset[]
+): MediaAsset[] {
+  if (photos.length <= 1) return photos;
+  return [...photos].sort((a, b) => {
+    const scoreA = a.width * a.height;
+    const scoreB = b.width * b.height;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    return b.creationTime - a.creationTime;
+  });
+}
+
+function ymdFromCreationTime(creationTime: number): string {
+  return format(new Date(creationTime), "yyyy-MM-dd");
+}
 
 export function buildMomentDateSet(
   entries: { entry_type?: string | null; entry_date?: string | null }[]
@@ -75,14 +95,53 @@ export async function scanMagicFillGaps(opts: {
     if (opts.existingMomentDates.has(ymd)) continue;
 
     const photos = await queryCameraPhotosForLocalDay(date, {
-      lightweight: false,
+      lightweight: true,
     });
     if (photos.length === 0) continue;
 
-    const ranked = await rankPhotosForMagicFill(photos);
+    const ranked = rankPhotosForMagicFillLightweight(photos);
     drafts.push({
       ymd,
       date,
+      photos: ranked,
+      selectedIndex: 0,
+      skipped: false,
+      rawCaption: "",
+    });
+  }
+
+  drafts.sort((a, b) => b.date.getTime() - a.date.getTime());
+  return drafts;
+}
+
+/** Find every gap day within a calendar month (photos but no moment). */
+export async function scanMagicFillGapsForMonth(opts: {
+  monthKey: string;
+  existingMomentDates: Set<string>;
+}): Promise<MagicFillDraft[]> {
+  const allPhotos = await queryAllCameraPhotosForMonth(opts.monthKey, {
+    lightweight: true,
+  });
+
+  const byDay = new Map<string, MediaAsset[]>();
+  for (const photo of allPhotos) {
+    const ymd = ymdFromCreationTime(photo.creationTime);
+    if (opts.existingMomentDates.has(ymd)) continue;
+    const bucket = byDay.get(ymd);
+    if (bucket) {
+      bucket.push(photo);
+    } else {
+      byDay.set(ymd, [photo]);
+    }
+  }
+
+  const drafts: MagicFillDraft[] = [];
+  for (const [ymd, photos] of byDay) {
+    if (photos.length === 0) continue;
+    const ranked = rankPhotosForMagicFillLightweight(photos);
+    drafts.push({
+      ymd,
+      date: new Date(`${ymd}T12:00:00`),
       photos: ranked,
       selectedIndex: 0,
       skipped: false,
@@ -152,21 +211,48 @@ export type MagicFillSaveResult = {
   entryIds: string[];
 };
 
+/**
+ * A Magic Fill batch can be a dozen photos. Firing every upload at once
+ * saturates the connection and pushes individual uploads past their 45s
+ * budget, so the slowest few time out and their moments lose their photo.
+ */
+const MAX_CONCURRENT_MEDIA_UPLOADS = 2;
+
+function createUploadPool(limit: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async function run<T>(task: () => Promise<T>): Promise<T> {
+    if (active >= limit) {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+    active += 1;
+    try {
+      return await task();
+    } finally {
+      active -= 1;
+      waiting.shift()?.();
+    }
+  };
+}
+
 export async function saveMagicFillBatch(opts: {
   drafts: MagicFillDraft[];
   userId: string;
+  pickedVideoClips?: Record<string, PickedVideoClip>;
   onProgress?: (saved: number, total: number) => void;
 }): Promise<MagicFillSaveResult> {
+  const clips = opts.pickedVideoClips ?? {};
   const toSave = opts.drafts.filter(
     (d) => !d.skipped && d.rawCaption.trim() && d.title && d.body
   );
   const entryIds: string[] = [];
   const failedYmds: string[] = [];
   let savedCount = 0;
+  const runUpload = createUploadPool(MAX_CONCURRENT_MEDIA_UPLOADS);
 
   for (let i = 0; i < toSave.length; i++) {
     const draft = toSave[i];
-    const photo = draft.photos[draft.selectedIndex];
+    const photo = selectedPhotoForDraft(draft, clips);
     if (!photo) {
       failedYmds.push(draft.ymd);
       continue;
@@ -210,76 +296,24 @@ export async function saveMagicFillBatch(opts: {
       savedCount++;
       opts.onProgress?.(savedCount, toSave.length);
 
-      void (async () => {
-        try {
-          const takenAtIso = photo.creationTime
+      void runUpload(() =>
+        attachEntryMedia({
+          userId: opts.userId,
+          entryId: data.id,
+          uri: photo.uri,
+          mediaType: photo.mediaType === "video" ? "video" : "image",
+          assetId: photo.id,
+          takenAtIso: photo.creationTime
             ? new Date(photo.creationTime).toISOString()
-            : null;
-
-          const { publicUrl, storagePath } = await uploadEntryMedia(
-            opts.userId,
-            data.id,
-            photo.uri,
-            photo.mediaType === "video" ? "video" : "image"
-          );
-
-          let pairedVideoStoragePath: string | null = null;
-          let pairedVideoStorageUrl: string | null = null;
-          let locationName: string | null = null;
-          let locationLatitude: number | null = null;
-          let locationLongitude: number | null = null;
-
-          if (photo.mediaType !== "video") {
-            try {
-              const paired = await getLivePhotoVideoUri(photo.id);
-              if (paired?.uri) {
-                const upload = await uploadEntryMedia(
-                  opts.userId,
-                  data.id,
-                  paired.uri,
-                  "video"
-                );
-                pairedVideoStoragePath = upload.storagePath;
-                pairedVideoStorageUrl = upload.publicUrl;
-              }
-            } catch {
-              /* optional */
-            }
-          }
-
-          try {
-            const geo = await getAssetGeoLocation(photo.id);
-            if (geo) {
-              locationLatitude = geo.latitude;
-              locationLongitude = geo.longitude;
-              locationName = await reverseGeocode(geo.latitude, geo.longitude);
-            }
-          } catch {
-            /* optional */
-          }
-
-          await supabase.from("entry_media").insert({
-            entry_id: data.id,
-            user_id: opts.userId,
-            storage_path: storagePath,
-            storage_url: publicUrl,
-            media_type: photo.mediaType === "video" ? "video" : "image",
-            display_order: 0,
-            taken_at: takenAtIso,
-            paired_video_storage_path: pairedVideoStoragePath,
-            paired_video_storage_url: pairedVideoStorageUrl,
-            location_name: locationName,
-            location_latitude: locationLatitude,
-            location_longitude: locationLongitude,
-          });
-        } catch (err) {
-          console.warn("[MagicFill] media upload failed:", err);
-        }
-
+            : null,
+        })
+      ).then(() => {
+        // process-threads reads entry_media.taken_at to date the moment by
+        // the photo rather than the save, so let the attach land first.
         void supabase.functions.invoke("process-threads", {
           body: { entry_id: data.id },
         });
-      })();
+      });
     } catch {
       failedYmds.push(draft.ymd);
     }

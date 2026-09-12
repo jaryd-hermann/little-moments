@@ -1,18 +1,13 @@
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
-import { useTheme } from "@/hooks/useTheme";
 import {
   getEntryMediaDisplayUri,
-  resolveEntryMediaUriAsync,
-  resolvePairedVideoUriAsync,
 } from "@/lib/entryMediaUrl";
 import type { MashupClip } from "@/lib/mashupBuckets";
 import {
-  enqueuePrefetch,
   getCachedUriSync,
 } from "@/lib/mediaPrefetch";
-import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import Animated, {
   Easing,
@@ -21,7 +16,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { useSettingsStore } from "@/store/settingsStore";
+import { useTwoSecondVideoLoop } from "@/hooks/useTwoSecondVideoLoop";
 
 export const CLIP_DURATION_MS = 2000;
 const CROSSFADE_MS = 420;
@@ -38,6 +33,10 @@ export interface MashupClipPlayerProps {
   crossfade?: boolean;
   /** When set, the parent owns clip index (tap-to-skip, etc.). */
   activeClipIndex?: number;
+  /** Fired when the active clip's motion is playing (or still-only fallback). */
+  onClipPlayheadStart?: (clipIndex: number) => void;
+  /** Mount the next clip off-screen so AVFoundation decodes before the cut. */
+  preloadNextClip?: boolean;
 }
 
 export function MashupClipPlayer({
@@ -51,27 +50,66 @@ export function MashupClipPlayer({
   forceStill = false,
   crossfade = true,
   activeClipIndex,
+  onClipPlayheadStart,
+  preloadNextClip = false,
 }: MashupClipPlayerProps) {
   const [internalIdx, setInternalIdx] = useState(0);
   const [topIdx, setTopIdx] = useState(0);
   const [underIdx, setUnderIdx] = useState(0);
+  const [playheadReady, setPlayheadReady] = useState(false);
   const completedRef = useRef(false);
   const prevIdxRef = useRef(0);
+  const playheadStartedRef = useRef(false);
   const incomingOpacity = useSharedValue(1);
   const outgoingOpacity = useSharedValue(1);
 
   const effectiveIdx =
     activeClipIndex !== undefined ? activeClipIndex : internalIdx;
+  const effectiveIdxRef = useRef(effectiveIdx);
+  effectiveIdxRef.current = effectiveIdx;
+
+  const markPlayheadStart = useCallback(() => {
+    if (playheadStartedRef.current) return;
+    playheadStartedRef.current = true;
+    setPlayheadReady(true);
+    onClipPlayheadStart?.(effectiveIdxRef.current);
+  }, [onClipPlayheadStart]);
 
   useEffect(() => {
     setInternalIdx(0);
     setTopIdx(0);
     setUnderIdx(0);
+    setPlayheadReady(false);
     prevIdxRef.current = 0;
+    playheadStartedRef.current = false;
     incomingOpacity.value = 1;
     outgoingOpacity.value = 1;
     completedRef.current = false;
   }, [clips, incomingOpacity, outgoingOpacity]);
+
+  useEffect(() => {
+    playheadStartedRef.current = false;
+    setPlayheadReady(false);
+    if (!isActive || clips.length === 0) return;
+
+    const clip = clips[Math.min(effectiveIdx, clips.length - 1)];
+    const hasCachedMotion =
+      !forceStill &&
+      (getCachedUriSync(clip.media, "paired")?.startsWith("file:") ||
+        getCachedUriSync(clip.media, "video")?.startsWith("file:"));
+
+    let fastPath: ReturnType<typeof setTimeout> | undefined;
+    if (hasCachedMotion) {
+      fastPath = setTimeout(() => markPlayheadStart(), 120);
+    }
+
+    const fallback = setTimeout(() => markPlayheadStart(), hasCachedMotion ? 900 : 4500);
+    return () => {
+      if (fastPath) clearTimeout(fastPath);
+      clearTimeout(fallback);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveIdx, isActive, clips.length, forceStill]);
 
   const runCrossfade = (from: number, to: number) => {
     if (from === to) return;
@@ -108,7 +146,7 @@ export function MashupClipPlayer({
   }, [effectiveIdx, crossfade, forceStill]);
 
   useEffect(() => {
-    if (!isActive || clips.length === 0) return;
+    if (!isActive || clips.length === 0 || !playheadReady) return;
     if (activeClipIndex !== undefined) return;
 
     if (!loop && internalIdx >= clips.length - 1) {
@@ -121,6 +159,8 @@ export function MashupClipPlayer({
     }
 
     const t = setTimeout(() => {
+      playheadStartedRef.current = false;
+      setPlayheadReady(false);
       const next = internalIdx + 1;
       if (next >= clips.length) {
         if (loop) {
@@ -141,6 +181,7 @@ export function MashupClipPlayer({
     onClipChange,
     onComplete,
     activeClipIndex,
+    playheadReady,
   ]);
 
   const incomingStyle = useAnimatedStyle(() => ({
@@ -158,9 +199,28 @@ export function MashupClipPlayer({
   const underClip = clips[Math.min(underIdx, clips.length - 1)];
   const topClip = clips[Math.min(topIdx, clips.length - 1)];
   const showUnder = crossfade && !forceStill && underIdx !== topIdx;
+  const shouldPreloadNext =
+    preloadNextClip &&
+    playMotion &&
+    isActive &&
+    effectiveIdx < clips.length - 1;
+  const preloadClip = shouldPreloadNext
+    ? clips[Math.min(effectiveIdx + 1, clips.length - 1)]
+    : null;
 
   return (
     <View style={[style, styles.root]}>
+      {preloadClip ? (
+        <View style={styles.preloadHost} pointerEvents="none">
+          <ClipSurface
+            key={`preload-${preloadClip.media.id}`}
+            clip={preloadClip}
+            contentFit={contentFit}
+            playMotion={playMotion}
+            warmOnly
+          />
+        </View>
+      ) : null}
       {showUnder ? (
         <Animated.View
           style={[StyleSheet.absoluteFill, outgoingStyle]}
@@ -180,6 +240,7 @@ export function MashupClipPlayer({
           clip={topClip}
           contentFit={contentFit}
           playMotion={playMotion}
+          onMotionStart={markPlayheadStart}
         />
       </Animated.View>
     </View>
@@ -190,46 +251,38 @@ function ClipSurface({
   clip,
   contentFit,
   playMotion,
+  onMotionStart,
+  warmOnly = false,
 }: {
   clip: MashupClip;
   contentFit: "cover" | "contain";
   playMotion: boolean;
+  onMotionStart?: () => void;
+  warmOnly?: boolean;
 }) {
-  const { colors } = useTheme();
-  const livePhotoEnabled = useSettingsStore((s) => s.livePhotoPlaybackEnabled);
-  const isVideo = clip.media.media_type === "video";
-  const hasPaired = Boolean(
-    clip.media.paired_video_storage_path || clip.media.paired_video_storage_url
-  );
+  useEffect(() => {
+    if (warmOnly) return;
+    if (!playMotion) onMotionStart?.();
+  }, [warmOnly, playMotion, clip.media.id, onMotionStart]);
 
-  if (isVideo && playMotion) {
-    const cachedVideo = getCachedUriSync(clip.media, "video");
-    if (cachedVideo?.startsWith("file:")) {
-      return (
-        <FullVideoClip
-          clip={clip}
-          contentFit={contentFit}
-          fallbackBg={colors.surfaceSecondary}
-        />
-      );
-    }
-    return <KenBurnsStill clip={clip} contentFit={contentFit} />;
-  }
-
-  const usePaired =
-    playMotion && hasPaired && livePhotoEnabled && Platform.OS === "ios";
-  if (usePaired) {
+  if (!playMotion) {
     return (
-      <LivePhotoClip
-        clip={clip}
+      <EntryMediaImage
+        media={clip.media}
+        style={StyleSheet.absoluteFill}
         contentFit={contentFit}
-        fallbackBg={colors.surfaceSecondary}
       />
     );
   }
 
-  if (playMotion) {
-    return <KenBurnsStill clip={clip} contentFit={contentFit} />;
+  if (clip.media.media_type === "video") {
+    return (
+      <MashupVideoClip
+        clip={clip}
+        contentFit={contentFit}
+        onMotionStart={warmOnly ? undefined : onMotionStart}
+      />
+    );
   }
 
   return (
@@ -237,109 +290,73 @@ function ClipSurface({
       media={clip.media}
       style={StyleSheet.absoluteFill}
       contentFit={contentFit}
+      enableLivePhoto
+      tryCameraRollLive={Platform.OS === "ios"}
+      livePhotoMotionOnly
+      showLoadingShimmer={false}
+      onLiveMotionStart={warmOnly ? undefined : onMotionStart}
     />
   );
 }
 
-function KenBurnsStill({
+/** Full-video moments: 2s loop from a disk-cached file (prefetch guarantees this). */
+function MashupVideoClip({
   clip,
   contentFit,
+  onMotionStart,
 }: {
   clip: MashupClip;
   contentFit: "cover" | "contain";
+  onMotionStart?: () => void;
 }) {
-  const scale = useSharedValue(1);
-  const cachedUri =
-    getCachedUriSync(clip.media, "still") ||
-    getCachedUriSync(clip.media, "video") ||
-    getEntryMediaDisplayUri(clip.media) ||
-    null;
-
-  useEffect(() => {
-    scale.value = 1;
-    scale.value = withTiming(1.1, {
-      duration: CLIP_DURATION_MS,
-      easing: Easing.linear,
-    });
-  }, [clip.media.id, scale]);
-
-  const motionStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  return (
-    <View style={[StyleSheet.absoluteFill, styles.kenBurnsClip]}>
-      <Animated.View style={[StyleSheet.absoluteFill, motionStyle]}>
-        {cachedUri ? (
-          <Image
-            source={{ uri: cachedUri }}
-            style={StyleSheet.absoluteFill}
-            contentFit={contentFit}
-            cachePolicy="memory-disk"
-          />
-        ) : (
-          <EntryMediaImage
-            media={clip.media}
-            style={StyleSheet.absoluteFill}
-            contentFit={contentFit}
-          />
-        )}
-      </Animated.View>
-    </View>
+  const [uri, setUri] = useState(
+    () =>
+      getCachedUriSync(clip.media, "video") ||
+      getEntryMediaDisplayUri(clip.media) ||
+      null
   );
-}
-
-function FullVideoClip({
-  clip,
-  contentFit,
-  fallbackBg,
-}: {
-  clip: MashupClip;
-  contentFit: "cover" | "contain";
-  fallbackBg: string;
-}) {
-  const [uri, setUri] = useState<string | null>(() => {
-    const cached = getCachedUriSync(clip.media, "video");
-    if (cached) return cached;
-    return getEntryMediaDisplayUri(clip.media) || null;
-  });
-  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    setFailed(false);
     const cached = getCachedUriSync(clip.media, "video");
+    if (cached) {
+      setUri(cached);
+      return;
+    }
     const sync = getEntryMediaDisplayUri(clip.media);
-    setUri(cached || sync || null);
-    if (cached) return;
+    if (sync) setUri(sync);
 
-    enqueuePrefetch(clip.media, 2000);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const resolved = await resolveEntryMediaUriAsync(clip.media);
-        if (cancelled) return;
-        const nowCached = getCachedUriSync(clip.media, "video");
-        if (nowCached) setUri(nowCached);
-        else if (resolved) setUri(resolved);
-        else setFailed(true);
-      } catch {
-        if (!cancelled) setFailed(true);
+    const deadline = Date.now() + 8000;
+    const poll = setInterval(() => {
+      const next = getCachedUriSync(clip.media, "video");
+      if (next) {
+        setUri(next);
+        clearInterval(poll);
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (Date.now() >= deadline) clearInterval(poll);
+    }, 80);
+    return () => clearInterval(poll);
   }, [clip.media.id]);
 
-  const player = useVideoPlayer(failed ? null : uri, (p) => {
-    p.loop = true;
+  const fileUri = uri?.startsWith("file:") ? uri : null;
+
+  const player = useVideoPlayer(fileUri, (p) => {
+    p.loop = false;
     p.muted = true;
     p.audioMixingMode = "mixWithOthers";
     p.play();
   });
 
-  if (failed || !uri) {
-    return <KenBurnsStill clip={clip} contentFit={contentFit} />;
+  useTwoSecondVideoLoop(player, Boolean(fileUri));
+
+  useEffect(() => {
+    if (!fileUri || !onMotionStart) return;
+    const t = setTimeout(() => onMotionStart(), 80);
+    return () => clearTimeout(t);
+  }, [fileUri, clip.media.id, onMotionStart]);
+
+  if (!fileUri) {
+    return <View style={[StyleSheet.absoluteFill, styles.waiting]} />;
   }
 
   return (
@@ -349,105 +366,8 @@ function FullVideoClip({
       contentFit={contentFit}
       nativeControls={false}
       allowsPictureInPicture={false}
+      onFirstFrameRender={() => onMotionStart?.()}
     />
-  );
-}
-
-function LivePhotoClip({
-  clip,
-  contentFit,
-  fallbackBg,
-}: {
-  clip: MashupClip;
-  contentFit: "cover" | "contain";
-  fallbackBg: string;
-}) {
-  const [stillUri, setStillUri] = useState<string | null>(() => {
-    return (
-      getCachedUriSync(clip.media, "still") ||
-      getEntryMediaDisplayUri(clip.media) ||
-      null
-    );
-  });
-  const [pairedUri, setPairedUri] = useState<string | null>(() => {
-    return getCachedUriSync(clip.media, "paired");
-  });
-
-  useEffect(() => {
-    const cachedStill = getCachedUriSync(clip.media, "still");
-    const cachedPaired = getCachedUriSync(clip.media, "paired");
-    setStillUri(cachedStill || getEntryMediaDisplayUri(clip.media) || null);
-    setPairedUri(cachedPaired);
-
-    enqueuePrefetch(clip.media, 2500);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [resolvedStill, resolvedPaired] = await Promise.all([
-          resolveEntryMediaUriAsync(clip.media),
-          resolvePairedVideoUriAsync(clip.media),
-        ]);
-        if (cancelled) return;
-        const nowStill = getCachedUriSync(clip.media, "still");
-        const nowPaired = getCachedUriSync(clip.media, "paired");
-        if (nowStill) setStillUri(nowStill);
-        else if (resolvedStill) setStillUri(resolvedStill);
-        if (nowPaired) setPairedUri(nowPaired);
-        else if (resolvedPaired) setPairedUri(resolvedPaired);
-      } catch {
-        /* Ken Burns fallback below */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [clip.media.id]);
-
-  const playablePaired =
-    pairedUri &&
-    (pairedUri.startsWith("file:") ||
-      pairedUri.startsWith("http://") ||
-      pairedUri.startsWith("https://"));
-
-  const player = useVideoPlayer(playablePaired ? pairedUri : null, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.audioMixingMode = "mixWithOthers";
-    p.play();
-  });
-
-  if (!stillUri && !pairedUri) {
-    return <KenBurnsStill clip={clip} contentFit={contentFit} />;
-  }
-
-  if (!playablePaired) {
-    return stillUri ? (
-      <KenBurnsStill clip={clip} contentFit={contentFit} />
-    ) : (
-      <View
-        style={[StyleSheet.absoluteFill, { backgroundColor: fallbackBg }]}
-      />
-    );
-  }
-
-  return (
-    <View style={[StyleSheet.absoluteFill, { backgroundColor: fallbackBg }]}>
-      {stillUri ? (
-        <Image
-          source={{ uri: stillUri }}
-          style={StyleSheet.absoluteFill}
-          contentFit={contentFit}
-          cachePolicy="memory-disk"
-        />
-      ) : null}
-      <VideoView
-        player={player}
-        style={StyleSheet.absoluteFill}
-        contentFit={contentFit}
-        nativeControls={false}
-        allowsPictureInPicture={false}
-      />
-    </View>
   );
 }
 
@@ -459,7 +379,12 @@ const styles = StyleSheet.create({
   empty: {
     backgroundColor: "rgba(0,0,0,0.6)",
   },
-  kenBurnsClip: {
-    overflow: "hidden",
+  waiting: {
+    backgroundColor: "#111111",
+  },
+  preloadHost: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0,
+    zIndex: -1,
   },
 });

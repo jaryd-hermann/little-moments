@@ -64,6 +64,7 @@ export function AppHeader({
     useState(false);
   const storyProgress = useSettingsStore((s) => s.storyProgress);
   const setStoryProgress = useSettingsStore((s) => s.setStoryProgress);
+  const streaksEnabled = useSettingsStore((s) => s.streaksEnabled);
   const { philosophyStories, bySlug } = useMarketingStories();
   const streakStoryListItems = useMemo(() => {
     const row = philosophyStories.find((s) => s.slug === STREAK_PHILOSOPHY_SLUG);
@@ -106,19 +107,23 @@ export function AppHeader({
           className="flex-row items-center justify-between px-5 py-2"
           style={{ zIndex: 1 }}
         >
-          <StreakBadge
-            count={streakCount}
-            totalMoments={totalMoments}
-            isAtRisk={isAtRisk}
-            onPress={() => {
-              posthog.capture("viewed_streaks", {
-                streak_count: streakCount,
-                total_moments: totalMoments,
-                longest_streak: longestStreak,
-              });
-              setShowStreak(true);
-            }}
-          />
+          {streaksEnabled ? (
+            <StreakBadge
+              count={streakCount}
+              totalMoments={totalMoments}
+              isAtRisk={isAtRisk}
+              onPress={() => {
+                posthog.capture("viewed_streaks", {
+                  streak_count: streakCount,
+                  total_moments: totalMoments,
+                  longest_streak: longestStreak,
+                });
+                setShowStreak(true);
+              }}
+            />
+          ) : (
+            <View style={{ width: 32, height: 32 }} />
+          )}
           <Pressable
             onPress={() => router.push("/settings")}
             style={{

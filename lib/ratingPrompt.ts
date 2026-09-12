@@ -66,7 +66,8 @@ export type ReviewTrigger =
   | "first_chapter_viewed"
   | "first_thread_viewed"
   | "moment_count_10"
-  | "post_share";
+  | "post_share"
+  | "magic_fill_completed";
 
 async function loadState(): Promise<ReviewState> {
   try {

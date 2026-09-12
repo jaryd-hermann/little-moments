@@ -1,5 +1,11 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -34,9 +40,10 @@ import { CoreMemoryIcon } from "@/components/common/CoreMemoryIcon";
 import { useThreads } from "@/hooks/useThreads";
 import { useThreadDevStore, makeDummyThread } from "@/store/threadDevStore";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
+import { yearCaptureProgress } from "@/lib/yearCapture";
 import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 import { DashedEmptyState } from "@/components/common/DashedEmptyState";
-import { MagicFillPill } from "@/components/magic-fill/MagicFillPill";
+import { AppRatingPromptModal } from "@/components/common/AppRatingPromptModal";
 import {
   hasFullPhotoLibraryAccess,
   useMediaLibrary,
@@ -56,7 +63,7 @@ export default function MemoriesScreen() {
   const { entries, fetchEntries } = useEntries();
   const { totalMoments } = useStreak();
   const setTabBarHidden = useTabBarStore((s) => s.setTabBarHidden);
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [capsuleFilter, setCapsuleFilter] = useState<CapsuleFilter>("all");
@@ -65,10 +72,11 @@ export default function MemoriesScreen() {
   const setPinnedOnly = useCapsuleFlipbookStore((s) => s.setPinnedOnly);
   const togglePinnedOnly = useCapsuleFlipbookStore((s) => s.togglePinnedOnly);
   const {
-    totalConnections,
     threads,
-    fetchAll: fetchThreadData,
+    fetchAllThreadsLightweight,
     isThreadLocked,
+    stats,
+    updateThreadAnswerLocal,
   } = useThreads();
   const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
 
@@ -77,6 +85,33 @@ export default function MemoriesScreen() {
       entries.filter((e) => e.entry_type === "moment" && e.is_pinned).length,
     [entries]
   );
+
+  /**
+   * Entering core-memory mode plays a short rise-and-fade over the whole
+   * content area, so filtering down to core moments reads as a deliberate
+   * shift rather than the list silently getting shorter. Leaving the mode
+   * snaps back — the reveal is the part worth dramatising.
+   */
+  const coreReveal = useSharedValue(1);
+  useEffect(() => {
+    if (!pinnedOnly) {
+      coreReveal.value = 1;
+      return;
+    }
+    coreReveal.value = 0;
+    coreReveal.value = withTiming(1, {
+      duration: 460,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [pinnedOnly, coreReveal]);
+
+  const coreRevealStyle = useAnimatedStyle(() => ({
+    opacity: coreReveal.value,
+    transform: [
+      { scale: 0.97 + coreReveal.value * 0.03 },
+      { translateY: (1 - coreReveal.value) * 14 },
+    ],
+  }));
 
   const threadsForCapsule = useMemo(() => {
     if (__DEV__ && dummyThreadEnabled) {
@@ -141,12 +176,24 @@ export default function MemoriesScreen() {
   }, [allChapters]);
   const [chapterViewerChapter, setChapterViewerChapter] = useState<ChapterRecord | null>(null);
   const [shareChapter, setShareChapter] = useState<ChapterRecord | null>(null);
+  const [ratingModalVisible, setRatingModalVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       const view = useTabViewIntentStore.getState().consumeMemoriesView();
       if (view) setViewMode(view);
     }, [])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const showRating =
+        useTabViewIntentStore.getState().consumeMagicFillRatingPrompt();
+      if (showRating) {
+        setRatingModalVisible(true);
+        posthog.capture("magic_fill_rating_prompt_shown");
+      }
+    }, [posthog])
   );
 
   useFocusEffect(
@@ -161,11 +208,15 @@ export default function MemoriesScreen() {
     useCallback(() => {
       posthog.capture("viewed_capsule", { entry_count: entries.length });
       searchTrackedRef.current = false;
-      fetchEntries();
-      fetchChapters();
-      fetchThreadData();
-    }, [fetchEntries, fetchChapters, fetchThreadData])
+      fetchEntries(undefined, { background: true });
+    }, [fetchEntries, posthog, entries.length])
   );
+
+  useEffect(() => {
+    if (viewMode !== "list") return;
+    fetchChapters();
+    void fetchAllThreadsLightweight();
+  }, [viewMode, fetchChapters, fetchAllThreadsLightweight]);
 
   useFocusEffect(
     useCallback(() => {
@@ -221,6 +272,12 @@ export default function MemoriesScreen() {
     );
   }, [entriesWithDummyChapter, searchQuery, pinnedOnly]);
 
+  /**
+   * From the unfiltered list on purpose: this is a standing fact about their
+   * year, so searching or filtering to core memories shouldn't move it.
+   */
+  const yearProgress = useMemo(() => yearCaptureProgress(entries), [entries]);
+
   const handleOpenStory = (slug: string) => {
     setStoryViewerSlug(slug);
   };
@@ -238,6 +295,8 @@ export default function MemoriesScreen() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
         <DashedEmptyState
+          image={require("@/assets/images/capsule.png")}
+          imageAspectRatio={896 / 805}
           title="Your Capsule starts here"
           subtitle="Capture your first moment to see your Flipbook and saved archive of moments"
           singleLineTitle
@@ -277,7 +336,7 @@ export default function MemoriesScreen() {
               padding: 3,
             }}
           >
-            {(["grid", "list", "feed"] as const).map((mode) => (
+            {(["list", "grid", "feed"] as const).map((mode) => (
               <Pressable
                 key={mode}
                 onPress={() => {
@@ -316,13 +375,16 @@ export default function MemoriesScreen() {
               </Pressable>
             ))}
           </View>
-          {(viewMode === "grid" || viewMode === "feed") && hasPhotoAccess ? (
-            <MagicFillPill />
-          ) : null}
           {(coreMomentCount > 0 || pinnedOnly) && (
             <Pressable
               onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                if (pinnedOnly) {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                } else {
+                  void Haptics.notificationAsync(
+                    Haptics.NotificationFeedbackType.Success
+                  );
+                }
                 togglePinnedOnly();
               }}
               hitSlop={8}
@@ -362,6 +424,7 @@ export default function MemoriesScreen() {
         </View>
       </View>
 
+      <Animated.View style={[{ flex: 1 }, coreRevealStyle]}>
       {viewMode === "feed" ? (
         <View style={{ flex: 1, paddingBottom: 100 }}>
           <CapsuleFlipbookView entries={filteredEntries} />
@@ -396,10 +459,14 @@ export default function MemoriesScreen() {
             capsuleFilter={capsuleFilter}
             showSearch={searchVisible}
             showMagicFillButton={hasPhotoAccess}
+            yearProgress={yearProgress}
+            connectionsTabSeenAt={stats?.connections_tab_seen_at ?? null}
+            onThreadAnswerSaved={updateThreadAnswerLocal}
             isChapterLockedById={(chapterId) => {
               const ch = chapterByIdMap.get(chapterId);
               return ch ? isChapterLocked(ch) : false;
             }}
+            chapterById={(chapterId) => chapterByIdMap.get(chapterId)}
             onOpenChapter={(chapterId) => {
               const ch = chapterByIdMap.get(chapterId);
               if (!ch) return;
@@ -413,9 +480,17 @@ export default function MemoriesScreen() {
               }
               setChapterViewerChapter(ch);
             }}
+            threads={threadsForCapsule}
+            isThreadLocked={(thread) =>
+              isThreadLocked(
+                thread,
+                threadsForCapsule.findIndex((t) => t.id === thread.id)
+              )
+            }
           />
         </View>
       )}
+      </Animated.View>
 
       <ChapterStoryViewer
         visible={!!chapterViewerChapter}
@@ -435,6 +510,11 @@ export default function MemoriesScreen() {
         visible={!!shareChapter}
         chapter={shareChapter}
         onDismiss={() => setShareChapter(null)}
+      />
+
+      <AppRatingPromptModal
+        visible={ratingModalVisible}
+        onDismiss={() => setRatingModalVisible(false)}
       />
     </SafeAreaView>
   );

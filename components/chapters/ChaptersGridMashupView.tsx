@@ -1,12 +1,22 @@
 import { MashupCard } from "@/components/chapters/MashupCard";
+import { MovieProgressPlaceholder } from "@/components/chapters/MovieProgressPlaceholder";
 import { DashedEmptyState } from "@/components/common/DashedEmptyState";
 import { useTheme } from "@/hooks/useTheme";
+import type { AliasLookup } from "@/lib/canonicalPeople";
 import {
   bucketMomentsByMonth,
+  bucketMomentsByPerson,
+  bucketMomentsByTheme,
   bucketMomentsByWeek,
   bucketMomentsByYear,
+  closestPendingIdentityBucket,
+  monthBucketKeyForDate,
+  movieProgress,
+  movieProgressForCount,
+  weekBucketKeyForDate,
+  yearBucketKeyForDate,
   type MashupBucket,
-  type MashupBucketType,
+  type MovieProgress,
 } from "@/lib/mashupBuckets";
 import { enqueueClipsForPrefetch } from "@/lib/mediaPrefetch";
 import type { Entry } from "@/store/entryStore";
@@ -23,6 +33,12 @@ import {
 
 export interface ChaptersGridMashupViewProps {
   entries: Entry[];
+  /**
+   * Alias → canonical-name lookup for the People section. Empty until the
+   * user's `canonicalize-people` run lands, which just means the section
+   * shows its progress placeholder a little longer.
+   */
+  peopleLookup: AliasLookup;
   onOpenMashup: (bucket: MashupBucket) => void;
   /** Tap the share icon on a card. Optional — when omitted, the icon hides. */
   onShareMashup?: (bucket: MashupBucket) => void;
@@ -36,45 +52,80 @@ const OUTER_PAD = 20;
 const CARD_GAP = 12;
 
 /**
- * Grid view for the Chapters tab — three horizontally scrolling carousels
- * (Weeks / Months / Years) of looping mashup preview cards.
+ * Grid view for the Chapters tab — one horizontally scrolling carousel per
+ * movie kind (Weeks / Months / People / Themes / Years) of looping preview
+ * cards.
  *
- * Empty buckets are skipped; sections with zero buckets are not rendered at
- * all. Only the snapped card per section auto-loops, so we never have more
- * than three video players spinning concurrently across the screen.
+ * Every section renders as soon as the user has a single moment: a kind with
+ * no movies yet shows a progress placeholder instead, so the shelf the movies
+ * will land on is visible before they exist. Only the snapped card per section
+ * auto-loops, so we never have more than five video players spinning at once.
  */
 export function ChaptersGridMashupView({
   entries,
+  peopleLookup,
   onOpenMashup,
   onShareMashup,
   emptySubtitle,
   onEmptyCtaPress,
 }: ChaptersGridMashupViewProps) {
-  const { colors } = useTheme();
-
   const weeks = useMemo(() => bucketMomentsByWeek(entries), [entries]);
   const months = useMemo(() => bucketMomentsByMonth(entries), [entries]);
+  const people = useMemo(
+    () => bucketMomentsByPerson(entries, peopleLookup),
+    [entries, peopleLookup]
+  );
+  const themes = useMemo(() => bucketMomentsByTheme(entries), [entries]);
   const years = useMemo(() => bucketMomentsByYear(entries), [entries]);
 
-  // Bump the first visible card of each section to the front of the
-  // prefetch queue. The app-startup warm (in `useEntries.fetchEntries`)
-  // covers everything; this just makes sure the *visible* clips load first
-  // when the user lands on the grid.
+  // Bump the first visible card of each section to the front of the prefetch
+  // queue. `useEntries.fetchEntries` also warms recent moments in the background;
+  // this makes sure the *visible* clips load first when the user lands on Chapters.
   useEffect(() => {
     const visibleClips = [
-      ...(weeks[0]?.clips.slice(0, 4) ?? []),
-      ...(months[0]?.clips.slice(0, 4) ?? []),
-      ...(years[0]?.clips.slice(0, 4) ?? []),
+      ...(weeks[0]?.clips.slice(0, 6) ?? []),
+      ...(months[0]?.clips.slice(0, 6) ?? []),
+      ...(people[0]?.clips.slice(0, 6) ?? []),
+      ...(themes[0]?.clips.slice(0, 6) ?? []),
+      ...(years[0]?.clips.slice(0, 6) ?? []),
     ];
     if (visibleClips.length > 0) {
       enqueueClipsForPrefetch(visibleClips, 5000);
     }
-  }, [weeks, months, years]);
+  }, [weeks, months, people, themes, years]);
 
-  const anyBuckets = weeks.length + months.length + years.length > 0;
-  if (!anyBuckets) {
+  // Period placeholders always point at the period the user can still top up,
+  // so the countdown never strands them on a month that already closed.
+  const periodProgress = useMemo(
+    () => ({
+      week: movieProgress(entries, "week", weekBucketKeyForDate(new Date())),
+      month: movieProgress(entries, "month", monthBucketKeyForDate(new Date())),
+      year: movieProgress(entries, "year", yearBucketKeyForDate(new Date())),
+    }),
+    [entries]
+  );
+
+  const closestPerson = useMemo(
+    () => closestPendingIdentityBucket(entries, "person", peopleLookup),
+    [entries, peopleLookup]
+  );
+  const closestTheme = useMemo(
+    () => closestPendingIdentityBucket(entries, "theme"),
+    [entries]
+  );
+
+  const hasAnyMoment = useMemo(
+    () => entries.some((e) => e.entry_type === "moment"),
+    [entries]
+  );
+
+  // Before the very first moment there's nothing to make progress toward, so
+  // five empty countdowns would read as five dead ends.
+  if (!hasAnyMoment) {
     return (
       <DashedEmptyState
+        image={require("@/assets/images/chapters-1.png")}
+        imageAspectRatio={1014 / 981}
         title="Your video montages live here"
         singleLineTitle
         subtitle={
@@ -97,47 +148,72 @@ export function ChaptersGridMashupView({
       }}
       showsVerticalScrollIndicator={false}
     >
-      {weeks.length > 0 ? (
-        <MashupSection
-          title="Weeks"
-          type="week"
-          buckets={weeks}
-          onOpenMashup={onOpenMashup}
-          onShareMashup={onShareMashup}
-        />
-      ) : null}
-      {months.length > 0 ? (
-        <MashupSection
-          title="Months"
-          type="month"
-          buckets={months}
-          onOpenMashup={onOpenMashup}
-          onShareMashup={onShareMashup}
-        />
-      ) : null}
-      {years.length > 0 ? (
-        <MashupSection
-          title="Years"
-          type="year"
-          buckets={years}
-          onOpenMashup={onOpenMashup}
-          onShareMashup={onShareMashup}
-        />
-      ) : null}
+      <MashupSection
+        title="Weeks"
+        buckets={weeks}
+        placeholderProgress={periodProgress.week}
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
+      <MashupSection
+        title="Months"
+        buckets={months}
+        placeholderProgress={periodProgress.month}
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
+      <MashupSection
+        title="People"
+        buckets={people}
+        placeholderProgress={movieProgressForCount(
+          "person",
+          closestPerson?.momentCount ?? 0
+        )}
+        placeholderSubject={
+          closestPerson
+            ? `with ${closestPerson.label}`
+            : "featuring the same person"
+        }
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
+      <MashupSection
+        title="Themes"
+        buckets={themes}
+        placeholderProgress={movieProgressForCount(
+          "theme",
+          closestTheme?.momentCount ?? 0
+        )}
+        placeholderSubject={
+          closestTheme ? `about ${closestTheme.label}` : "about the same theme"
+        }
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
+      <MashupSection
+        title="Years"
+        buckets={years}
+        placeholderProgress={periodProgress.year}
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
     </ScrollView>
   );
 }
 
 function MashupSection({
   title,
-  type: _type,
   buckets,
+  placeholderProgress,
+  placeholderSubject = null,
   onOpenMashup,
   onShareMashup,
 }: {
   title: string;
-  type: MashupBucketType;
   buckets: MashupBucket[];
+  /** Shown in place of the carousel while this kind has no movies yet. */
+  placeholderProgress: MovieProgress;
+  placeholderSubject?: string | null;
   onOpenMashup: (bucket: MashupBucket) => void;
   onShareMashup?: (bucket: MashupBucket) => void;
 }) {
@@ -163,7 +239,7 @@ function MashupSection({
         // before the user taps in.
         const bucket = buckets[next];
         if (bucket) {
-          enqueueClipsForPrefetch(bucket.clips.slice(0, 4), 4500);
+          enqueueClipsForPrefetch(bucket.clips.slice(0, 8), 4500);
         }
       }
     },
@@ -183,62 +259,76 @@ function MashupSection({
       >
         {title}
       </Text>
-      <FlatList
-        ref={listRef}
-        data={buckets}
-        keyExtractor={(b) => b.key}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={SNAP_INTERVAL}
-        decelerationRate="fast"
-        snapToAlignment="start"
-        contentContainerStyle={{
-          paddingHorizontal: OUTER_PAD,
-          gap: CARD_GAP,
-        }}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        style={{ height: CARD_HEIGHT }}
-        renderItem={({ item, index }) => (
-          <MashupCard
-            bucket={item}
-            width={CARD_WIDTH}
-            height={CARD_HEIGHT}
-            isActive={index === activeIdx}
-            onPress={onOpenMashup}
-            onShare={onShareMashup}
+      {buckets.length === 0 ? (
+        <View style={{ paddingHorizontal: OUTER_PAD }}>
+          <MovieProgressPlaceholder
+            progress={placeholderProgress}
+            subject={placeholderSubject}
+            width={screenWidth - OUTER_PAD * 2}
           />
-        )}
-      />
-      {buckets.length > 1 ? (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: 6,
-            marginTop: 10,
-          }}
-        >
-          {buckets.slice(0, Math.min(buckets.length, 8)).map((_, i) => {
-            const active =
-              i === activeIdx || (i === 7 && activeIdx >= 7);
-            return (
-              <View
-                key={i}
-                style={{
-                  width: active ? 16 : 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: active
-                    ? colors.primary
-                    : colors.surfaceSecondary,
-                }}
-              />
-            );
-          })}
         </View>
-      ) : null}
+      ) : (
+        <>
+          <FlatList
+            ref={listRef}
+            data={buckets}
+            keyExtractor={(b) => b.key}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={SNAP_INTERVAL}
+            decelerationRate="fast"
+            snapToAlignment="start"
+            contentContainerStyle={{
+              paddingHorizontal: OUTER_PAD,
+              gap: CARD_GAP,
+            }}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            initialNumToRender={2}
+            maxToRenderPerBatch={2}
+            windowSize={3}
+            removeClippedSubviews
+            style={{ height: CARD_HEIGHT }}
+            renderItem={({ item }) => (
+              <MashupCard
+                bucket={item}
+                width={CARD_WIDTH}
+                height={CARD_HEIGHT}
+                onPress={onOpenMashup}
+                onShare={onShareMashup}
+              />
+            )}
+          />
+          {buckets.length > 1 ? (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 10,
+              }}
+            >
+              {buckets.slice(0, Math.min(buckets.length, 8)).map((_, i) => {
+                const active = i === activeIdx || (i === 7 && activeIdx >= 7);
+                return (
+                  <View
+                    key={i}
+                    style={{
+                      width: active ? 16 : 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: active
+                        ? colors.primary
+                        : colors.surfaceSecondary,
+                    }}
+                  />
+                );
+              })}
+            </View>
+          ) : null}
+        </>
+      )}
     </View>
   );
 }

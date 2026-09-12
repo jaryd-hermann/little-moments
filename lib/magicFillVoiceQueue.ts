@@ -1,4 +1,5 @@
 import { transcribeAudio } from "@/lib/whisper";
+import { deleteVoiceClipSnapshot } from "@/lib/voiceClip";
 import { useMagicFillStore } from "@/store/magicFillStore";
 
 const pending = new Set<Promise<void>>();
@@ -28,6 +29,8 @@ export function enqueueMagicFillVoiceTranscription(
       appendSegmentToStore(ymd, segment);
     } catch {
       /* skip failed segment */
+    } finally {
+      await deleteVoiceClipSnapshot(uri);
     }
   })();
 

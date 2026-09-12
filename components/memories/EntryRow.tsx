@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { View, Text, Pressable } from "react-native";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -9,6 +10,11 @@ import { useTheme } from "@/hooks/useTheme";
 import { momentTitleStyle } from "@/lib/momentTypography";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { entryMomentDayHeadingText } from "@/lib/reflectionTarget";
+import {
+  ChapterCoverCard,
+  ChapterLockedOverlay,
+} from "@/components/chapters/ChapterCoverCard";
+import type { ChapterRecord } from "@/lib/chapters";
 
 function firstSentence(text: string): string {
   const trimmed = text.trim();
@@ -43,12 +49,19 @@ interface EntryRowProps {
    * just the visual cue. See `ListViewMemories` + `useChapters.isChapterLocked`.
    */
   chapterLocked?: boolean;
+  /**
+   * Full chapter record behind a chapter entry. When present the row renders
+   * the same cover card as the Chapters tab list; without it (chapters still
+   * loading) we fall back to the plain text card below.
+   */
+  chapterRecord?: ChapterRecord;
 }
 
-export function EntryRow({
+export const EntryRow = memo(function EntryRow({
   entry,
   onOpenChapter,
   chapterLocked = false,
+  chapterRecord,
 }: EntryRowProps) {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -67,6 +80,24 @@ export function EntryRow({
       router.push(`/entry/${entry.id}`);
     }
   };
+
+  if (isChapter && chapterRecord) {
+    // Matches the card geometry used by the Chapters tab list view.
+    return (
+      <Pressable
+        onPress={handlePress}
+        style={{
+          height: 220,
+          borderRadius: 18,
+          overflow: "hidden",
+          backgroundColor: colors.surfaceSecondary,
+        }}
+      >
+        <ChapterCoverCard chapter={chapterRecord} />
+        {chapterLocked ? <ChapterLockedOverlay /> : null}
+      </Pressable>
+    );
+  }
 
   if (isChapter) {
     const plainBody = stripHtml(entry.body);
@@ -144,6 +175,8 @@ export function EntryRow({
             marginRight: 14,
             backgroundColor: colors.surfaceSecondary,
           }}
+          recyclingKey={firstMedia.id}
+          showLoadingShimmer={false}
         />
       ) : (
         <View
@@ -251,4 +284,4 @@ export function EntryRow({
       </View>
     </Pressable>
   );
-}
+});

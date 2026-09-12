@@ -1,12 +1,16 @@
+import { CaptureSectionHeading } from "@/components/capture/CaptureSectionHeading";
 import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
-import type { MediaAsset } from "@/hooks/useMediaLibrary";
+import {
+  prefetchNeighborMediaUris,
+  type MediaAsset,
+} from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { photoCardBorder } from "@/lib/momentTypography";
 import type { Entry } from "@/store/entryStore";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   Text,
@@ -14,7 +18,8 @@ import {
   View,
 } from "react-native";
 
-const MAX_PHOTOS = 6;
+const INITIAL_PHOTOS = 9;
+const PHOTOS_STEP = 9;
 const COLUMNS = 3;
 const CARD_PAD = 16;
 const GRID_GAP = 8;
@@ -80,6 +85,11 @@ export function AddMoreToThisDaySection({
   const { colors, theme } = useTheme();
   const { width: screenWidth } = useWindowDimensions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_PHOTOS);
+  const [displayUriByAsset, setDisplayUriByAsset] = useState<
+    Record<string, string>
+  >({});
+  const resolvedDisplayUriIdsRef = useRef<Set<string>>(new Set());
 
   const availablePhotos = useMemo(() => {
     const usedTimes = usedPhotoTimesMs(entriesForDay);
@@ -87,9 +97,12 @@ export function AddMoreToThisDaySection({
   }, [dayPhotos, entriesForDay]);
 
   const displayPhotos = useMemo(
-    () => availablePhotos.slice(0, MAX_PHOTOS),
-    [availablePhotos]
+    () => availablePhotos.slice(0, visibleCount),
+    [availablePhotos, visibleCount]
   );
+
+  const remainingCount = Math.max(0, availablePhotos.length - displayPhotos.length);
+  const revealStep = Math.min(PHOTOS_STEP, remainingCount);
 
   const photoRows = useMemo(() => {
     const rows: MediaAsset[][] = [];
@@ -109,6 +122,31 @@ export function AddMoreToThisDaySection({
     [displayPhotos, selectedId]
   );
 
+  useEffect(() => {
+    setDisplayUriByAsset({});
+    resolvedDisplayUriIdsRef.current = new Set();
+    setSelectedId(null);
+    setVisibleCount(INITIAL_PHOTOS);
+  }, [availablePhotos]);
+
+  useEffect(() => {
+    if (displayPhotos.length === 0) return;
+    const centerIndex = selectedId
+      ? Math.max(0, displayPhotos.findIndex((p) => p.id === selectedId))
+      : 0;
+    prefetchNeighborMediaUris(
+      displayPhotos,
+      centerIndex,
+      resolvedDisplayUriIdsRef.current,
+      (resolved) => {
+        setDisplayUriByAsset((prev) => ({
+          ...prev,
+          [resolved.id]: resolved.uri,
+        }));
+      }
+    );
+  }, [displayPhotos, selectedId]);
+
   if (displayPhotos.length === 0) return null;
 
   return (
@@ -124,17 +162,12 @@ export function AddMoreToThisDaySection({
           bevelShadow(theme),
         ]}
       >
-        <Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 28,
-            lineHeight: 32,
-            color: colors.text,
-            marginBottom: 14,
-          }}
-        >
-          Add more to this day
-        </Text>
+      <CaptureSectionHeading
+        title="Add more to this day"
+        description="After adding your main moment, you can always add another moment from the day you want to remember"
+        gutter={0}
+        style={{ marginBottom: 14 }}
+      />
 
         <View style={{ marginBottom: 4 }}>
           {photoRows.map((row, rowIndex) => (
@@ -148,6 +181,10 @@ export function AddMoreToThisDaySection({
             >
               {row.map((asset) => {
                 const selected = asset.id === selectedId;
+                const resolvedUri = displayUriByAsset[asset.id];
+                const displayAsset =
+                  resolvedUri != null ? { ...asset, uri: resolvedUri } : asset;
+                const shouldAnimate = selected && asset.mediaType !== "video";
                 return (
                   <Pressable
                     key={asset.id}
@@ -166,7 +203,25 @@ export function AddMoreToThisDaySection({
                       borderColor: selected ? colors.primary : colors.text,
                     }}
                   >
-                    <DayAssetPreview asset={asset} animate={selected} />
+                    <DayAssetPreview asset={displayAsset} animate={shouldAnimate} />
+                    {asset.mediaType === "video" ? (
+                      <View
+                        pointerEvents="none"
+                        style={{
+                          position: "absolute",
+                          bottom: 4,
+                          left: 4,
+                          paddingHorizontal: 5,
+                          paddingVertical: 3,
+                          borderRadius: 9999,
+                          backgroundColor: "#FFC100",
+                          borderWidth: 1.5,
+                          borderColor: "#000000",
+                        }}
+                      >
+                        <Ionicons name="videocam" size={10} color="#1A1A1A" />
+                      </View>
+                    ) : null}
                     <PhotoRadioIndicator
                       selected={selected}
                       fillColor={colors.primary}
@@ -178,6 +233,47 @@ export function AddMoreToThisDaySection({
           ))}
         </View>
 
+        {remainingCount > 0 ? (
+          <Pressable
+            onPress={() => {
+              void Haptics.selectionAsync();
+              setVisibleCount((c) => c + PHOTOS_STEP);
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              marginTop: 12,
+              alignSelf: "center",
+              opacity: pressed ? 0.7 : 1,
+            })}
+            hitSlop={8}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                paddingHorizontal: 16,
+                paddingVertical: 9,
+                borderRadius: 9999,
+                borderWidth: 1.5,
+                borderColor: colors.border,
+              }}
+            >
+              <Ionicons name="add" size={16} color={colors.text} />
+              <Text
+                style={{
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 13,
+                  color: colors.text,
+                  letterSpacing: 0.3,
+                }}
+              >
+                See +{revealStep} more
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         <Pressable
           onPress={() => {
             if (!selectedAsset) return;
@@ -188,7 +284,7 @@ export function AddMoreToThisDaySection({
           accessibilityRole="button"
           accessibilityState={{ disabled: !selectedAsset }}
           style={({ pressed }) => ({
-            marginTop: 48,
+            marginTop: remainingCount > 0 ? 20 : 48,
             marginBottom: 12,
             opacity: !selectedAsset ? 0.55 : pressed ? 0.92 : 1,
           })}

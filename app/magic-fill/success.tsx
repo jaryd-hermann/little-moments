@@ -1,14 +1,16 @@
-import { Image, Pressable, Text, View } from "react-native";
+import { useMemo } from "react";
+import { Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { magicFillHeadlineStyle } from "@/lib/magicFillTypography";
-import {
-  MagicFillPrimaryButton,
-} from "@/components/magic-fill/MagicFillPrimaryButton";
-import { useMagicFillStore, selectedPhoto } from "@/store/magicFillStore";
+import { MagicFillPrimaryButton } from "@/components/magic-fill/MagicFillPrimaryButton";
+import { MagicFillMomentCollage } from "@/components/magic-fill/MagicFillMomentCollage";
+import { useMagicFillStore } from "@/store/magicFillStore";
+import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
+import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
 
 export default function MagicFillSuccessScreen() {
   const insets = useSafeAreaInsets();
@@ -17,9 +19,21 @@ export default function MagicFillSuccessScreen() {
   const gapTarget = useMagicFillStore((s) => s.gapTarget);
   const drafts = useMagicFillStore((s) => s.drafts);
   const resetForRestart = useMagicFillStore((s) => s.resetForRestart);
+  const setMagicFillRatingPrompt = useTabViewIntentStore(
+    (s) => s.setMagicFillRatingPrompt
+  );
 
-  const heroPhoto = drafts.find((d) => !d.skipped && selectedPhoto(d));
-  const heroUri = heroPhoto ? selectedPhoto(heroPhoto)?.uri : null;
+  const savedDrafts = useMemo(
+    () =>
+      drafts.filter(
+        (d) => !d.skipped && d.rawCaption.trim() && d.title && d.body
+      ),
+    [drafts]
+  );
+
+  const fromOnboardingChat = useFirstMomentChatStore(
+    (s) => s.awaitingMagicFillReturn
+  );
 
   const handleRestart = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -31,6 +45,18 @@ export default function MagicFillSuccessScreen() {
   const handleBackToCapsule = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     useMagicFillStore.getState().reset();
+
+    // Launched from the first-moment onboarding chat — drop them back into the
+    // conversation rather than into Capsule, and hold the rating prompt until
+    // onboarding is actually over.
+    if (useFirstMomentChatStore.getState().awaitingMagicFillReturn) {
+      useFirstMomentChatStore.getState().returnFromMagicFill();
+      router.dismissAll();
+      router.replace("/(tabs)/today");
+      return;
+    }
+
+    setMagicFillRatingPrompt(true);
     router.dismissAll();
     router.replace("/(tabs)/memories");
   };
@@ -50,19 +76,12 @@ export default function MagicFillSuccessScreen() {
           justifyContent: "center",
         }}
       >
-        {heroUri ? (
-          <Image
-            source={{ uri: heroUri }}
-            style={{
-              width: 88,
-              height: 88,
-              borderRadius: 16,
-              borderWidth: 2,
-              borderColor: "rgba(255,255,255,0.35)",
-              marginBottom: 20,
-            }}
-          />
-        ) : null}
+        <MagicFillMomentCollage
+          drafts={savedDrafts}
+          borderColor="rgba(255,255,255,0.35)"
+          backgroundColor="rgba(255,255,255,0.08)"
+          marginBottom={24}
+        />
 
         <Text
           style={magicFillHeadlineStyle({
@@ -75,8 +94,9 @@ export default function MagicFillSuccessScreen() {
         </Text>
         <Text
           style={magicFillHeadlineStyle({
-            fontSize: 18,
-            color: "rgba(255,255,255,0.85)",
+            fontSize: 28,
+            lineHeight: 32,
+            color: "rgba(255,255,255,0.9)",
             marginBottom: 16,
           })}
         >
@@ -99,21 +119,54 @@ export default function MagicFillSuccessScreen() {
         <MagicFillPrimaryButton
           label={`Fill ${gapTarget} more moments`}
           variant="pink"
+          celebrationShadow
           onPress={handleRestart}
           style={{ alignSelf: "stretch", marginBottom: 16 }}
         />
 
-        <Pressable accessibilityRole="button" onPress={handleBackToCapsule}>
-          <Text
+        {/*
+          Mid-onboarding this is the way back into the chat, so it gets a
+          proper button rather than a bare text link that reads as decoration.
+        */}
+        {fromOnboardingChat ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleBackToCapsule}
             style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 15,
-              color: "#FFFFFF",
+              alignSelf: "stretch",
+              height: 52,
+              borderRadius: 9999,
+              borderWidth: 1.5,
+              borderColor: "rgba(255,255,255,0.85)",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            Back to Capsule
-          </Text>
-        </Pressable>
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 15,
+                color: "#FFFFFF",
+                letterSpacing: 0.6,
+                textTransform: "uppercase",
+              }}
+            >
+              I&apos;m done
+            </Text>
+          </Pressable>
+        ) : (
+          <Pressable accessibilityRole="button" onPress={handleBackToCapsule}>
+            <Text
+              style={{
+                fontFamily: "Roboto-Medium",
+                fontSize: 15,
+                color: "#FFFFFF",
+              }}
+            >
+              Back to Capsule
+            </Text>
+          </Pressable>
+        )}
       </View>
     </LinearGradient>
   );

@@ -11,6 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
 import { transcribeAudio } from "@/lib/whisper";
+import { snapshotVoiceClip } from "@/lib/voiceClip";
 import { useTheme } from "@/hooks/useTheme";
 import { CountdownProgressBar } from "@/components/ellie/CountdownProgressBar";
 import Animated, {
@@ -26,8 +27,20 @@ import Animated, {
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const BAR_COUNT = 24;
 
+/** A finished recording, handed back so callers can keep the original audio. */
+export interface VoiceClip {
+  /** Local file URI of the recording. Temporary — copy or upload it promptly. */
+  uri: string;
+  durationSeconds: number;
+}
+
 interface MicRecorderProps {
   onTranscription: (text: string) => void;
+  /**
+   * Called with the raw recording just before transcription. Optional: flows
+   * that only want the text can ignore it and the file is left to expire.
+   */
+  onRecordingComplete?: (clip: VoiceClip) => void;
   fullscreen?: boolean;
   onCancel?: () => void;
   /** Total recording window in seconds; defaults to 60. The progress bar below the waveform tracks elapsed time. */
@@ -113,6 +126,7 @@ function WaveBar({
 
 export function MicRecorder({
   onTranscription,
+  onRecordingComplete,
   fullscreen,
   onCancel,
   durationSeconds = 60,
@@ -165,8 +179,25 @@ export function MicRecorder({
       allowsRecording: false,
     });
 
-    const uri = recorder.uri;
-    if (!uri) return;
+    if (!recorder.uri) return;
+
+    // Work from a copy: recording again reuses — and truncates — the recorder's
+    // output file, which would pull the bytes out from under the transcription
+    // upload and the voice-note upload below. Both read it asynchronously and
+    // neither knows about the other, so nothing deletes the copy; it sits in the
+    // cache directory the recording came from, which the OS can purge.
+    let uri: string;
+    try {
+      uri = await snapshotVoiceClip(recorder.uri);
+    } catch {
+      Alert.alert("Recording Error", "Could not save the recording. Please try again.");
+      onCancel?.();
+      return;
+    }
+
+    // Hand the clip over before transcribing: a Whisper failure shouldn't cost
+    // the user the recording itself.
+    onRecordingComplete?.({ uri, durationSeconds: duration });
 
     setIsTranscribing(true);
     try {

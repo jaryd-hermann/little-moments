@@ -29,6 +29,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth, healProfileIfStuckAfterCapture } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
+import { applyStreaksEnabledFromProfile } from "@/lib/streakSettingsSync";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 import {
@@ -128,6 +129,7 @@ export default function SignInScreen() {
     if (healed) {
       applyNotificationTimeFromProfile(healed.notification_time);
       applyThemeFromProfile(healed.color_theme, healed);
+      applyStreaksEnabledFromProfile(healed);
     }
 
     if (

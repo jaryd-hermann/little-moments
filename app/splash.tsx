@@ -20,15 +20,15 @@ import {
 } from "@/lib/onboardingQuizFlag";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
+import { applyStreaksEnabledFromProfile } from "@/lib/streakSettingsSync";
 import { usePostHog } from "posthog-react-native";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { setLoginFromPreQuizWelcomeIntent } from "@/lib/onboardingLoginIntent";
 
-const SPLASH_HERO = require("@/assets/images/1.png");
 const SPLASH_WORDMARK = require("@/assets/images/wordmark-little-moments.png");
 
-// 1.png stays as a poster underneath so the first frame never flashes
-// black while the player attaches. See assets/videos/README.md for the
+// The black background acts as the poster underneath so the first frame never
+// flashes while the player attaches. See assets/videos/README.md for the
 // recommended ffmpeg encode (HEVC, no audio, ~150–500 KB).
 const SPLASH_VIDEO = require("@/assets/videos/splash.mp4") as number;
 
@@ -147,6 +147,7 @@ export default function SplashScreen() {
               setProfile(p);
               applyNotificationTimeFromProfile(p.notification_time);
               applyThemeFromProfile(p.color_theme, p);
+              applyStreaksEnabledFromProfile(p);
             }
             routeAfterAuth(p);
           });
@@ -200,14 +201,6 @@ export default function SplashScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: "#000" }}>
       <StatusBar style="light" />
-      {/* Always render 1.png — it's instant and acts as the poster
-          frame underneath the video so we never flash black on launch. */}
-      <Image
-        source={SPLASH_HERO}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        transition={200}
-      />
       <VideoView
         player={player}
         style={StyleSheet.absoluteFill}

@@ -1,26 +1,45 @@
-import { MashupClipPlayer } from "@/components/chapters/MashupClipPlayer";
+import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { useTheme } from "@/hooks/useTheme";
-import type { MashupBucket } from "@/lib/mashupBuckets";
+import type { MashupBucket, MashupClip } from "@/lib/mashupBuckets";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 export interface MashupCardProps {
   bucket: MashupBucket;
   width: number;
   height: number;
-  isActive: boolean;
   onPress: (bucket: MashupBucket) => void;
   onShare?: (bucket: MashupBucket) => void;
+}
+
+/**
+ * Static cover for a mashup — the movie's first piece of media.
+ *
+ * Deliberately a plain image: cycling through clips or mounting a clip player
+ * here meant every card on the Movies list span up a video player / live-photo
+ * session before the user had asked for anything.
+ */
+function MashupCoverStill({ clips }: { clips: MashupClip[] }) {
+  const clip = clips[0];
+  if (!clip) return <View style={StyleSheet.absoluteFill} />;
+
+  return (
+    <EntryMediaImage
+      media={clip.media}
+      style={StyleSheet.absoluteFill}
+      contentFit="cover"
+      recyclingKey={`mashup-cover-${clip.media.id}`}
+    />
+  );
 }
 
 export function MashupCard({
   bucket,
   width,
   height,
-  isActive,
   onPress,
   onShare,
 }: MashupCardProps) {
@@ -48,15 +67,7 @@ export function MashupCard({
         borderColor: colors.text,
       }}
     >
-      <MashupClipPlayer
-        clips={bucket.clips.slice(0, 1)}
-        isActive={isActive}
-        loop
-        crossfade={false}
-        forceStill={!isActive}
-        style={{ width: "100%", height: "100%" }}
-        contentFit="cover"
-      />
+      <MashupCoverStill clips={bucket.clips} />
 
       <LinearGradient
         colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.78)"]}

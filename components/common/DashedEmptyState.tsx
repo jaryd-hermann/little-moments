@@ -1,4 +1,5 @@
 import { View, Text, Pressable } from "react-native";
+import { Image, type ImageSource } from "expo-image";
 import { useTheme } from "@/hooks/useTheme";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 
@@ -9,6 +10,10 @@ type DashedEmptyStateProps = {
   onCtaPress: () => void;
   /** When set, title stays on one line and shrinks slightly if needed (Capsule). */
   singleLineTitle?: boolean;
+  /** Artwork above the title. Falls back to the scattered-squares motif. */
+  image?: ImageSource;
+  /** Intrinsic ratio of `image`, so it fills the card without distortion. */
+  imageAspectRatio?: number;
 };
 
 /**
@@ -20,6 +25,8 @@ export function DashedEmptyState({
   ctaLabel,
   onCtaPress,
   singleLineTitle = false,
+  image,
+  imageAspectRatio = 1,
 }: DashedEmptyStateProps) {
   const { colors, theme } = useTheme();
   return (
@@ -43,36 +50,53 @@ export function DashedEmptyState({
           justifyContent: "center",
         }}
       >
-        <View
-          style={{
-            width: 120,
-            height: 80,
-            marginBottom: 28,
-            position: "relative",
-          }}
-        >
-          {[
-            { left: 6, top: 18 },
-            { left: 36, top: 0 },
-            { left: 70, top: 24 },
-            { left: 30, top: 48 },
-          ].map((p, i) => (
-            <View
-              key={i}
-              style={{
-                position: "absolute",
-                left: p.left,
-                top: p.top,
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                backgroundColor: colors.primary,
-                borderWidth: 1,
-                borderColor: colors.text,
-              }}
-            />
-          ))}
-        </View>
+        {image ? (
+          <Image
+            source={image}
+            // Fills the card's width rather than a fixed size, so it can't
+            // overflow the dashed border on narrower devices. `maxHeight`
+            // keeps tall artwork from crowding out the copy below; `contain`
+            // means that clamp letterboxes rather than stretches.
+            style={{
+              width: "100%",
+              aspectRatio: imageAspectRatio,
+              maxHeight: 300,
+              marginBottom: 28,
+            }}
+            contentFit="contain"
+          />
+        ) : (
+          <View
+            style={{
+              width: 120,
+              height: 80,
+              marginBottom: 28,
+              position: "relative",
+            }}
+          >
+            {[
+              { left: 6, top: 18 },
+              { left: 36, top: 0 },
+              { left: 70, top: 24 },
+              { left: 30, top: 48 },
+            ].map((p, i) => (
+              <View
+                key={i}
+                style={{
+                  position: "absolute",
+                  left: p.left,
+                  top: p.top,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  backgroundColor: colors.primary,
+                  borderWidth: 1,
+                  borderColor: colors.text,
+                }}
+              />
+            ))}
+          </View>
+        )}
         <Text
           style={{
             fontFamily: "PMGothicLudington-Text110",

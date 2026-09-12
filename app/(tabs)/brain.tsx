@@ -6,23 +6,27 @@ import {
   SafeAreaView,
   ActivityIndicator,
 } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
+import { useUnseenStore } from "@/store/unseenStore";
 import { Ionicons } from "@expo/vector-icons";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
-import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useThreads } from "@/hooks/useThreads";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
 import { useGraph } from "@/hooks/useGraph";
 import { useEntries } from "@/hooks/useEntries";
 import { useSettingsStore } from "@/store/settingsStore";
-import { ThreadFlipbookView } from "@/components/threads/ThreadFlipbookView";
+import { ThreadFeedView } from "@/components/threads/ThreadFeedView";
+import { ThreadInfoModal } from "@/components/threads/ThreadInfoModal";
+import { CaptureInfoButton } from "@/components/capture/CaptureInfoButton";
+import { markConnectionsTabSeen } from "@/lib/threadAnswers";
 import {
   GraphWebView,
   EMPTY_FILTER,
   type GraphFilter,
   type GraphWebViewHandle,
 } from "@/components/graph/GraphWebView";
+import { DashedEmptyState } from "@/components/common/DashedEmptyState";
 import { GraphFilterSheet } from "@/components/graph/GraphFilterSheet";
 import type { HullMode } from "@/components/graph/graphWebContent";
 import {
@@ -30,7 +34,7 @@ import {
   THREAD_DEV_PREVIEW_ID,
   useThreadDevStore,
 } from "@/store/threadDevStore";
-import { threadOrdinalByIdMap } from "@/lib/threadOrdinal";
+
 function GraphTab() {
   const { colors } = useTheme();
   const posthog = usePostHog();
@@ -290,234 +294,55 @@ function GraphTab() {
 }
 
 function BrainGraphPlaceholder() {
-  const { colors, theme } = useTheme();
   return (
-    <View
-      style={{
-        flex: 1,
-        paddingHorizontal: 20,
-        paddingTop: 12,
-        paddingBottom: 100,
-      }}
-    >
-      <View
-        style={{
-          flex: 1,
-          borderRadius: 24,
-          borderWidth: 1.5,
-          borderStyle: "dashed",
-          borderColor: colors.border,
-          padding: 28,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 220,
-            height: 130,
-            marginBottom: 28,
-          }}
-        >
-          {/* Five dots forming a small graph (positions tuned for the 220x130 box). */}
-          {[
-            { left: 20, top: 32, size: 28 },
-            { left: 88, top: 0, size: 22 },
-            { left: 130, top: 38, size: 24 },
-            { left: 70, top: 70, size: 18 },
-            { left: 170, top: 78, size: 16 },
-          ].map((d, i) => (
-            <View
-              key={i}
-              style={{
-                position: "absolute",
-                left: d.left,
-                top: d.top,
-                width: d.size,
-                height: d.size,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                borderWidth: 1,
-                borderColor: colors.text,
-              }}
-            />
-          ))}
-        </View>
-        <Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 24,
-            lineHeight: 30,
-            color: colors.text,
-            textAlign: "center",
-            marginBottom: 10,
-          }}
-        >
-          Your moments will start{"\n"}connecting here
-        </Text>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 14,
-            lineHeight: 22,
-            color: colors.textSecondary,
-            textAlign: "center",
-            marginBottom: 24,
-            paddingHorizontal: 8,
-          }}
-        >
-          Capture 5 moments to see your brain graph start to develop.
-        </Text>
-        <Pressable
-          onPress={() => router.push("/(tabs)/today")}
-          style={{
-            height: 56,
-            paddingHorizontal: 28,
-            borderRadius: 9999,
-            backgroundColor: colors.primary,
-            borderWidth: 2,
-            borderColor: PINK_CTA_BORDER,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            ...bevelShadow(theme),
-          }}
-        >
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 15,
-              color: PINK_CTA_INK,
-              letterSpacing: 0.8,
-              textTransform: "uppercase",
-            }}
-          >
-            Capture a moment
-          </Text>
-        </Pressable>
-      </View>
-    </View>
+    <DashedEmptyState
+      image={require("@/assets/images/connect.png")}
+      imageAspectRatio={1327 / 901}
+      title={"Your moments will start\nconnecting here"}
+      subtitle="Capture 5 moments to see your brain graph start to develop."
+      ctaLabel="Capture a moment"
+      onCtaPress={() => router.push("/(tabs)/today")}
+    />
   );
 }
 
 function ConnectThreadsEmptyPlaceholder() {
-  const { colors, theme } = useTheme();
   return (
-    <View
-      style={{
-        flex: 1,
-        paddingHorizontal: 20,
-        paddingTop: 12,
-        paddingBottom: 100,
-      }}
-    >
-      <View
-        style={{
-          flex: 1,
-          borderRadius: 24,
-          borderWidth: 1.5,
-          borderStyle: "dashed",
-          borderColor: colors.border,
-          padding: 28,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <View
-          style={{
-            width: 200,
-            height: 100,
-            marginBottom: 28,
-            position: "relative",
-          }}
-        >
-          {[
-            { left: 14, top: 52, size: 24 },
-            { left: 86, top: 12, size: 28 },
-            { left: 148, top: 48, size: 22 },
-          ].map((d, i) => (
-            <View
-              key={i}
-              style={{
-                position: "absolute",
-                left: d.left,
-                top: d.top,
-                width: d.size,
-                height: d.size,
-                borderRadius: 9999,
-                backgroundColor: colors.primary,
-                borderWidth: 1,
-                borderColor: colors.text,
-              }}
-            />
-          ))}
-        </View>
-        <Text
-          style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 24,
-            lineHeight: 30,
-            color: colors.text,
-            textAlign: "center",
-            marginBottom: 10,
-          }}
-        >
-          Your threads will appear here
-        </Text>
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 14,
-            lineHeight: 22,
-            color: colors.textSecondary,
-            textAlign: "center",
-            marginBottom: 24,
-            paddingHorizontal: 8,
-          }}
-        >
-          Keep capturing moments. When we find unexpected patterns, themes, or
-          insights across your days, you&apos;ll see them here.
-        </Text>
-        <Pressable
-          onPress={() => router.push("/(tabs)/today")}
-          style={{
-            height: 56,
-            paddingHorizontal: 28,
-            borderRadius: 9999,
-            backgroundColor: colors.primary,
-            borderWidth: 2,
-            borderColor: PINK_CTA_BORDER,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            ...bevelShadow(theme),
-          }}
-        >
-          <Text
-            style={{
-              fontFamily: "Roboto-Medium",
-              fontSize: 15,
-              color: PINK_CTA_INK,
-              letterSpacing: 0.8,
-              textTransform: "uppercase",
-            }}
-          >
-            Capture a moment
-          </Text>
-        </Pressable>
-      </View>
-    </View>
+    <DashedEmptyState
+      image={require("@/assets/images/connect.png")}
+      imageAspectRatio={1327 / 901}
+      title="Your threads will appear here"
+      subtitle="Keep capturing moments. When we find unexpected patterns, themes, or insights across your days, you'll see them here."
+      ctaLabel="Capture a moment"
+      onCtaPress={() => router.push("/(tabs)/today")}
+    />
   );
 }
 
 export default function ThreadsScreen() {
   const { colors } = useTheme();
+  const posthog = usePostHog();
   const {
     visibleThreads,
     isLoading,
     isThreadLocked,
+    markConnectionsTabSeenLocal,
+    updateThreadAnswerLocal,
+    updateThreadFeedbackLocal,
+    fetchMoreThreads,
+    loadingMoreThreads,
+    totalConnections,
   } = useThreads();
   const dummyThreadEnabled = useThreadDevStore((s) => s.dummyThreadEnabled);
+  const [infoOpen, setInfoOpen] = useState(false);
+
+  const threadCountLabel = useMemo(() => {
+    const n =
+      __DEV__ && dummyThreadEnabled
+        ? totalConnections + 1
+        : totalConnections;
+    return `${n} thread${n === 1 ? "" : "s"}`;
+  }, [dummyThreadEnabled, totalConnections]);
 
   const listThreads = useMemo(() => {
     if (__DEV__ && dummyThreadEnabled) {
@@ -526,19 +351,51 @@ export default function ThreadsScreen() {
     return visibleThreads;
   }, [dummyThreadEnabled, visibleThreads]);
 
-  const threadOrdinals = useMemo(
-    () => threadOrdinalByIdMap(listThreads),
-    [listThreads]
-  );
-
-  // Stable predicate handed to the flipbook. The dummy preview thread
-  // (DEV-only) is always unlocked so we can demo the layout.
-  const isLockedForFlipbook = useCallback(
+  const isLockedForFeed = useCallback(
     (thread: typeof listThreads[number], index: number) => {
       if (thread.id === THREAD_DEV_PREVIEW_ID) return false;
       return isThreadLocked(thread, index);
     },
     [isThreadLocked]
+  );
+
+  const handleAnswerSaved = useCallback(
+    (threadId: string, answer: string) => {
+      updateThreadAnswerLocal(threadId, answer);
+    },
+    [updateThreadAnswerLocal]
+  );
+
+  const handleFeedbackSubmitted = useCallback(
+    (
+      threadId: string,
+      patch: {
+        hidden_from_feed: boolean;
+        highlighted: boolean;
+        feedback_sentiment: "positive" | "negative";
+      }
+    ) => {
+      updateThreadFeedbackLocal(threadId, patch);
+    },
+    [updateThreadFeedbackLocal]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      // Stop the tab icon spinning: they're looking at the list now, even if
+      // they don't open any individual thread.
+      useUnseenStore.getState().markThreadsTabSeen();
+      void (async () => {
+        const seenAt = await markConnectionsTabSeen({ posthog });
+        if (!cancelled && seenAt) {
+          markConnectionsTabSeenLocal(seenAt);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [posthog, markConnectionsTabSeenLocal])
   );
 
   const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
@@ -550,28 +407,37 @@ export default function ThreadsScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Header — title left, view toggle right */}
       <View
         style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
           paddingHorizontal: 20,
           paddingTop: 8,
-          paddingBottom: 12,
-          gap: 12,
+          paddingBottom: 8,
         }}
       >
-        <Text
+        <View
           style={{
-            fontFamily: "PMGothicLudington-Text110",
-            fontSize: 26,
-            color: colors.text,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 4,
           }}
         >
-          Connections
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Text
+              style={{
+                fontFamily: "PMGothicLudington-Text110",
+                fontSize: 26,
+                color: colors.text,
+              }}
+            >
+              Connections
+            </Text>
+            <CaptureInfoButton
+              accessibilityLabel="How Threads work"
+              onPress={() => setInfoOpen(true)}
+            />
+          </View>
           <View
             style={{
               flexDirection: "row",
@@ -581,33 +447,33 @@ export default function ThreadsScreen() {
               padding: 3,
             }}
           >
-            {(["ellie", "graph"] as const).map((tab) => (
-              <Pressable
-                key={tab}
-                onPress={() => setActiveTab(tab)}
-                style={{
-                  paddingVertical: 6,
-                  paddingHorizontal: 14,
-                  borderRadius: 9999,
-                  backgroundColor:
-                    activeTab === tab ? colors.primary : "transparent",
-                }}
-              >
-                <Text
+              {(["ellie", "graph"] as const).map((tab) => (
+                <Pressable
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
                   style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 12,
-                    color: activeTab === tab ? "#1A1A1A" : colors.textMuted,
-                    letterSpacing: 0.3,
+                    paddingVertical: 6,
+                    paddingHorizontal: 14,
+                    borderRadius: 9999,
+                    backgroundColor:
+                      activeTab === tab ? colors.primary : "transparent",
                   }}
                 >
-                  {tab === "ellie" ? "Threads" : "Graph"}
-                </Text>
-              </Pressable>
-            ))}
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Medium",
+                      fontSize: 12,
+                      color: activeTab === tab ? "#1A1A1A" : colors.textMuted,
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    {tab === "ellie" ? threadCountLabel : "Graph"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
         </View>
-      </View>
 
       {activeTab === "graph" ? (
         <GraphTab />
@@ -616,18 +482,21 @@ export default function ThreadsScreen() {
           <ConnectThreadsEmptyPlaceholder />
         ) : null
       ) : (
-        // CustomTabBar overlays the bottom of the screen, so reserve the
-        // same gutter the capsule flipbook uses (memories.tsx) to keep the
-        // card from being cropped behind the diamond/triangle row.
-        <View style={{ flex: 1, paddingBottom: 100 }}>
-          <ThreadFlipbookView
-            threads={listThreads}
-            ordinals={threadOrdinals}
-            isLocked={isLockedForFlipbook}
-          />
+        <View style={{ flex: 1 }}>
+        <ThreadFeedView
+          threads={listThreads}
+          isLocked={isLockedForFeed}
+          onAnswerSaved={handleAnswerSaved}
+          onFeedbackSubmitted={handleFeedbackSubmitted}
+          onEndReached={() => {
+            void fetchMoreThreads();
+          }}
+          loadingMore={loadingMoreThreads}
+        />
         </View>
       )}
 
+      <ThreadInfoModal visible={infoOpen} onClose={() => setInfoOpen(false)} />
     </SafeAreaView>
   );
 }

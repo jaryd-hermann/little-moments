@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import {
+  buildAliasLookup,
+  resolveCanonical,
+  type CanonicalEntity,
+  type CanonicalMap,
+} from "@/lib/canonicalPeople";
 import { useAuthStore } from "@/store/authStore";
 
 /** A node in the memory graph — one per entry. */
@@ -20,12 +26,7 @@ export interface GraphNode {
   degree: number;
 }
 
-export interface CanonicalEntity {
-  aliases: string[];
-  count: number;
-}
-
-export type CanonicalMap = Record<string, CanonicalEntity>;
+export type { CanonicalEntity, CanonicalMap };
 
 /** An edge — one per non-dismissed thread. */
 export interface GraphEdge {
@@ -60,44 +61,6 @@ export interface UseGraphResult {
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
-}
-
-/**
- * Build alias → canonical lookup (case-insensitive, possessive-stripped).
- * Matches the normalization used in canonicalize-people edge function so
- * node.people references resolve cleanly.
- */
-function normalizeAlias(raw: string): string {
-  return raw
-    .trim()
-    .replace(/^(my|the|our|a|an)\s+/i, "")
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function buildAliasLookup(
-  map: CanonicalMap | null | undefined
-): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!map) return out;
-  for (const [canonical, { aliases }] of Object.entries(map)) {
-    for (const alias of aliases) {
-      out.set(normalizeAlias(alias), canonical);
-    }
-  }
-  return out;
-}
-
-function resolveCanonical(
-  raw: string[],
-  lookup: Map<string, string>
-): string[] {
-  const seen = new Set<string>();
-  for (const v of raw) {
-    const canonical = lookup.get(normalizeAlias(v));
-    if (canonical) seen.add(canonical);
-  }
-  return Array.from(seen);
 }
 
 export function useGraph(): UseGraphResult {

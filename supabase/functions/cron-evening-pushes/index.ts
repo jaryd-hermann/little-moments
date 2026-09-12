@@ -14,6 +14,10 @@
  *    (`last_midday_photo_nudge_local_date`).
  * 4. Bedtime activation rescue (D0 only) — at 22:00 local on the signup day,
  *    if the user still hasn't captured anything. One-shot per user, ever.
+ * 5. Streak at risk — ~19:30 local when streak ≥ 2 and the user captured
+ *    yesterday but not today. One capture-nudge budget per local day shared
+ *    with daily nudge + follow-up (never two). Skipped when thread/chapter
+ *    push already fired today.
  *
  * Delivery: OneSignal REST API via the shared `dispatch()` helper, which
  * targets users by `external_id` (= Supabase user id) and logs each send
@@ -35,8 +39,12 @@ import { createPostHogLogger } from "../_shared/posthog-logs.ts";
 type ProfileRow = {
   id: string;
   notification_enabled: boolean;
+  streak_at_risk_enabled: boolean | null;
+  streak_count: number | null;
+  last_entry_date: string | null;
   last_morning_push_local_date: string | null;
   last_followup_push_local_date: string | null;
+  last_streak_risk_push_local_date: string | null;
   last_midday_photo_nudge_local_date: string | null;
   notification_timezone: string | null;
   /** Local time (HH:MM:SS) for the daily nudge, interpreted in notification_timezone. */
@@ -83,14 +91,12 @@ function dailyNudgeCopy(reflectionTarget: string | null): {
   if (reflectionTarget === "yesterday") {
     return {
       title: "Your moment for yesterday",
-      body:
-        "Pick a photo from that day or answer a quick question — under two minutes.",
+      body: "Pick a photo from that day and capture a moment in under 60 seconds.",
     };
   }
   return {
     title: "Your moment for today",
-    body:
-      "Pick a photo from today or answer a quick question — under two minutes.",
+    body: "Pick a photo from today and capture a moment in under 60 seconds.",
   };
 }
 
@@ -117,6 +123,61 @@ const MIDDAY_PHOTO_NUDGE_COPY = {
 const MIDDAY_HOUR = 12;
 const MIDDAY_MINUTE = 30;
 
+// ~7:30 PM local — streak rescue before the day ends; offset from morning nudge.
+const STREAK_AT_RISK_HOUR = 19;
+const STREAK_AT_RISK_MINUTE = 30;
+
+function captureNudgeBudgetUsedToday(
+  p: ProfileRow,
+  todayStr: string,
+): boolean {
+  return (
+    p.last_morning_push_local_date === todayStr ||
+    p.last_followup_push_local_date === todayStr ||
+    p.last_streak_risk_push_local_date === todayStr
+  );
+}
+
+function streaksEnabledOnProfile(p: ProfileRow): boolean {
+  return p.streak_at_risk_enabled !== false;
+}
+
+function isStreakAtRiskEligible(
+  p: ProfileRow,
+  yesterdayStr: string,
+  capturedToday: boolean,
+): boolean {
+  if (capturedToday) return false;
+  if (!streaksEnabledOnProfile(p)) return false;
+  if ((p.streak_count ?? 0) < 2) return false;
+  return p.last_entry_date === yesterdayStr;
+}
+
+function streakAtRiskCopy(streak: number): { title: string; body: string } {
+  return {
+    title: streak >= 2 ? `Your ${streak}-day streak` : "Keep your streak alive",
+    body: "One moment today keeps it going — under 60 seconds.",
+  };
+}
+
+async function hadThreadOrChapterPushToday(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  localDayStartUtcIso: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("lifecycle_dispatches")
+    .select("id, event_key")
+    .eq("user_id", userId)
+    .gte("sent_at", localDayStartUtcIso)
+    .limit(20);
+  return (data ?? []).some(
+    (row) =>
+      row.event_key.startsWith("thread_surfaced:") ||
+      row.event_key.startsWith("chapter_ready:"),
+  );
+}
+
 // 22:00 local — late enough to be a "before bed" nudge, early enough to
 // not wake anyone up. Only fires if the user hasn't captured today AND
 // their account is <24h old.
@@ -134,13 +195,6 @@ Deno.serve(async (req) => {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    const pushMockUrl = Deno.env.get("PUSH_MOCK_URL");
-    if (!pushMockUrl) {
-      console.warn(
-        "PUSH_MOCK_URL is unset — daily nudges will send without image",
-      );
-    }
-
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -151,7 +205,7 @@ Deno.serve(async (req) => {
     const { data: profiles, error: profErr } = await supabase
       .from("profiles")
       .select(
-        "id, notification_enabled, last_morning_push_local_date, last_followup_push_local_date, last_midday_photo_nudge_local_date, notification_timezone, notification_time, reflection_target_default, total_moments, created_at",
+        "id, notification_enabled, streak_at_risk_enabled, streak_count, last_entry_date, last_morning_push_local_date, last_followup_push_local_date, last_streak_risk_push_local_date, last_midday_photo_nudge_local_date, notification_timezone, notification_time, reflection_target_default, total_moments, created_at",
       )
       .eq("notification_enabled", true);
 
@@ -168,9 +222,16 @@ Deno.serve(async (req) => {
     const followupRecipients: string[] = [];
     const bedtimeRescueRecipients: string[] = [];
     const middayPhotoNudgeRecipients: string[] = [];
+    const streakAtRiskCandidates: {
+      id: string;
+      streak: number;
+      todayStr: string;
+      localDayStartUtcIso: string;
+    }[] = [];
     const dailyNudgeUserUpdates = new Map<string, string>();
     const followupUserUpdates = new Map<string, string>();
     const middayPhotoNudgeUserUpdates = new Map<string, string>();
+    const streakAtRiskUserUpdates = new Map<string, string>();
 
     const momentTodayCache = new Map<string, boolean>();
     async function hasMomentToday(
@@ -220,8 +281,10 @@ Deno.serve(async (req) => {
       if (!local.isValid) continue;
 
       const todayStr = local.toISODate()!;
+      const yesterdayStr = local.minus({ days: 1 }).toISODate()!;
       const hour = local.hour;
       const minute = local.minute;
+      const localDayStartUtcIso = local.startOf("day").toUTC().toISO()!;
 
       const promptT = parseLocalPromptTime(p.notification_time);
       // Follow-up is anchored to the chosen nudge time + 3h, wrapped past midnight.
@@ -238,6 +301,12 @@ Deno.serve(async (req) => {
         followupHour,
         promptT.minute,
       );
+      const inStreakAtRiskWindow = inTimeWindow(
+        hour,
+        minute,
+        STREAK_AT_RISK_HOUR,
+        STREAK_AT_RISK_MINUTE,
+      );
       const inBedtimeWindow = inTimeWindow(
         hour,
         minute,
@@ -251,14 +320,36 @@ Deno.serve(async (req) => {
         MIDDAY_MINUTE,
       );
 
-      // --- Daily nudge: at user's chosen time ---
+      const capturedToday = await hasMomentToday(p.id, todayStr);
+      const streakEligible = isStreakAtRiskEligible(
+        p,
+        yesterdayStr,
+        capturedToday,
+      );
+      const captureBudgetUsed = captureNudgeBudgetUsedToday(p, todayStr);
+
+      // --- Streak at risk: ~7:30 PM when yesterday was captured but not today ---
+      if (
+        inStreakAtRiskWindow &&
+        streakEligible &&
+        !captureBudgetUsed
+      ) {
+        streakAtRiskCandidates.push({
+          id: p.id,
+          streak: p.streak_count ?? 0,
+          todayStr,
+          localDayStartUtcIso,
+        });
+      }
+
+      // --- Daily nudge: at user's chosen time (defer when streak-at-risk tonight) ---
       if (inDailyNudgeWindow && p.last_morning_push_local_date !== todayStr) {
-        if (await hasMomentToday(p.id, todayStr)) {
+        if (capturedToday) {
           // Already answered the daily prompt today (e.g. captured at 6am,
           // nudge at 7am) — no push, but stamp so we don't keep re-checking
           // every cron tick in the 20-min window.
           dailyNudgeUserUpdates.set(p.id, todayStr);
-        } else {
+        } else if (!streakEligible && !captureBudgetUsed) {
           dailyNudgeRecipients.push(p.id);
           dailyNudgeUserUpdates.set(p.id, todayStr);
         }
@@ -268,9 +359,11 @@ Deno.serve(async (req) => {
       if (
         inFollowupWindow &&
         p.last_followup_push_local_date !== todayStr &&
-        !inDailyNudgeWindow // defensive: don't double-fire if windows overlap
+        !inDailyNudgeWindow &&
+        !streakEligible &&
+        !captureBudgetUsed
       ) {
-        if (!(await hasMomentToday(p.id, todayStr))) {
+        if (!capturedToday) {
           followupRecipients.push(p.id);
           followupUserUpdates.set(p.id, todayStr);
         }
@@ -304,12 +397,36 @@ Deno.serve(async (req) => {
         inBedtimeWindow &&
         !bedtimeAlreadyFired.has(p.id) &&
         !inDailyNudgeWindow &&
-        !inFollowupWindow
+        !inFollowupWindow &&
+        !inStreakAtRiskWindow
       ) {
-        if (!(await hasMomentToday(p.id, todayStr))) {
+        if (!capturedToday) {
           bedtimeRescueRecipients.push(p.id);
         }
       }
+    }
+
+    const streakAtRiskRecipients: {
+      id: string;
+      streak: number;
+      todayStr: string;
+    }[] = [];
+    for (const candidate of streakAtRiskCandidates) {
+      if (
+        await hadThreadOrChapterPushToday(
+          supabase,
+          candidate.id,
+          candidate.localDayStartUtcIso,
+        )
+      ) {
+        continue;
+      }
+      streakAtRiskRecipients.push({
+        id: candidate.id,
+        streak: candidate.streak,
+        todayStr: candidate.todayStr,
+      });
+      streakAtRiskUserUpdates.set(candidate.id, candidate.todayStr);
     }
 
     // Dispatch each bucket. The bulk helper logs to lifecycle_dispatches
@@ -335,7 +452,6 @@ Deno.serve(async (req) => {
           push: {
             title: copy.title,
             body: copy.body,
-            imageUrl: pushMockUrl,
             data: { type: "daily_nudge" },
           },
         });
@@ -348,7 +464,6 @@ Deno.serve(async (req) => {
           push: {
             title: copy.title,
             body: copy.body,
-            imageUrl: pushMockUrl,
             data: { type: "daily_nudge" },
           },
         });
@@ -392,6 +507,38 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (streakAtRiskRecipients.length > 0) {
+      const byGroup = new Map<string, string[]>();
+      for (const row of streakAtRiskRecipients) {
+        const key = `${row.todayStr}:${row.streak}`;
+        const bucket = byGroup.get(key) ?? [];
+        bucket.push(row.id);
+        byGroup.set(key, bucket);
+      }
+      for (const [groupKey, userIds] of byGroup) {
+        const streak = parseInt(groupKey.split(":")[1] ?? "0", 10);
+        const todayLocal = groupKey.split(":")[0] ?? "";
+        const copy = streakAtRiskCopy(streak);
+        await dispatchBulkPush(supabase, {
+          userIds,
+          eventKey: `streak_at_risk:${todayLocal}`,
+          payload: { streak },
+          push: {
+            title: copy.title,
+            body: copy.body,
+            data: { type: "streak_at_risk", streak },
+          },
+        });
+      }
+    }
+
+    for (const [id, date] of streakAtRiskUserUpdates) {
+      await supabase
+        .from("profiles")
+        .update({ last_streak_risk_push_local_date: date })
+        .eq("id", id);
+    }
+
     for (const [id, date] of middayPhotoNudgeUserUpdates) {
       await supabase
         .from("profiles")
@@ -420,6 +567,7 @@ Deno.serve(async (req) => {
       followup_sent: followupRecipients.length,
       bedtime_rescue_sent: bedtimeRescueRecipients.length,
       midday_photo_nudge_sent: middayPhotoNudgeRecipients.length,
+      streak_at_risk_sent: streakAtRiskRecipients.length,
     });
     await logger.flush();
 
@@ -430,6 +578,7 @@ Deno.serve(async (req) => {
         followup: followupRecipients.length,
         bedtimeRescue: bedtimeRescueRecipients.length,
         middayPhotoNudge: middayPhotoNudgeRecipients.length,
+        streakAtRisk: streakAtRiskRecipients.length,
       }),
       { headers: { "Content-Type": "application/json" } },
     );

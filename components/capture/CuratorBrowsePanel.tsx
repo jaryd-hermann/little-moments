@@ -1,6 +1,9 @@
 import { CaptureBrowseHeading } from "@/components/capture/CaptureBrowseHeading";
 import { PromptWithAccentText } from "@/components/capture/PromptWithAccentText";
 import type { MediaAsset } from "@/hooks/useMediaLibrary";
+import {
+  prefetchNeighborMediaUris,
+} from "@/hooks/useMediaLibrary";
 import { useTheme } from "@/hooks/useTheme";
 import type { ReflectionQuestionItem } from "@/lib/captureReflectionQuestions";
 import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
@@ -9,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
 import { CaptureDatePill } from "@/components/capture/CaptureDatePill";
+import { CaptureVideoPreview } from "@/components/capture/CaptureVideoPreview";
 import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
 import { Image } from "expo-image";
 import { usePostHog } from "posthog-react-native";
@@ -31,6 +35,7 @@ import {
 } from "react-native";
 
 const CARD_SIDE_GUTTER = 20;
+const MAX_DOT_INDICATORS = 10;
 
 function loopLogicalIndex(
   page: number,
@@ -122,6 +127,12 @@ export function CuratorBrowsePanel({
   const STACK_AREA_HEIGHT = MAIN_CARD_HEIGHT + 44;
   const PEEK_W = MAIN_CARD_WIDTH - 36;
   const PEEK_H = MAIN_CARD_HEIGHT - 28;
+  /** Capture day section — heading lives in the parent; tighten title→carousel gap. */
+  const embeddedInSection = hideHeading;
+  const photoStackHeight = embeddedInSection
+    ? MAIN_CARD_HEIGHT
+    : STACK_AREA_HEIGHT;
+  const peekTop = embeddedInSection ? 8 : 26;
 
   const N = dayPhotos.length;
   const M = REFLECTION_QUESTIONS.length;
@@ -150,6 +161,10 @@ export function CuratorBrowsePanel({
   const questionListRef = useRef<FlatList<ReflectionQuestionItem>>(null);
   const lastHapticPhotoIdx = useRef(0);
   const lastHapticQuestionIdx = useRef(0);
+  const [displayUriByAsset, setDisplayUriByAsset] = useState<
+    Record<string, string>
+  >({});
+  const resolvedDisplayUriIdsRef = useRef<Set<string>>(new Set());
 
   const dayKey = analyticsContext?.target_ymd ?? "";
   const prevDayKeyRef = useRef<string | null>(null);
@@ -173,8 +188,25 @@ export function CuratorBrowsePanel({
       setMode("photos");
       lastHapticPhotoIdx.current = 0;
       lastHapticQuestionIdx.current = 0;
+      setDisplayUriByAsset({});
+      resolvedDisplayUriIdsRef.current = new Set();
     }
   }, [loadingPhotos, dayKey, dayPhotos.length]);
+
+  useEffect(() => {
+    if (dayPhotos.length === 0) return;
+    prefetchNeighborMediaUris(
+      dayPhotos,
+      photoIndex,
+      resolvedDisplayUriIdsRef.current,
+      (resolved) => {
+        setDisplayUriByAsset((prev) => ({
+          ...prev,
+          [resolved.id]: resolved.uri,
+        }));
+      }
+    );
+  }, [dayPhotos, photoIndex]);
 
   useEffect(() => {
     if (forceQuestionModeNonce === 0) return;
@@ -423,7 +455,13 @@ export function CuratorBrowsePanel({
   }
 
   return (
-    <View style={{ flex: 1, paddingTop: 4 }}>
+    <View
+      style={
+        embeddedInSection
+          ? undefined
+          : { flex: 1, paddingTop: 4 }
+      }
+    >
       {hideHeading ? null : (
         <CaptureBrowseHeading
           title={headingTitle}
@@ -520,6 +558,11 @@ export function CuratorBrowsePanel({
             onScroll={onPhotoScroll}
             onMomentumScrollEnd={onPhotoMomentumScrollEnd}
             scrollEventThrottle={16}
+            style={{ height: photoStackHeight }}
+            initialNumToRender={1}
+            maxToRenderPerBatch={2}
+            windowSize={3}
+            removeClippedSubviews
             getItemLayout={(_, index) => ({
               length: PAGE_WIDTH,
               offset: PAGE_WIDTH * index,
@@ -532,19 +575,23 @@ export function CuratorBrowsePanel({
               const isActivePhoto = usePhotoLoop
                 ? listIndex % N === photoIndex
                 : listIndex === photoIndex;
+              const resolvedUri = displayUriByAsset[item.id];
+              const displayAsset =
+                resolvedUri != null ? { ...item, uri: resolvedUri } : item;
+              const shouldAnimate = isActivePhoto;
               return (
                 <View
                   style={{
                     width: PAGE_WIDTH,
                     alignItems: "center",
-                    paddingTop: 8,
+                    paddingTop: embeddedInSection ? 0 : 8,
                   }}
                 >
                   <View
                     style={{
                       width: MAIN_CARD_WIDTH + 40,
-                      height: STACK_AREA_HEIGHT,
-                      justifyContent: "center",
+                      height: photoStackHeight,
+                      justifyContent: embeddedInSection ? "flex-start" : "center",
                       alignItems: "center",
                     }}
                   >
@@ -553,7 +600,7 @@ export function CuratorBrowsePanel({
                         style={{
                           position: "absolute",
                           left: 4,
-                          top: 26,
+                          top: peekTop,
                           width: PEEK_W,
                           height: PEEK_H,
                           borderRadius: 14,
@@ -577,7 +624,7 @@ export function CuratorBrowsePanel({
                         style={{
                           position: "absolute",
                           right: 4,
-                          top: 26,
+                          top: peekTop,
                           width: PEEK_W,
                           height: PEEK_H,
                           borderRadius: 14,
@@ -608,7 +655,18 @@ export function CuratorBrowsePanel({
                         backgroundColor: colors.surfaceSecondary,
                       }}
                     >
-                      <DayAssetPreview asset={item} animate={isActivePhoto} />
+                      {item.mediaType === "video" ? (
+                        <CaptureVideoPreview
+                          asset={displayAsset}
+                          resolvedUri={resolvedUri}
+                          isActive={shouldAnimate}
+                        />
+                      ) : (
+                        <DayAssetPreview
+                          asset={displayAsset}
+                          animate={shouldAnimate}
+                        />
+                      )}
                       <View
                         style={{
                           position: "absolute",
@@ -644,27 +702,42 @@ export function CuratorBrowsePanel({
             }}
           />
           {dayPhotos.length > 1 ? (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "center",
-                gap: 6,
-                marginTop: 12,
-              }}
-            >
-              {dayPhotos.map((_, i) => (
-                <View
-                  key={i}
-                  style={{
-                    width: i === photoIndex ? 20 : 6,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor:
-                      i === photoIndex ? dotActive : dotMuted,
-                  }}
-                />
-              ))}
-            </View>
+            dayPhotos.length > MAX_DOT_INDICATORS ? (
+              <Text
+                style={{
+                  marginTop: 12,
+                  textAlign: "center",
+                  fontFamily: "Roboto-Medium",
+                  fontSize: 12,
+                  letterSpacing: 0.4,
+                  color: colors.textMuted,
+                }}
+              >
+                {photoIndex + 1}/{dayPhotos.length}
+              </Text>
+            ) : (
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 6,
+                  marginTop: 12,
+                }}
+              >
+                {dayPhotos.map((_, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      width: i === photoIndex ? 20 : 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor:
+                        i === photoIndex ? dotActive : dotMuted,
+                    }}
+                  />
+                ))}
+              </View>
+            )
           ) : null}
         </>
       ) : inQuestionMode ? (

@@ -11,6 +11,7 @@ import {
 } from "@/lib/mashupBuckets";
 import {
   enqueueClipsForPrefetch,
+  getCachedUriSync,
   waitForClipsReady,
 } from "@/lib/mediaPrefetch";
 import { Ionicons } from "@expo/vector-icons";
@@ -35,6 +36,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export type MashupCloseReason = "auto_end" | "user_x";
 
+/** Opening clips we wait for before playback — keeps time-to-play short. */
+const ASSEMBLE_CLIP_COUNT = 3;
+/** Hard cap on the assembling screen so a slow fetch can't trap the user. */
+const ASSEMBLE_MAX_WAIT_MS = 6000;
+
 export interface MashupPlayerProps {
   visible: boolean;
   bucket: MashupBucket | null;
@@ -50,9 +56,17 @@ export function MashupPlayer({
   const { colors } = useTheme();
   const [clipIdx, setClipIdx] = useState(0);
   const [ready, setReady] = useState(false);
+  const [playheadStarted, setPlayheadStarted] = useState(false);
   const closedRef = useRef(false);
   const clipIdxRef = useRef(0);
+  const armAdvanceRef = useRef<(() => void) | null>(null);
   clipIdxRef.current = clipIdx;
+
+  const handleClipPlayheadStart = useCallback((index: number) => {
+    if (index !== clipIdxRef.current) return;
+    setPlayheadStarted(true);
+    armAdvanceRef.current?.();
+  }, []);
 
   const fireClose = useCallback(
     (reason: MashupCloseReason) => {
@@ -68,35 +82,96 @@ export function MashupPlayer({
       setReady(false);
       return;
     }
+    let cancelled = false;
     setClipIdx(0);
+    setPlayheadStarted(false);
     closedRef.current = false;
     setReady(false);
+
+    // Warm the whole movie in the background but only *block* on the opening
+    // clips. Starting playback before these landed meant captions rendered
+    // over an empty frame; blocking on all of them would be far too slow.
     enqueueClipsForPrefetch(bucket.clips, 12000);
-    const timeoutMs = Math.min(
-      30000,
-      8000 + bucket.clips.length * 500
+    const head = bucket.clips.slice(
+      0,
+      Math.min(ASSEMBLE_CLIP_COUNT, bucket.clips.length)
     );
-    void waitForClipsReady(bucket.clips, timeoutMs).then(() => setReady(true));
+    void (async () => {
+      await waitForClipsReady(head, ASSEMBLE_MAX_WAIT_MS);
+      if (!cancelled) setReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [visible, bucket]);
+
+  useEffect(() => {
+    setPlayheadStarted(false);
+  }, [clipIdx]);
 
   useEffect(() => {
     if (!visible || !bucket || !ready) return;
     enqueueClipsForPrefetch(
-      bucket.clips.slice(clipIdx + 1, clipIdx + 4),
+      bucket.clips.slice(clipIdx, clipIdx + 6),
       11000
     );
   }, [visible, bucket, clipIdx, ready]);
 
   useEffect(() => {
     if (!visible || !bucket || !ready) return;
-    const t = setTimeout(() => {
-      if (clipIdx >= bucket.clips.length - 1) {
-        fireClose("auto_end");
-      } else {
-        setClipIdx((i) => i + 1);
-      }
-    }, CLIP_DURATION_MS);
-    return () => clearTimeout(t);
+
+    let cancelled = false;
+    let advanceTimer: ReturnType<typeof setTimeout> | undefined;
+    let timelineArmed = false;
+
+    const armAdvanceCountdown = () => {
+      if (cancelled || timelineArmed) return;
+      timelineArmed = true;
+      setPlayheadStarted(true);
+
+      advanceTimer = setTimeout(() => {
+        void (async () => {
+          if (cancelled) return;
+          if (clipIdx >= bucket.clips.length - 1) {
+            fireClose("auto_end");
+            return;
+          }
+          const nextIdx = clipIdx + 1;
+          enqueueClipsForPrefetch(
+            bucket.clips.slice(nextIdx, nextIdx + 6),
+            11000
+          );
+          await waitForClipsReady(
+            bucket.clips.slice(
+              nextIdx,
+              Math.min(nextIdx + 2, bucket.clips.length)
+            ),
+            6000
+          );
+          if (cancelled) return;
+          setClipIdx((i) => i + 1);
+        })();
+      }, CLIP_DURATION_MS);
+    };
+
+    armAdvanceRef.current = armAdvanceCountdown;
+
+    const clip = bucket.clips[clipIdx];
+    const hasCachedMotion = Boolean(
+      clip &&
+        (getCachedUriSync(clip.media, "paired")?.startsWith("file:") ||
+          getCachedUriSync(clip.media, "video")?.startsWith("file:"))
+    );
+    const fallbackMs = hasCachedMotion ? 280 : 3200;
+    const fallback = setTimeout(armAdvanceCountdown, fallbackMs);
+
+    return () => {
+      cancelled = true;
+      armAdvanceRef.current = null;
+      clearTimeout(fallback);
+      if (advanceTimer) clearTimeout(advanceTimer);
+    };
   }, [visible, bucket, clipIdx, ready, fireClose]);
 
   if (!bucket) return null;
@@ -126,6 +201,8 @@ export function MashupPlayer({
               loop={false}
               crossfade={false}
               activeClipIndex={clipIdx}
+              preloadNextClip
+              onClipPlayheadStart={handleClipPlayheadStart}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
             />
@@ -166,17 +243,26 @@ export function MashupPlayer({
             </View>
           </>
         ) : (
-          <View style={styles.loading}>
-            <ActivityIndicator size="large" color={colors.primary} />
+          <View
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 16,
+              paddingHorizontal: 40,
+            }}
+          >
+            <ActivityIndicator color="#FFFFFF" />
             <Text
               style={{
-                marginTop: 16,
-                fontFamily: "Roboto-Medium",
-                fontSize: 14,
-                color: "rgba(255,255,255,0.75)",
+                fontFamily: "PMGothicLudington-Text110",
+                fontSize: 22,
+                lineHeight: 28,
+                color: "#FFFFFF",
+                textAlign: "center",
               }}
             >
-              Stitching moments together…
+              Assembling your movie quickly
             </Text>
           </View>
         )}
@@ -198,7 +284,7 @@ export function MashupPlayer({
                 i < clipIdx ? "filled" : i === clipIdx ? "active" : "empty"
               }
               durationMs={CLIP_DURATION_MS}
-              isPaused={!ready}
+              isPaused={!ready || (i === clipIdx && !playheadStarted)}
             />
           ))}
         </View>
@@ -360,10 +446,5 @@ function ProgressSegment({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-  },
-  loading: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
   },
 });

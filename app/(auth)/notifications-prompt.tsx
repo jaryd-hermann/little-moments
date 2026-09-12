@@ -3,7 +3,6 @@ import {
   View,
   Text,
   Pressable,
-  Image,
   StatusBar,
   ScrollView,
   Modal,
@@ -39,13 +38,18 @@ import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 import { deriveCaptureRhythmFromAnswers } from "@/lib/onboardingQuiz";
 import type { ReflectionTarget } from "@/lib/reflectionTarget";
 
-const APP_ICON = require("@/assets/images/icon.png");
+type CaptureRhythm = "morning" | "afternoon" | "evening";
 
-type CaptureRhythm = "morning" | "evening";
+/** Default reminder hour for each rhythm. */
+const RHYTHM_HOUR: Record<CaptureRhythm, number> = {
+  morning: 8,
+  afternoon: 13,
+  evening: 21,
+};
 
-function suggestedReflectionTarget(rhythm: CaptureRhythm): ReflectionTarget {
-  return rhythm === "morning" ? "yesterday" : "today";
-}
+// Moments always default to "today" now — the recent-moments carousel lets
+// users scroll back to earlier days whenever they want.
+const REFLECTION_TARGET_DEFAULT: ReflectionTarget = "today";
 
 export default function NotificationsPromptScreen() {
   const { colors, theme } = useTheme();
@@ -72,29 +76,15 @@ export default function NotificationsPromptScreen() {
   const quizSeededRhythm = seededRhythm != null;
 
   const [rhythm, setRhythm] = useState<CaptureRhythm>(initialRhythm);
-  const [reflectionTarget, setReflectionTarget] = useState<ReflectionTarget>(
-    () =>
-      profile?.reflection_target_default ?? suggestedReflectionTarget(initialRhythm)
-  );
-  const [notifHour, setNotifHour] = useState(initialRhythm === "evening" ? 21 : 8);
+  const reflectionTarget = REFLECTION_TARGET_DEFAULT;
+  const [notifHour, setNotifHour] = useState(RHYTHM_HOUR[initialRhythm]);
   const [notifMinute, setNotifMinute] = useState(0);
   const [timeModalOpen, setTimeModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const suggested = useMemo(() => suggestedReflectionTarget(rhythm), [rhythm]);
-
   useEffect(() => {
-    setReflectionTarget(suggested);
-  }, [suggested]);
-
-  useEffect(() => {
-    if (rhythm === "morning") {
-      setNotifHour(8);
-      setNotifMinute(0);
-    } else {
-      setNotifHour(21);
-      setNotifMinute(0);
-    }
+    setNotifHour(RHYTHM_HOUR[rhythm]);
+    setNotifMinute(0);
   }, [rhythm]);
 
   useEffect(() => {
@@ -125,12 +115,17 @@ export default function NotificationsPromptScreen() {
     if (!user) return;
     const timeStr = formatNotificationTimeForDb(notifHour, notifMinute);
 
+    // `capture_rhythm` only stores morning/evening (server push buckets); an
+    // afternoon pick is captured purely via `notification_time`.
+    const captureRhythmForDb: "morning" | "evening" | null =
+      rhythm === "morning" || rhythm === "evening" ? rhythm : null;
+
     const { data: fresh, error: updateError } = await supabase
       .from("profiles")
       .update({
         notification_enabled: params.enabled,
         notification_time: timeStr,
-        capture_rhythm: rhythm,
+        ...(captureRhythmForDb ? { capture_rhythm: captureRhythmForDb } : {}),
         reflection_target_default: reflectionTarget,
         onboarding_phase: "done",
         onboarding_completed: true,
@@ -163,7 +158,7 @@ export default function NotificationsPromptScreen() {
         reminderHour: notifHour,
         reminderMinute: notifMinute,
         reflectionTargetDefault: reflectionTarget,
-        captureRhythm: rhythm,
+        captureRhythm: captureRhythmForDb,
       });
     } catch (err) {
       console.error("[NotificationsPrompt] syncPushRegistration failed:", err);
@@ -281,7 +276,7 @@ export default function NotificationsPromptScreen() {
           </Text>
         </View>
 
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 24 }}>
+        <View style={{ gap: 12, marginTop: 24 }}>
           {(
             [
               {
@@ -289,6 +284,12 @@ export default function NotificationsPromptScreen() {
                 label: "Morning",
                 sub: "around 8:00 am",
                 icon: "sunny-outline" as const,
+              },
+              {
+                id: "afternoon" as const,
+                label: "Afternoon",
+                sub: "around 1:00 pm",
+                icon: "partly-sunny-outline" as const,
               },
               {
                 id: "evening" as const,
@@ -311,123 +312,53 @@ export default function NotificationsPromptScreen() {
                   );
                 }}
                 style={{
-                  flex: 1,
-                  paddingVertical: 16,
-                  paddingHorizontal: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 16,
+                  paddingVertical: 18,
+                  paddingHorizontal: 18,
                   borderRadius: 16,
-                  backgroundColor: selected
-                    ? toggleSelectedBg
-                    : "transparent",
+                  backgroundColor: selected ? toggleSelectedBg : "transparent",
                   borderWidth: 1.5,
                   borderColor: selected ? toggleSelectedBorder : colors.border,
-                  alignItems: "center",
-                  gap: 8,
                 }}
               >
                 <Ionicons
                   name={opt.icon}
-                  size={26}
+                  size={28}
                   color={selected ? toggleSelectedFg : colors.textSecondary}
                 />
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Medium",
-                    fontSize: 16,
-                    color: selected ? toggleSelectedFg : colors.textSecondary,
-                  }}
-                >
-                  {opt.label}
-                </Text>
-                <Text
-                  style={{
-                    fontFamily: "Roboto-Regular",
-                    fontSize: 12,
-                    color: selected ? toggleSelectedFg : colors.textMuted,
-                  }}
-                >
-                  {opt.sub}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View
-          style={{
-            marginTop: 20,
-            padding: 16,
-            borderRadius: 16,
-            backgroundColor: colors.surfaceSecondary,
-            borderWidth: 1,
-            borderColor: colors.borderLight,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Image
-              source={APP_ICON}
-              style={{ width: 22, height: 22, borderRadius: 6 }}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-            />
-            <Text
-              style={{
-                fontFamily: "Roboto-Medium",
-                fontSize: 11,
-                letterSpacing: 0.8,
-                color: colors.textMuted,
-              }}
-            >
-              WHAT WE&apos;LL ASK ABOUT
-            </Text>
-          </View>
-          <View
-            style={{
-              flexDirection: "row",
-              gap: 10,
-              marginTop: 14,
-            }}
-          >
-            {(
-              [
-                { id: "yesterday" as const, label: "Yesterday" },
-                { id: "today" as const, label: "Today" },
-              ] as const
-            ).map((opt) => {
-              const selected = reflectionTarget === opt.id;
-              return (
-                <Pressable
-                  key={opt.id}
-                  onPress={() => {
-                    void Haptics.selectionAsync();
-                    setReflectionTarget(opt.id);
-                    posthog.capture(
-                      "onboarding_reflection_target_selected",
-                      onboardingEventProps(6, { reflection_target: opt.id })
-                    );
-                  }}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 10,
-                    borderRadius: 999,
-                    backgroundColor: selected ? toggleSelectedBg : "transparent",
-                    borderWidth: 1.5,
-                    borderColor: selected ? toggleSelectedBorder : colors.border,
-                    alignItems: "center",
-                  }}
-                >
+                <View style={{ flex: 1 }}>
                   <Text
                     style={{
                       fontFamily: "Roboto-Medium",
-                      fontSize: 13,
-                      color: selected ? toggleSelectedFg : colors.textSecondary,
+                      fontSize: 18,
+                      color: selected ? toggleSelectedFg : colors.text,
                     }}
                   >
                     {opt.label}
                   </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                  <Text
+                    style={{
+                      fontFamily: "Roboto-Regular",
+                      fontSize: 13,
+                      color: selected ? toggleSelectedFg : colors.textMuted,
+                      marginTop: 2,
+                    }}
+                  >
+                    {opt.sub}
+                  </Text>
+                </View>
+                {selected ? (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={24}
+                    color={toggleSelectedFg}
+                  />
+                ) : null}
+              </Pressable>
+            );
+          })}
         </View>
 
         <Pressable

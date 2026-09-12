@@ -8,6 +8,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { routeAfterAuth, healProfileIfStuckAfterCapture } from "@/lib/onboardingRoute";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
+import { applyStreaksEnabledFromProfile } from "@/lib/streakSettingsSync";
 import { useOnboardingQuizStore } from "@/store/onboardingQuizStore";
 import {
   clearLoginFromPreQuizWelcomeIntent,
@@ -85,6 +86,7 @@ export default function IndexRedirect() {
         setProfile(p);
         applyNotificationTimeFromProfile(p.notification_time);
         applyThemeFromProfile(p.color_theme, p);
+        applyStreaksEnabledFromProfile(p);
       }
       routeAfterAuth(p);
     })();

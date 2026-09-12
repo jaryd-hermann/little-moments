@@ -12,26 +12,34 @@ export function makeDummyThread(): Thread {
     user_id: "dev",
     entry_id_a: "dev-entry-a",
     entry_id_b: "dev-entry-b",
-    connection_type: "thematic",
+    connection_type: "place",
+    statement: "You're calmest near water.",
+    question: "What is it about being near water that settles you?",
     ellie_observation:
-      "**Both of these are about a place that held something for you before you knew you needed it.** " +
-      "In your grandmother's kitchen, that east-facing window wasn't just light—it was steadiness before you had words for wanting to belong somewhere. " +
-      "Months later, at the new job, you're still hunting that same hush in the mornings before anyone arrives, like you're carrying the old room forward until this building feels safe enough to let you in.",
+      "Both of these moments circle back to water — not as scenery, but as the one place your shoulders actually drop. " +
+      "In your grandmother's kitchen you watched the light on the bay through that east-facing window. " +
+      "Months later, at the new job, you're still hunting that same hush in the mornings before anyone arrives.",
     questions: [
-      "What other places have felt like that for you?",
-      "Is there anywhere that feels that way now?",
+      "What is it about being near water that settles you?",
     ],
+    user_answer: null,
+    answered_at: null,
     confidence: 0.88,
     dismissed: false,
+    hidden_from_feed: false,
+    highlighted: false,
+    feedback_sentiment: null,
     created_at: new Date().toISOString(),
     viewed_at: null,
+    chronological_index: 1,
     entry_a: {
       id: "dev-entry-a",
       title: "The East-Facing Window",
-      body: "There was a window in my grandmother's kitchen that always faced east. Morning light pooled on the table while she made coffee. I didn't know then that I'd still think about that room years later.",
+      body: "There was a window in my grandmother's kitchen that always faced east. Morning light pooled on the table while she made coffee.",
       ai_enhanced_body: null,
       entry_date: today,
       created_at: new Date().toISOString(),
+      media: [],
     },
     entry_b: {
       id: "dev-entry-b",
@@ -39,10 +47,11 @@ export function makeDummyThread(): Thread {
       body: "First week at the new job. I keep sitting by the window in the mornings before anyone else arrives — same quiet, same light, different city.",
       ai_enhanced_body: null,
       entry_date: format(
-        new Date(Date.now() - 400 * 24 * 60 * 60 * 1000),
+        new Date(Date.now() - 21 * 24 * 60 * 60 * 1000),
         "yyyy-MM-dd"
       ),
       created_at: new Date().toISOString(),
+      media: [],
     },
   };
 }

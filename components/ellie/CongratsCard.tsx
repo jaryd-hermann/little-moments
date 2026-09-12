@@ -5,6 +5,8 @@ interface CongratsCardProps {
   headline: string;
   totalMoments: number;
   streakCount: number;
+  /** When false, hides the streak column (user opted out in Settings). */
+  showStreak?: boolean;
   /** When provided (including `0`), shows a third column for threads. */
   threadsCount?: number;
   onPressMoments?: () => void;
@@ -19,6 +21,7 @@ export function CongratsCard({
   headline,
   totalMoments,
   streakCount,
+  showStreak = true,
   threadsCount,
   onPressMoments,
   onPressThreads,
@@ -129,27 +132,29 @@ export function CongratsCard({
         ) : (
           <View style={{ flex: 1, alignItems: "center" }}>{momentsInner}</View>
         )}
-        <View style={{ flex: 1, alignItems: "center" }}>
-          <Text
-            style={{
-              fontFamily: "LibreBaskerville-Bold",
-              fontSize: 28,
-              color: "#FFFFFF",
-            }}
-          >
-            {streakCount}
-          </Text>
-          <Text
-            style={{
-              fontFamily: "Roboto-Light",
-              fontSize: 12,
-              color: "rgba(255,255,255,0.7)",
-              marginTop: 2,
-            }}
-          >
-            day streak
-          </Text>
-        </View>
+        {showStreak ? (
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text
+              style={{
+                fontFamily: "LibreBaskerville-Bold",
+                fontSize: 28,
+                color: "#FFFFFF",
+              }}
+            >
+              {streakCount}
+            </Text>
+            <Text
+              style={{
+                fontFamily: "Roboto-Light",
+                fontSize: 12,
+                color: "rgba(255,255,255,0.7)",
+                marginTop: 2,
+              }}
+            >
+              day streak
+            </Text>
+          </View>
+        ) : null}
         {showThreadsColumn ? (
           onPressThreads ? (
             <Pressable

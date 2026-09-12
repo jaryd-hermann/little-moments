@@ -2,16 +2,27 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-interface SecondMomentPaywallStore {
-  hasShown: boolean;
-  markShown: () => void;
+interface MomentPaywallStore {
+  /** Moment count at which the auto paywall was last shown (0 = never). */
+  lastShownAtCount: number;
+  markShownAtCount: (count: number) => void;
 }
 
-export const useSecondMomentPaywallStore = create<SecondMomentPaywallStore>()(
+/**
+ * Auto-paywall cadence for non-subscribers: show after the 2nd moment, then
+ * every 3rd moment thereafter (5th, 8th, 11th, ...). `lastShownAtCount` guards
+ * against re-firing for the same milestone across remounts.
+ */
+export function shouldAutoShowPaywallAtCount(count: number): boolean {
+  if (count < 2) return false;
+  return (count - 2) % 3 === 0;
+}
+
+export const useSecondMomentPaywallStore = create<MomentPaywallStore>()(
   persist(
     (set) => ({
-      hasShown: false,
-      markShown: () => set({ hasShown: true }),
+      lastShownAtCount: 0,
+      markShownAtCount: (count) => set({ lastShownAtCount: count }),
     }),
     {
       name: "little-moments-second-moment-paywall",

@@ -15,8 +15,9 @@ import { useEntries } from "@/hooks/useEntries";
 import { useTheme } from "@/hooks/useTheme";
 import { useTabBarStore } from "@/store/tabBarStore";
 import { useAuthStore } from "@/store/authStore";
-import { uploadEntryMedia } from "@/lib/storage";
-import { supabase } from "@/lib/supabase";
+import { attachEntryMedia } from "@/lib/attachEntryMedia";
+import { attachVoiceNoteToEntry } from "@/lib/entryVoiceNote";
+import type { VoiceClip } from "@/components/composer/MicRecorder";
 import { CRASH_BURN_WORDS } from "@/constants/words";
 import type { PromptType } from "@/lib/momentAssist";
 
@@ -65,6 +66,7 @@ export default function CaptureModalScreen() {
       rawText: string;
       attachedPhotoUri?: string;
       attachedPhotoTakenAtMs?: number;
+      voiceClip?: VoiceClip;
       analytics?: MomentCaptureAnalytics;
     }) => {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -85,6 +87,10 @@ export default function CaptureModalScreen() {
         chapter_id: null,
       });
 
+      if (entry.voiceClip && userId && result?.id) {
+        void attachVoiceNoteToEntry(userId, result.id, entry.voiceClip);
+      }
+
       posthog.capture("moment_saved", {
         source: "capture_modal",
         prompt_type: promptType,
@@ -95,28 +101,15 @@ export default function CaptureModalScreen() {
       if (entry.attachedPhotoUri && userId && result?.id) {
         const entryId = result.id;
         void (async () => {
-          try {
-            const { publicUrl, storagePath } = await uploadEntryMedia(
-              userId,
-              entryId,
-              entry.attachedPhotoUri!,
-              "image"
-            );
-            await supabase.from("entry_media").insert({
-              entry_id: entryId,
-              user_id: userId,
-              storage_path: storagePath,
-              storage_url: publicUrl,
-              media_type: "image",
-              display_order: 0,
-              taken_at: entry.attachedPhotoTakenAtMs
-                ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
-                : null,
-            });
-            await fetchEntries(entryId);
-          } catch (err) {
-            console.error("[CaptureModal] Failed to upload media:", err);
-          }
+          const row = await attachEntryMedia({
+            userId,
+            entryId,
+            uri: entry.attachedPhotoUri!,
+            takenAtIso: entry.attachedPhotoTakenAtMs
+              ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
+              : null,
+          });
+          if (row) await fetchEntries(entryId);
         })();
       }
 

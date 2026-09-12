@@ -1,8 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { dispatch } from "../_shared/dispatch.ts";
+import {
+  ensurePeopleCanonicalized,
+  syncMovieUnlocks,
+} from "../_shared/movie-unlocks.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
-import { observationPlainPreview } from "../_shared/thread-text.ts";
+import { observationPlainPreview, normalizeThreadCopy } from "../_shared/thread-text.ts";
 import {
   THEME_ENUM,
   EMOTION_ENUM,
@@ -18,6 +22,13 @@ import {
   REALTIME_WEEKLY_THREAD_LIMIT,
 } from "../_shared/thread-thresholds.ts";
 import { CONNECTION_SYSTEM_PROMPT } from "../_shared/thread-prompts.ts";
+import {
+  appendThreadAnswerToEntryBlock,
+  entryTextForEmbedding,
+  formatPreferencesForPrompt,
+  loadThreadAnswersByEntryId,
+  loadUserThreadPreferences,
+} from "../_shared/thread-context.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const EMBEDDING_MODEL = "text-embedding-3-large";
@@ -170,6 +181,36 @@ function effectiveDateString(
   return entryDate ?? "";
 }
 
+/**
+ * Record any movies this save just earned and push about the best of them.
+ *
+ * Runs here rather than at save time because this function is invoked after
+ * every save from every screen, and because by this point we know the moment's
+ * people — the moment that tips "Julia" over ten is only recognisable once her
+ * name is on the row.
+ *
+ * `rawPeople` is null for moments with no text, which never reach extraction.
+ * Failures are swallowed: a missed unlock is picked up on the next save, and
+ * it must not take thread processing down with it.
+ */
+async function runMovieUnlockSync(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  rawPeople: string[] | null
+): Promise<void> {
+  try {
+    if (rawPeople) {
+      await ensurePeopleCanonicalized(supabase, userId, rawPeople);
+    }
+    await syncMovieUnlocks(supabase, userId, { notify: true });
+  } catch (err) {
+    console.error(
+      "movie unlock sync error:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
 async function analyzeConnections(
   newEntry: {
     id: string;
@@ -177,21 +218,39 @@ async function analyzeConnections(
     body: string;
     effective_date: string;
   },
-  candidates: Candidate[]
+  candidates: Candidate[],
+  options?: {
+    preferencesBlock?: string;
+    answersByEntryId?: Map<string, string>;
+  }
 ) {
+  const answers = options?.answersByEntryId ?? new Map<string, string>();
   const candidateBlock = candidates
     .map((c, i) => {
       const effective = effectiveDateString(c.entry_date, c.photo_taken_at);
-      return `--- Past Entry ${i + 1} (id: ${c.id}, date: ${effective}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`;
+      const base = `--- Past Entry ${i + 1} (id: ${c.id}, date: ${effective}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`;
+      return appendThreadAnswerToEntryBlock(base, c.id, answers);
     })
     .join("\n\n");
 
-  const userMessage = `NEW ENTRY (id: ${newEntry.id}, date: ${newEntry.effective_date}):\nTitle: ${newEntry.title ?? "(untitled)"}\n${newEntry.body}\n\nPAST ENTRIES:\n${candidateBlock}`;
+  const newEntryBase = `NEW ENTRY (id: ${newEntry.id}, date: ${newEntry.effective_date}):\nTitle: ${newEntry.title ?? "(untitled)"}\n${newEntry.body}`;
+  const newEntryBlock = appendThreadAnswerToEntryBlock(
+    newEntryBase,
+    newEntry.id,
+    answers
+  );
+
+  const userMessage = `${newEntryBlock}\n\nPAST ENTRIES:\n${candidateBlock}`;
+
+  const prefBlock = options?.preferencesBlock?.trim();
+  const system = prefBlock
+    ? `${CONNECTION_SYSTEM_PROMPT}\n\nUSER FEEDBACK (honor this when scoring connections — avoid patterns they dislike, lean into what they want more of):\n${prefBlock}`
+    : CONNECTION_SYSTEM_PROMPT;
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 1400,
-    system: CONNECTION_SYSTEM_PROMPT,
+    system,
     messages: [{ role: "user", content: userMessage }],
   });
 
@@ -254,8 +313,23 @@ Deno.serve(async (req) => {
 
     const entryText = (entry.ai_enhanced_body ?? entry.body ?? "").trim();
     if (!entryText) {
+      // A photo with no words still counts toward every period movie, and
+      // this function is the one thing invoked after every save from every
+      // screen — so the unlock check has to happen before we bail out.
+      await runMovieUnlockSync(serviceSupabase, user.id, null);
       return jsonResponse({ ok: true, skipped: "empty_entry" });
     }
+
+    const answersForNewEntry = await loadThreadAnswersByEntryId(
+      serviceSupabase,
+      user.id,
+      [entry_id]
+    );
+    const newEntryThreadAnswer = answersForNewEntry.get(entry_id) ?? null;
+    const embedSourceText = entryTextForEmbedding(
+      entryText,
+      newEntryThreadAnswer
+    );
 
     const entryMedia =
       ((entry as { entry_media?: { taken_at: string | null; display_order: number | null }[] })
@@ -270,7 +344,7 @@ Deno.serve(async (req) => {
 
     // 2. Parallel: generate embedding + extract metadata
     const [embedding, metadata] = await Promise.all([
-      generateEmbedding(entryText),
+      generateEmbedding(embedSourceText),
       extractMetadata(entryText),
     ]);
 
@@ -295,6 +369,11 @@ Deno.serve(async (req) => {
       },
       { onConflict: "entry_id" }
     );
+
+    // 3b. Movie unlocks. This is the first point where the new moment's people
+    // and theme are known, so it's also the first point a "10 moments about
+    // Julia" movie can be detected.
+    await runMovieUnlockSync(serviceSupabase, user.id, metadata.people);
 
     // 4. Cosine similarity search
     const { data: candidates, error: simErr } = await serviceSupabase.rpc(
@@ -409,6 +488,16 @@ Deno.serve(async (req) => {
     }
 
     // 5. LLM connection analysis
+    const allEntryIds = [
+      entry_id,
+      ...filteredCandidates.map((c) => c.id),
+    ];
+    const [prefs, answersByEntryId] = await Promise.all([
+      loadUserThreadPreferences(serviceSupabase, user.id),
+      loadThreadAnswersByEntryId(serviceSupabase, user.id, allEntryIds),
+    ]);
+    const preferencesBlock = formatPreferencesForPrompt(prefs);
+
     const result = await analyzeConnections(
       {
         id: entry_id,
@@ -416,7 +505,8 @@ Deno.serve(async (req) => {
         body: entryText,
         effective_date: newEntryEffectiveDate,
       },
-      filteredCandidates
+      filteredCandidates,
+      { preferencesBlock, answersByEntryId }
     );
 
     if (!result || result.has_connection !== true) {
@@ -439,6 +529,8 @@ Deno.serve(async (req) => {
     const entryIdA = entry_id;
     const entryIdB = result.entry_id_b as string;
 
+    const threadCopy = normalizeThreadCopy(result as Record<string, unknown>);
+
     const { data: thread, error: threadErr } = await serviceSupabase
       .from("threads")
       .insert({
@@ -446,8 +538,10 @@ Deno.serve(async (req) => {
         entry_id_a: entryIdA,
         entry_id_b: entryIdB,
         connection_type: connectionType,
-        ellie_observation: result.ellie_observation as string,
-        questions: Array.isArray(result.questions) ? result.questions : [],
+        statement: threadCopy.statement,
+        question: threadCopy.question,
+        ellie_observation: threadCopy.ellie_observation,
+        questions: threadCopy.questions,
         confidence,
         source: "realtime",
       })
@@ -478,7 +572,7 @@ Deno.serve(async (req) => {
     //    the rest of the lifecycle messaging system (one-shot keyed on
     //    thread id, logged in lifecycle_dispatches).
     if (!pastVisibleLimit && profile?.notification_enabled) {
-      const observation = (result.ellie_observation as string) ?? "";
+      const observation = threadCopy.statement || threadCopy.ellie_observation;
       const preview = observationPlainPreview(observation);
       const truncated =
         preview.length > 120 ? preview.slice(0, 117) + "..." : preview;

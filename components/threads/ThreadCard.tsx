@@ -1,58 +1,58 @@
-import { View, Text, Pressable, Image } from "react-native";
+import { useState } from "react";
+import { View, Text, Pressable } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
 import type { Thread } from "@/hooks/useThreads";
-import { threadCardHeadlineFromOrdinal } from "@/lib/threadOrdinal";
+import { ThreadAnswerSheet } from "@/components/threads/ThreadAnswerSheet";
 import { launchPremiumFlow } from "@/lib/premiumFlow";
-import { Shimmer } from "@/components/common/Shimmer";
-import { useUnseenStore } from "@/store/unseenStore";
-
-const ELLIE_AVATAR = require("@/assets/images/tab-compose-plus.png");
+import {
+  connectionDotColor,
+  isThreadNewSinceTabVisit,
+  threadCollageImageUrls,
+  threadQuestion,
+  threadStatement,
+  threadTimeGapLabel,
+  THREAD_PEACH_BG,
+} from "@/lib/threadDisplay";
+import { connectionLabel } from "@/lib/threadOrdinal";
 
 interface ThreadCardProps {
   thread: Thread;
   locked?: boolean;
   /** @deprecated Layout is unified; kept for call-site compatibility. */
   variant?: "full" | "compact";
-  /**
-   * Today tab copy, e.g. "1 New Thread found".
-   * When omitted, headline uses `ordinalRank` → "Nth Thread found".
-   */
-  headline?: string;
-  /** 1-based among user threads (oldest = 1). Ignored if `headline` is set. */
-  ordinalRank?: number;
+  /** Show + NEW badge when thread is newer than last Connect tab visit. */
+  connectionsTabSeenAt?: string | null;
+  onAnswerSaved?: (threadId: string, answer: string) => void;
 }
 
 export function ThreadCard({
   thread,
   locked = false,
-  headline,
-  ordinalRank,
+  connectionsTabSeenAt = null,
+  onAnswerSaved,
 }: ThreadCardProps) {
-  const { colors, theme } = useTheme();
+  const { colors } = useTheme();
   const posthog = usePostHog();
+  const [answerSheetOpen, setAnswerSheetOpen] = useState(false);
 
-  // Cross-screen "viewed in this session" overlay — when the detail screen
-  // (mounted in a different hook instance) marks a thread viewed, this set
-  // updates and the in-feed shimmer drops without waiting for a refetch.
-  const viewedInSession = useUnseenStore((s) =>
-    s.viewedThreadIds.has(thread.id)
-  );
+  const urls = threadCollageImageUrls(thread);
+  const leftUri = urls[0];
+  const rightUri = urls[1] ?? urls[0];
+  const gap = threadTimeGapLabel(thread);
+  const statement = threadStatement(thread);
+  const question = threadQuestion(thread);
+  const dotColor = connectionDotColor(thread.connection_type);
+  const typeLabel = connectionLabel(thread.connection_type);
+  const isNew = isThreadNewSinceTabVisit(thread, connectionsTabSeenAt);
 
-  // Locked threads can't actually be viewed (tap routes to upgrade), so we
-  // exclude them from the "shimmer to draw attention" treatment — otherwise
-  // a free user with 11+ threads would see the bottom card pulse forever.
-  const isUnseen = thread.viewed_at == null && !viewedInSession && !locked;
-
-  const handlePress = () => {
+  const openDetail = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (locked) {
-      // Respects the `paywall` PostHog flag: `test` → straight to /paywall
-      // (RevenueCat pricing), `control` → /ellie-premium multi-step. Unifies
-      // this with every other "Try Premium" entry point in the app.
       launchPremiumFlow(posthog, "thread_card_locked", {
         bump: { surface: "thread", refId: thread.id },
       });
@@ -61,128 +61,250 @@ export function ThreadCard({
     router.push(`/threads/${thread.id}`);
   };
 
-  const displayHeadline =
-    headline ??
-    (ordinalRank != null
-      ? threadCardHeadlineFromOrdinal(ordinalRank)
-      : "1 New Thread found");
+  const openAnswer = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (locked) {
+      launchPremiumFlow(posthog, "thread_card_locked", {
+        bump: { surface: "thread", refId: thread.id },
+      });
+      return;
+    }
+    setAnswerSheetOpen(true);
+  };
 
   return (
-    // Outer wrapper paints the white "frame" + hard black bevel. The peach
-    // body is nested inside so the white ring is just outer padding, which
-    // keeps the inner card edges crisp without any second border.
-    <Pressable
-      onPress={handlePress}
-      style={{
-        borderRadius: 22,
-        backgroundColor: "#FFFFFF",
-        padding: 6,
-        shadowColor: "#000000",
-        shadowOffset: { width: 4, height: 5 },
-        shadowOpacity: 1,
-        shadowRadius: 0,
-        elevation: 6,
-      }}
-    >
-      <View
+    <>
+      <Pressable
+        onPress={openDetail}
         style={{
-          borderRadius: 16,
-          backgroundColor: "#FECFB4",
-          paddingHorizontal: 22,
-          paddingTop: 22,
-          paddingBottom: 24,
-          overflow: "hidden",
-          position: "relative",
+          borderRadius: 22,
+          backgroundColor: "#FFFFFF",
+          padding: 6,
+          shadowColor: "#000000",
+          shadowOffset: { width: 4, height: 5 },
+          shadowOpacity: 1,
+          shadowRadius: 0,
+          elevation: 6,
         }}
       >
-        <Text
+        <View
           style={{
-            fontFamily: "LibreBaskerville-Bold",
-            fontSize: 20,
-            color: "#1A1A1A",
-            textAlign: "center",
-            marginBottom: 14,
+            borderRadius: 16,
+            overflow: "hidden",
+            backgroundColor: THREAD_PEACH_BG,
           }}
         >
-          {displayHeadline}
-        </Text>
+          <View style={{ height: 160, flexDirection: "row", position: "relative" }}>
+            <View style={{ flex: 1 }}>
+              {leftUri ? (
+                <ExpoImage
+                  source={{ uri: leftUri }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                />
+              ) : (
+                <View style={{ flex: 1, backgroundColor: "#D8D2CB" }} />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              {rightUri ? (
+                <ExpoImage
+                  source={{ uri: rightUri }}
+                  style={{ width: "100%", height: "100%" }}
+                  contentFit="cover"
+                />
+              ) : (
+                <View style={{ flex: 1, backgroundColor: "#C8C2BB" }} />
+              )}
+            </View>
+            {gap ? (
+              <View
+                style={{
+                  position: "absolute",
+                  alignSelf: "center",
+                  top: "50%",
+                  marginTop: -14,
+                  left: "50%",
+                  marginLeft: -52,
+                  width: 104,
+                  height: 28,
+                  borderRadius: 999,
+                  backgroundColor: "#0F0F0F",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 11,
+                    color: "#FFFFFF",
+                  }}
+                >
+                  {gap}
+                </Text>
+              </View>
+            ) : null}
+          </View>
 
-        {/* Body — Ellie avatar sits inline with the first line of text so the
-            whole block stays optically centered. RN supports <Image> inside
-            <Text> as long as width/height are explicit. */}
-        <Text
-          style={{
-            fontFamily: "Roboto-Regular",
-            fontSize: 15,
-            lineHeight: 22,
-            color: "#1A1A1A",
-            textAlign: "center",
-          }}
-        >
-          <Image
-            source={ELLIE_AVATAR}
-            style={{ width: 18, height: 18 }}
-            accessibilityLabel="Ellie"
-          />
-          {"  "}You said something interesting here{"\n"}
-          that connects to more of your past moments.
-        </Text>
-
-        <Text
-          style={{
-            fontFamily: "Roboto-Bold",
-            fontSize: 15,
-            lineHeight: 22,
-            color: "#1A1A1A",
-            textAlign: "center",
-            marginTop: 18,
-          }}
-        >
-          See what I found...
-        </Text>
-
-        {locked && (
-          <View
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              borderRadius: 16,
-              backgroundColor:
-                theme === "dark"
-                  ? "rgba(0,0,0,0.75)"
-                  : "rgba(255,255,255,0.88)",
-              justifyContent: "center",
-              alignItems: "center",
-              padding: 16,
-            }}
-          >
+          <View style={{ paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 }}>
             <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 8,
+                justifyContent: "space-between",
+                marginBottom: 10,
               }}
             >
-              <Ionicons name="lock-closed" size={18} color={colors.primary} />
-              <Text
+              <View
                 style={{
-                  fontFamily: "Roboto-Medium",
-                  fontSize: 15,
-                  color: colors.primary,
-                  textAlign: "center",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingVertical: 5,
+                  paddingHorizontal: 10,
+                  borderRadius: 999,
+                  backgroundColor: "rgba(255,255,255,0.55)",
                 }}
               >
-                Upgrade to see what Ellie found
-              </Text>
+                <View
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: dotColor,
+                  }}
+                />
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 12,
+                    color: "#1A1A1A",
+                  }}
+                >
+                  {typeLabel}
+                </Text>
+              </View>
+              {isNew ? (
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 12,
+                    letterSpacing: 0.6,
+                    color: "#7B5EA7",
+                  }}
+                >
+                  + NEW
+                </Text>
+              ) : null}
             </View>
-          </View>
-        )}
 
-        {isUnseen && <Shimmer active bandWidth={70} intervalMs={1100} />}
-      </View>
-    </Pressable>
+            <Text
+              style={{
+                fontFamily: "LibreBaskerville-Bold",
+                fontSize: 20,
+                lineHeight: 26,
+                color: "#1A1A1A",
+                marginBottom: 12,
+              }}
+            >
+              {statement}
+            </Text>
+
+            {question ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  borderRadius: 14,
+                  backgroundColor: "rgba(255,255,255,0.55)",
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                }}
+              >
+                <Text
+                  style={{
+                    flex: 1,
+                    fontFamily: "Roboto-Regular",
+                    fontSize: 14,
+                    lineHeight: 20,
+                    color: "#1A1A1A",
+                  }}
+                >
+                  {question}
+                </Text>
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    openAnswer();
+                  }}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: "#0F0F0F",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+
+          {locked ? (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: "rgba(255,255,255,0.78)",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Pressable
+                onPress={() => {
+                  launchPremiumFlow(posthog, "thread_card_locked", {
+                    bump: { surface: "thread", refId: thread.id },
+                  });
+                }}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 18,
+                  borderRadius: 999,
+                  backgroundColor: colors.primary,
+                }}
+              >
+                <Ionicons name="lock-closed" size={14} color="#1A1A1A" />
+                <Text
+                  style={{
+                    fontFamily: "Roboto-Medium",
+                    fontSize: 14,
+                    color: "#1A1A1A",
+                  }}
+                >
+                  Upgrade to unlock
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+
+      <ThreadAnswerSheet
+        visible={answerSheetOpen}
+        thread={thread}
+        onClose={() => setAnswerSheetOpen(false)}
+        onSaved={(threadId, answer) => onAnswerSaved?.(threadId, answer)}
+      />
+    </>
   );
 }

@@ -26,6 +26,8 @@ type MagicFillPeachPillButtonProps = {
   accessibilityLabel?: string;
   fullWidth?: boolean;
   size?: "default" | "large";
+  /** One-shot shimmer sweep on focus. Default true. */
+  shimmer?: boolean;
 };
 
 /** Matches {@link TryPremiumPill} chrome — peach fill, black stroke, shimmer. */
@@ -36,6 +38,7 @@ export function MagicFillPeachPillButton({
   accessibilityLabel,
   fullWidth = false,
   size = "default",
+  shimmer = true,
 }: MagicFillPeachPillButtonProps) {
   const { colors } = useTheme();
   const [pillWidth, setPillWidth] = useState(0);
@@ -43,7 +46,7 @@ export function MagicFillPeachPillButton({
 
   useFocusEffect(
     useCallback(() => {
-      if (pillWidth <= 0) return;
+      if (!shimmer || pillWidth <= 0) return;
       shimmerX.setValue(-SHIMMER_WIDTH);
       const anim = Animated.sequence([
         Animated.delay(SHIMMER_DELAY_MS),
@@ -56,7 +59,7 @@ export function MagicFillPeachPillButton({
       ]);
       anim.start();
       return () => anim.stop();
-    }, [pillWidth, shimmerX])
+    }, [shimmer, pillWidth, shimmerX])
   );
 
   const handlePress = () => {
@@ -116,28 +119,30 @@ export function MagicFillPeachPillButton({
         >
           {label}
         </Text>
-        <Animated.View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            width: SHIMMER_WIDTH,
-            transform: [{ translateX: shimmerX }, { skewX: "-20deg" }],
-          }}
-        >
-          <LinearGradient
-            colors={[
-              "rgba(255,255,255,0)",
-              "rgba(255,255,255,0.85)",
-              "rgba(255,255,255,0)",
-            ]}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={{ flex: 1 }}
-          />
-        </Animated.View>
+        {shimmer ? (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: SHIMMER_WIDTH,
+              transform: [{ translateX: shimmerX }, { skewX: "-20deg" }],
+            }}
+          >
+            <LinearGradient
+              colors={[
+                "rgba(255,255,255,0)",
+                "rgba(255,255,255,0.85)",
+                "rgba(255,255,255,0)",
+              ]}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
+              style={{ flex: 1 }}
+            />
+          </Animated.View>
+        ) : null}
       </Pressable>
     </View>
   );

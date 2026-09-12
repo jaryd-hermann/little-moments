@@ -4,6 +4,7 @@ import { setFirstCaptureAsset } from "@/lib/onboardingHandoff";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
 import { queryRecentCameraPhotos } from "@/hooks/useMediaLibrary";
 import { useOnboardingMontageStore } from "@/store/onboardingMontageStore";
+import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
 import { useTheme } from "@/hooks/useTheme";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -81,14 +82,16 @@ export default function FirstMomentScreen() {
       ...onboardingEventProps(7),
       target_ymd: targetYmd,
     });
-    router.replace({
-      pathname: "/(tabs)/today",
-      params: {
-        capture: "1",
-        onboardingFirstMoment: "1",
-        day: targetYmd,
-      },
-    });
+    // Straight to the tabs, where the first-moment chat host picks it up and
+    // opens on the favorites picker. Going via Capture first risked a new user
+    // finding nothing they liked in their recent roll and dropping off.
+    router.replace("/(tabs)/today");
+    // After the navigation lands: the chat is a `Modal` owned by the tabs
+    // layout, and iOS won't present one mid-transition from a screen that
+    // isn't on top yet.
+    setTimeout(() => {
+      useFirstMomentChatStore.getState().startBeforeCapture();
+    }, 450);
   };
 
   const title = useMemo(() => {

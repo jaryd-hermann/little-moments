@@ -3,10 +3,12 @@ import {
   resolveEntryMediaUriAsync,
   resolvePairedVideoUriAsync,
 } from "@/lib/entryMediaUrl";
+import { resolvePairedVideoFromCameraRoll, clipMayHaveLiveMotion } from "@/lib/livePhotoBackfill";
 import { chapterImageSlideToMedia, type ChapterRecord } from "@/lib/chapters";
 import type { Entry, EntryMedia } from "@/store/entryStore";
 import * as FileSystem from "expo-file-system";
 import { Image } from "expo-image";
+import { Platform } from "react-native";
 
 /**
  * App-wide media prefetcher.
@@ -45,6 +47,10 @@ const inflight = new Set<string>();
 interface QueueItem {
   media: EntryMedia;
   priority: number;
+  /** Mashup montage: download paired / video bytes before the still JPEG. */
+  motionFirst?: boolean;
+  /** Thumbnail warm only — skip paired video / camera-roll recovery. */
+  stillOnly?: boolean;
 }
 
 const queue: QueueItem[] = [];
@@ -111,15 +117,125 @@ async function downloadToCache(
  * downloads the paired Live Photo video or full-video file to FileSystem
  * cache so they can be played from disk later.
  */
-async function prefetchOne(media: EntryMedia): Promise<void> {
-  if (completed.has(media.id) || inflight.has(media.id)) return;
+function hasMotionFileCached(media: EntryMedia): boolean {
+  const paired = getCachedUriSync(media, "paired");
+  const video = getCachedUriSync(media, "video");
+  return Boolean(
+    paired?.startsWith("file:") || video?.startsWith("file:")
+  );
+}
+
+async function prefetchMotionForMedia(
+  media: EntryMedia,
+  stillUri: string | null
+): Promise<boolean> {
+  if (media.media_type === "video") {
+    if (!stillUri) return false;
+    const cached = await downloadToCache(stillUri, cachePathFor(media, "video"));
+    if (cached) {
+      rememberCache(media.id, "video", cached);
+      return true;
+    }
+    return false;
+  }
+
+  if (media.paired_video_storage_path || media.paired_video_storage_url) {
+    const pairedRemote = await resolvePairedVideoUriAsync(media);
+    if (pairedRemote) {
+      const cached = await downloadToCache(
+        pairedRemote,
+        cachePathFor(media, "paired")
+      );
+      if (cached) {
+        rememberCache(media.id, "paired", cached);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (Platform.OS === "ios" && media.taken_at) {
+    const rollUri = await resolvePairedVideoFromCameraRoll(media);
+    if (rollUri?.startsWith("file:")) {
+      const dest = cachePathFor(media, "paired");
+      try {
+        const info = await FileSystem.getInfoAsync(dest);
+        if (!info.exists || (info.size ?? 0) === 0) {
+          await FileSystem.copyAsync({ from: rollUri, to: dest });
+        }
+        const copied = await FileSystem.getInfoAsync(dest);
+        if (copied.exists && (copied.size ?? 0) > 0) {
+          rememberCache(media.id, "paired", dest);
+          return true;
+        }
+        rememberCache(media.id, "paired", rollUri);
+        return true;
+      } catch {
+        rememberCache(media.id, "paired", rollUri);
+        return true;
+      }
+    }
+    if (rollUri) {
+      const cached = await downloadToCache(rollUri, cachePathFor(media, "paired"));
+      if (cached) {
+        rememberCache(media.id, "paired", cached);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function prefetchStillInBackground(media: EntryMedia, stillUri: string): void {
+  void (async () => {
+    void Image.prefetch(stillUri).catch(() => {});
+    const cachedStill = await downloadToCache(
+      stillUri,
+      cachePathFor(media, "still")
+    );
+    rememberCache(media.id, "still", cachedStill ?? stillUri);
+  })();
+}
+
+async function prefetchOne(
+  media: EntryMedia,
+  motionFirst = false,
+  stillOnly = false
+): Promise<void> {
+  if (inflight.has(media.id)) return;
+  if (completed.has(media.id) && hasMotionFileCached(media)) return;
+  if (completed.has(media.id) && !clipMayHaveLiveMotion(media)) return;
+  if (completed.has(media.id)) {
+    completed.delete(media.id);
+  }
   inflight.add(media.id);
   try {
     const remoteStill = await resolveEntryMediaUriAsync(media);
     const stillUri = remoteStill || getEntryMediaDisplayUri(media);
-    if (!stillUri) return;
+    if (!stillUri && media.media_type !== "video") return;
 
-    if (media.media_type === "image") {
+    let gotMotion = false;
+
+    if (stillOnly && media.media_type === "image") {
+      if (!stillUri) return;
+      void Image.prefetch(stillUri).catch(() => {});
+      const cachedStill = await downloadToCache(
+        stillUri,
+        cachePathFor(media, "still")
+      );
+      rememberCache(media.id, "still", cachedStill ?? stillUri);
+      completed.add(media.id);
+      return;
+    }
+
+    if (motionFirst && clipMayHaveLiveMotion(media)) {
+      gotMotion = await prefetchMotionForMedia(media, stillUri);
+      if (stillUri && media.media_type === "image") {
+        prefetchStillInBackground(media, stillUri);
+      }
+    } else if (media.media_type === "image") {
+      if (!stillUri) return;
       void Image.prefetch(stillUri).catch(() => {});
       const cachedStill = await downloadToCache(
         stillUri,
@@ -127,25 +243,14 @@ async function prefetchOne(media: EntryMedia): Promise<void> {
       );
       rememberCache(media.id, "still", cachedStill ?? stillUri);
 
-      if (media.paired_video_storage_path || media.paired_video_storage_url) {
-        const pairedRemote = await resolvePairedVideoUriAsync(media);
-        if (pairedRemote) {
-          const cached = await downloadToCache(
-            pairedRemote,
-            cachePathFor(media, "paired")
-          );
-          if (cached) rememberCache(media.id, "paired", cached);
-        }
-      }
+      gotMotion = await prefetchMotionForMedia(media, stillUri);
     } else if (media.media_type === "video") {
-      const cached = await downloadToCache(
-        stillUri,
-        cachePathFor(media, "video")
-      );
-      if (cached) rememberCache(media.id, "video", cached);
+      gotMotion = await prefetchMotionForMedia(media, stillUri);
     }
 
-    completed.add(media.id);
+    if (gotMotion || !clipMayHaveLiveMotion(media)) {
+      completed.add(media.id);
+    }
   } finally {
     inflight.delete(media.id);
   }
@@ -157,7 +262,7 @@ function drain(): void {
     const item = queue.shift();
     if (!item) break;
     running++;
-    void prefetchOne(item.media).finally(() => {
+    void prefetchOne(item.media, item.motionFirst, item.stillOnly).finally(() => {
       running--;
       drain();
     });
@@ -168,14 +273,29 @@ function drain(): void {
  * Queue a single media item for background prefetch at the given priority.
  * Higher priority items jump the line. Already-completed items are a no-op.
  */
-export function enqueuePrefetch(media: EntryMedia, priority = 0): void {
-  if (completed.has(media.id)) return;
+export function enqueuePrefetch(
+  media: EntryMedia,
+  priority = 0,
+  opts?: { motionFirst?: boolean; stillOnly?: boolean }
+): void {
+  if (completed.has(media.id) && hasMotionFileCached(media)) return;
+  if (completed.has(media.id) && !clipMayHaveLiveMotion(media)) return;
+  if (completed.has(media.id)) {
+    completed.delete(media.id);
+  }
   const existing = queue.find((q) => q.media.id === media.id);
   if (existing) {
     if (priority > existing.priority) existing.priority = priority;
+    if (opts?.motionFirst) existing.motionFirst = true;
+    if (opts?.stillOnly) existing.stillOnly = true;
     return;
   }
-  queue.push({ media, priority });
+  queue.push({
+    media,
+    priority,
+    motionFirst: opts?.motionFirst,
+    stillOnly: opts?.stillOnly,
+  });
   drain();
 }
 
@@ -185,12 +305,19 @@ export function enqueuePrefetch(media: EntryMedia, priority = 0): void {
  * of the entries store and are the most likely to be viewed first) get
  * prefetched first.
  */
+/** Background warm cap — still JPEGs only; motion waits for mashup surfaces. */
+const BACKGROUND_PREFETCH_ENTRY_LIMIT = 16;
+
 export function enqueueEntriesForPrefetch(entries: Entry[]): void {
   let priorityOffset = 0;
+  let momentCount = 0;
   for (const e of entries) {
     if (e.entry_type !== "moment") continue;
-    for (const m of e.media ?? []) {
-      enqueuePrefetch(m, -priorityOffset);
+    if (momentCount >= BACKGROUND_PREFETCH_ENTRY_LIMIT) break;
+    momentCount++;
+    const firstMedia = e.media?.[0];
+    if (firstMedia) {
+      enqueuePrefetch(firstMedia, -priorityOffset, { stillOnly: true });
       priorityOffset++;
     }
   }
@@ -206,38 +333,29 @@ export function enqueueClipsForPrefetch(
   basePriority = 1000
 ): void {
   clips.forEach((c, i) => {
-    enqueuePrefetch(c.media, basePriority - i);
+    enqueuePrefetch(c.media, basePriority - i, { motionFirst: true });
   });
 }
 
-/** Whether prefetch has finished and a renderable URI is in the sync cache. */
+/** Whether prefetch has finished for this clip's motion playback needs. */
 export function isClipMediaPrefetched(media: EntryMedia): boolean {
-  if (completed.has(media.id)) return true;
-  if (media.media_type === "video") {
-    return !!getCachedUriSync(media, "video");
-  }
-  return !!getCachedUriSync(media, "still");
+  return isClipMotionReady(media);
 }
 
-/** Whether we have enough URI data to render a clip without a blank frame. */
+/** True when motion file is on disk and ready for instant playback. */
+export function isClipMotionReady(media: EntryMedia): boolean {
+  if (hasMotionFileCached(media)) return true;
+  if (!clipMayHaveLiveMotion(media)) {
+    return Boolean(
+      getCachedUriSync(media, "still") || getEntryMediaDisplayUri(media)
+    );
+  }
+  return false;
+}
+
+/** @deprecated — use {@link isClipMotionReady} for mashup playback gates. */
 export function isClipMediaReady(media: EntryMedia): boolean {
-  if (media.media_type === "video") {
-    return (
-      !!getCachedUriSync(media, "video") ||
-      !!getEntryMediaDisplayUri(media)
-    );
-  }
-  const still =
-    getCachedUriSync(media, "still") || getEntryMediaDisplayUri(media);
-  if (!still) return false;
-  if (media.paired_video_storage_path || media.paired_video_storage_url) {
-    return (
-      !!getCachedUriSync(media, "paired") ||
-      !!media.paired_video_storage_path ||
-      !!media.paired_video_storage_url
-    );
-  }
-  return true;
+  return isClipMotionReady(media);
 }
 
 /**
@@ -252,15 +370,17 @@ export async function waitForClipsReady(
   enqueueClipsForPrefetch(clips, 12000);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (clips.every((c) => isClipMediaPrefetched(c.media))) return;
+    if (clips.every((c) => isClipMotionReady(c.media))) return;
     await new Promise((r) => setTimeout(r, 80));
   }
 }
 
 /** Warm collage images used on chapter list / feed cover cards. */
+const CHAPTER_COVER_PREFETCH_LIMIT = 4;
+
 export function enqueueChapterCoversForPrefetch(chapters: ChapterRecord[]): void {
   let offset = 0;
-  for (const ch of chapters) {
+  for (const ch of chapters.slice(0, CHAPTER_COVER_PREFETCH_LIMIT)) {
     if (!ch.image_slide) continue;
     for (const m of chapterImageSlideToMedia(ch.image_slide)) {
       enqueuePrefetch(m, 800 - offset);

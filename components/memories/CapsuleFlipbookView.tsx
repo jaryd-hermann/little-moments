@@ -18,6 +18,8 @@ import { entryMomentDayHeadingText } from "@/lib/reflectionTarget";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
 import { EntryPinToggle } from "@/components/common/EntryPinToggle";
 import { ShareMomentModal } from "@/components/common/ShareMomentModal";
+import { enqueueMomentsMediaPrefetch } from "@/lib/viewportMediaPrefetch";
+import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 
 const ONBOARDING_STORAGE_KEY = "capsule_flipbook_swipe_hint_seen";
 
@@ -35,6 +37,28 @@ function firstSentence(text: string): string {
   if (!trimmed) return "";
   const m = trimmed.match(/^[\s\S]*?[.!?](?=\s|$)/);
   return (m?.[0] ?? trimmed).trim();
+}
+
+/**
+ * Deterministic Fisher-Yates driven by a mulberry32 PRNG. Same `(list, seed)`
+ * always yields the same order, so the deck stays put across re-renders and
+ * only reorders when the seed changes.
+ */
+function seededShuffle<T>(list: T[], seed: number): T[] {
+  let state = seed >>> 0 || 1;
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 /** Same ordering as Capsule list “newest” sort: `entry_date` desc, then `created_at`. */
@@ -69,10 +93,17 @@ export function CapsuleFlipbookView({
     [entries]
   );
 
-  const orderedMoments = useMemo(
-    () => [...moments].sort(compareMomentsListOrder),
-    [moments]
+  const shuffleEnabled = useCapsuleFlipbookStore(
+    (s) => s.flipbookShuffleEnabled
   );
+  const shuffleSeed = useCapsuleFlipbookStore((s) => s.flipbookShuffleSeed);
+  const focusEntryId = useCapsuleFlipbookStore((s) => s.focusEntryId);
+  const setFocusEntryId = useCapsuleFlipbookStore((s) => s.setFocusEntryId);
+
+  const orderedMoments = useMemo(() => {
+    const chronological = [...moments].sort(compareMomentsListOrder);
+    return shuffleEnabled ? seededShuffle(chronological, shuffleSeed) : chronological;
+  }, [moments, shuffleEnabled, shuffleSeed]);
 
   const momentsKey = useMemo(
     () => orderedMoments.map((e) => e.id).join(","),
@@ -101,6 +132,18 @@ export function CapsuleFlipbookView({
       setCurrentIdx(0);
       return;
     }
+    // A recap push asked us to open on one specific moment, so it becomes the
+    // visible card regardless of the shuffled order. Only clear the request
+    // once the moment is actually present — entries may still be loading.
+    if (focusEntryId) {
+      const focused = orderedMoments.find((e) => e.id === focusEntryId);
+      if (focused) {
+        setHistory([focused]);
+        setCurrentIdx(0);
+        setFocusEntryId(null);
+        return;
+      }
+    }
     setHistory((prev) => {
       if (prev.length === 0) return [orderedMoments[0]];
       const ids = new Set(orderedMoments.map((e) => e.id));
@@ -110,13 +153,25 @@ export function CapsuleFlipbookView({
         orderedMoments.findIndex((e) => e.id === id);
       return [...pruned].sort((a, b) => rank(a.id) - rank(b.id));
     });
-  }, [momentsKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [momentsKey, focusEntryId]);
 
   useEffect(() => {
     setCurrentIdx((i) =>
       Math.min(Math.max(0, i), Math.max(0, history.length - 1))
     );
   }, [history.length]);
+
+  useEffect(() => {
+    const batch: Entry[] = [];
+    const current = history[currentIdx];
+    if (current) batch.push(current);
+    const nextInHistory = history[currentIdx + 1];
+    if (nextInHistory) batch.push(nextInHistory);
+    if (batch.length > 0) {
+      enqueueMomentsMediaPrefetch(batch, 9000);
+    }
+  }, [currentIdx, history]);
 
   const cardOpacity = useSharedValue(1);
   const cardTranslateY = useSharedValue(0);

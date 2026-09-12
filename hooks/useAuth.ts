@@ -6,8 +6,18 @@ import { logOutRevenueCat } from "@/lib/revenuecat";
 import { cancelAllNotifications } from "@/lib/notifications";
 import { applyNotificationTimeFromProfile } from "@/lib/notificationTimeSync";
 import { applyThemeFromProfile } from "@/lib/themeSync";
-import { syncLocalMagicFillFlagsToProfile } from "@/lib/magicFillProfileSync";
+import { applyMagicFillFlagsFromProfile, syncLocalMagicFillFlagsToProfile } from "@/lib/magicFillProfileSync";
+import { applyStreaksEnabledFromProfile } from "@/lib/streakSettingsSync";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useSecondMomentPaywallStore } from "@/store/secondMomentPaywallStore";
+import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
+
+/** Clear per-account onboarding state so a new sign-in on this device starts clean. */
+function resetAccountScopedLocalState() {
+  useSettingsStore.getState().resetUserScopedFlags();
+  useSecondMomentPaywallStore.getState().markShownAtCount(0);
+  useFirstMomentChatStore.getState().resetForNewAccount();
+}
 
 export function useAuth() {
   const { user, profile, session, isLoading, setProfile, clearAuth } =
@@ -24,9 +34,8 @@ export function useAuth() {
       setProfile(data as Profile);
       applyNotificationTimeFromProfile(data.notification_time);
       applyThemeFromProfile(data.color_theme, data as Profile);
-      if ((data as Profile).has_completed_magic_fill) {
-        useSettingsStore.getState().setHasCompletedMagicFill(true);
-      }
+      applyMagicFillFlagsFromProfile(data as Profile);
+      applyStreaksEnabledFromProfile(data as Profile);
       void syncLocalMagicFillFlagsToProfile();
     }
     return data as Profile | null;
@@ -41,6 +50,7 @@ export function useAuth() {
     await logOutRevenueCat();
     await supabase.auth.signOut();
     clearAuth();
+    resetAccountScopedLocalState();
     router.replace("/splash");
   }, []);
 
@@ -53,6 +63,7 @@ export function useAuth() {
     await logOutRevenueCat();
     await supabase.auth.signOut();
     clearAuth();
+    resetAccountScopedLocalState();
     router.replace("/splash");
   }, [user]);
 

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
+import type { RememberMostId } from "@/lib/rememberMost";
 
 export interface Profile {
   id: string;
@@ -54,6 +55,8 @@ export interface Profile {
   notification_timezone?: string | null;
   /** Morning vs evening — set during onboarding "When?" step. */
   capture_rhythm?: "morning" | "evening" | null;
+  /** Closing question of the first-moment chat. Null if skipped. */
+  remember_most?: RememberMostId | null;
   /** Default day chip: reflect on yesterday vs today (user can change per capture). */
   reflection_target_default?: "yesterday" | "today" | null;
   /** Local YYYY-MM-DD: last midday “snap a pic” nudge sent (server cron). */

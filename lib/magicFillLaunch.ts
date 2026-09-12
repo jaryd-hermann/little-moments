@@ -5,6 +5,9 @@ export type MagicFillEntrySource =
   | "capsule_header"
   | "capsule_banner"
   | "capture_banner"
+  | "capture_header"
+  | "day_picker_footer"
+  | "catch_up_modal"
   | "push"
   | "push_lapsed"
   | "push_engaged";

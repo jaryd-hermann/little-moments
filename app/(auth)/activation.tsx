@@ -5,15 +5,20 @@ import type {
 } from "@/components/ellie/EllieChatFlow";
 import { getDailyWord } from "@/constants/words";
 import { CaptureBrowseHeading } from "@/components/capture/CaptureBrowseHeading";
-import { CuratorBrowsePanel } from "@/components/capture/CuratorBrowsePanel";
+import {
+  RecentMomentsCarousel,
+  type RecentFeedItem,
+} from "@/components/capture/RecentMomentsCarousel";
 import { useEntries } from "@/hooks/useEntries";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import {
   hasFullPhotoLibraryAccess,
-  queryCameraPhotosForLocalDay,
+  queryRecentCameraMediaPage,
   useMediaLibrary,
   type MediaAsset,
 } from "@/hooks/useMediaLibrary";
+import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import { useTheme } from "@/hooks/useTheme";
 import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
@@ -29,7 +34,9 @@ import {
   photoAgeDays,
   type PhotoBucket,
 } from "@/lib/photoBucket";
-import { uploadEntryMedia } from "@/lib/storage";
+import { attachEntryMedia } from "@/lib/attachEntryMedia";
+import { attachVoiceNoteToEntry } from "@/lib/entryVoiceNote";
+import type { VoiceClip } from "@/components/composer/MicRecorder";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/store/authStore";
 import { useAuthStore } from "@/store/authStore";
@@ -90,8 +97,18 @@ export default function ActivationScreen() {
   const [questionAutoStart, setQuestionAutoStart] = useState<
     "speaking" | "typing" | null
   >(null);
-  const [dayPhotos, setDayPhotos] = useState<MediaAsset[]>([]);
-  const [loadingDayPhotos, setLoadingDayPhotos] = useState(false);
+  // Continuous recent-moments feed (replaces the single-day picker so users
+  // aren't stuck on one day with no good photo).
+  const [recentMedia, setRecentMedia] = useState<MediaAsset[]>([]);
+  const [recentCursor, setRecentCursor] = useState<string | null>(null);
+  const [recentHasMore, setRecentHasMore] = useState(true);
+  // Starts true so the carousel's initial scroll waits for the feed before
+  // landing on the most-recent media item.
+  const [recentLoading, setRecentLoading] = useState(true);
+  const recentLoadingMoreRef = useRef(false);
+  const [headerDate, setHeaderDate] = useState<Date>(captureTargetDate);
+  /** Calendar day of the chosen photo — entry is saved against this day. */
+  const [pinnedDayDate, setPinnedDayDate] = useState<Date>(captureTargetDate);
 
   const flowPromptType =
     promptTypeParam === "word" ? "word" : pinnedQuestion ? "question" : "photo";
@@ -150,28 +167,36 @@ export default function ActivationScreen() {
     void (async () => {
       const can = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
       if (!can) {
+        // Permission not yet determined: stay in the loading state so the
+        // carousel doesn't lock its initial scroll on the empty slide before
+        // real media loads.
+        if (permissionStatus == null) return;
         if (!cancelled) {
-          setDayPhotos([]);
-          setLoadingDayPhotos(false);
+          setRecentMedia([]);
+          setRecentCursor(null);
+          setRecentHasMore(false);
+          setRecentLoading(false);
         }
         return;
       }
-      setLoadingDayPhotos(true);
+      setRecentLoading(true);
       try {
-        const list = await queryCameraPhotosForLocalDay(captureTargetDate);
+        const page = await queryRecentCameraMediaPage({ pageSize: 24 });
         if (!cancelled) {
-          setDayPhotos(list);
+          setRecentMedia(page.assets);
+          setRecentCursor(page.endCursor);
+          setRecentHasMore(page.hasNextPage);
           posthog.capture(
             "photo_carousel_viewed",
             onboardingEventProps(4, {
               target_ymd: memoryYmd,
-              photo_count: list.length,
+              photo_count: page.assets.length,
               surface: "activation",
             })
           );
         }
       } finally {
-        if (!cancelled) setLoadingDayPhotos(false);
+        if (!cancelled) setRecentLoading(false);
       }
     })();
     return () => {
@@ -179,12 +204,53 @@ export default function ActivationScreen() {
     };
   }, [
     promptTypeParam,
-    captureTargetDate,
     permissionStatus,
     accessPrivileges,
     memoryYmd,
     posthog,
   ]);
+
+  const loadMoreRecentMedia = useCallback(() => {
+    if (recentLoadingMoreRef.current || !recentHasMore || !recentCursor) return;
+    recentLoadingMoreRef.current = true;
+    void (async () => {
+      try {
+        const page = await queryRecentCameraMediaPage({
+          after: recentCursor,
+          pageSize: 24,
+        });
+        setRecentMedia((prev) => {
+          const seen = new Set(prev.map((a) => a.id));
+          const merged = [...prev];
+          for (const a of page.assets) if (!seen.has(a.id)) merged.push(a);
+          return merged;
+        });
+        setRecentCursor(page.endCursor);
+        setRecentHasMore(page.hasNextPage);
+      } finally {
+        recentLoadingMoreRef.current = false;
+      }
+    })();
+  }, [recentCursor, recentHasMore]);
+
+  const recentFeedItems = useMemo<RecentFeedItem[]>(() => {
+    const todayY = format(new Date(), "yyyy-MM-dd");
+    const firstIsToday =
+      recentMedia.length > 0 &&
+      format(new Date(recentMedia[0].creationTime), "yyyy-MM-dd") === todayY;
+    const items: RecentFeedItem[] = [];
+    if (!firstIsToday) items.push({ type: "today-empty", key: "today-empty" });
+    for (const a of recentMedia) {
+      items.push({ type: "media", key: `m-${a.id}`, asset: a });
+    }
+    return items;
+  }, [recentMedia]);
+
+  // Onboarding starts on the most-recent media item.
+  const carouselInitialIndex = useMemo(() => {
+    const idx = recentFeedItems.findIndex((it) => it.type === "media");
+    return idx >= 0 ? idx : 0;
+  }, [recentFeedItems]);
 
   const clearPinState = useCallback(() => {
     setPhotoUri(undefined);
@@ -197,46 +263,69 @@ export default function ActivationScreen() {
   }, []);
 
   const handlePinPhotoFromBrowse = useCallback(
-    (asset: MediaAsset) => {
+    (asset: MediaAsset, dayDate: Date) => {
       const bucket = categorizePhotoBucket(asset.creationTime);
       setPinnedQuestion(null);
       setQuestionAutoStart(null);
       setPhotoUri(asset.uri);
       setPhotoDate(asset.creationTime);
       setPhotoBucket(bucket);
+      setPinnedDayDate(dayDate);
       setShuffleCount(0);
       posthog.capture(
         "photo_pinned",
         onboardingEventProps(4, {
           surface: "activation",
-          target_ymd: memoryYmd,
+          target_ymd: format(dayDate, "yyyy-MM-dd"),
           photo_bucket: bucket,
         })
       );
     },
-    [posthog, memoryYmd]
+    [posthog]
   );
 
-  const handleStartQuestionFromBrowse = useCallback(
-    (q: ReflectionQuestionItem, method: "speaking" | "typing") => {
-      setPhotoUri(undefined);
-      setPhotoDate(undefined);
-      setPhotoBucket(undefined);
-      setPinnedQuestion(q);
-      setShuffleCount(0);
-      setQuestionAutoStart(method);
-      posthog.capture(
-        "question_pinned",
-        onboardingEventProps(4, {
-          surface: "activation",
-          question_id: q.id,
-          target_ymd: memoryYmd,
-          input_method: method,
-        })
+  const handleCarouselCameraCapture = useCallback(async () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) return;
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        quality: 0.9,
+        videoMaxDuration: 2,
+        allowsEditing: false,
+      });
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+      const first = result.assets[0];
+      const uri = first.uri;
+      const isVideo =
+        first.type === "video" || /\.(mov|mp4|m4v)$/i.test(uri ?? "");
+      let savedId: string | null = null;
+      try {
+        const saved = await MediaLibrary.createAssetAsync(uri);
+        savedId = saved.id;
+      } catch {
+        /* limited access — synthetic id */
+      }
+      const now = new Date();
+      const asset: MediaAsset = {
+        id: savedId ?? `cam-${Date.now()}`,
+        uri,
+        creationTime: now.getTime(),
+        mediaType: isVideo ? "video" : "photo",
+        width: first.width ?? 0,
+        height: first.height ?? 0,
+      };
+      handlePinPhotoFromBrowse(
+        asset,
+        new Date(now.getFullYear(), now.getMonth(), now.getDate())
       );
-    },
-    [posthog, memoryYmd]
-  );
+    } catch {
+      /* swallow */
+    }
+  }, [handlePinPhotoFromBrowse]);
 
   const handleComplete = useCallback(
     async (entry: {
@@ -245,14 +334,15 @@ export default function ActivationScreen() {
       rawText: string;
       attachedPhotoUri?: string;
       attachedPhotoTakenAtMs?: number;
+      voiceClip?: VoiceClip;
       analytics?: MomentCaptureAnalytics;
     }) => {
       const now = new Date();
-      const mem = promptTypeParam === "word" ? now : captureTargetDate;
+      const mem = promptTypeParam === "word" ? now : pinnedDayDate;
       const entryYmd =
         promptTypeParam === "word"
           ? format(now, "yyyy-MM-dd")
-          : format(captureTargetDate, "yyyy-MM-dd");
+          : format(pinnedDayDate, "yyyy-MM-dd");
       const photoBucketAtSave = entry.attachedPhotoTakenAtMs
         ? categorizePhotoBucket(entry.attachedPhotoTakenAtMs)
         : null;
@@ -279,31 +369,22 @@ export default function ActivationScreen() {
         photo_age_days_at_save: photoAgeDaysAtSave,
       });
 
+      if (entry.voiceClip && user?.id && saved?.id) {
+        void attachVoiceNoteToEntry(user.id, saved.id, entry.voiceClip);
+      }
+
       if (entry.attachedPhotoUri && user?.id && saved?.id) {
         setActivationPhotoUri(entry.attachedPhotoUri);
         const entryId = saved.id;
         const takenAtIso = entry.attachedPhotoTakenAtMs
           ? new Date(entry.attachedPhotoTakenAtMs).toISOString()
           : null;
-        try {
-          const { publicUrl, storagePath } = await uploadEntryMedia(
-            user.id,
-            entryId,
-            entry.attachedPhotoUri,
-            "image"
-          );
-          await supabase.from("entry_media").insert({
-            entry_id: entryId,
-            user_id: user.id,
-            storage_path: storagePath,
-            storage_url: publicUrl,
-            media_type: "image",
-            display_order: 0,
-            taken_at: takenAtIso,
-          });
-        } catch (err) {
-          console.error("[Activation] Failed to upload media:", err);
-        }
+        await attachEntryMedia({
+          userId: user.id,
+          entryId,
+          uri: entry.attachedPhotoUri,
+          takenAtIso,
+        });
       }
 
       await fetchEntries(saved?.id);
@@ -352,7 +433,7 @@ export default function ActivationScreen() {
       user,
       posthog,
       setProfile,
-      captureTargetDate,
+      pinnedDayDate,
     ]
   );
 
@@ -513,19 +594,24 @@ export default function ActivationScreen() {
             contentContainerStyle={{ paddingBottom: 24 }}
             showsVerticalScrollIndicator={false}
           >
-            <CuratorBrowsePanel
-              key={memoryYmd}
-              headingTitle={captureHeading.title}
-              onPressChangeDay={() => {}}
-              dayPhotos={dayPhotos}
-              loadingPhotos={loadingDayPhotos}
-              onChoosePhoto={handlePinPhotoFromBrowse}
-              onStartQuestionCapture={handleStartQuestionFromBrowse}
-              hideChangeDay
-              analyticsContext={{
-                target_ymd: memoryYmd,
-                surface: "activation",
-              }}
+            <View style={{ marginTop: 8 }}>
+              <CaptureBrowseHeading
+                upperLabel="CAPTURING FOR"
+                title={format(headerDate, "EEE")}
+                titleSecondary={format(headerDate, ", MMM d")}
+                tickerKey={format(headerDate, "yyyy-MM-dd")}
+                hideChangeDay
+              />
+            </View>
+            <RecentMomentsCarousel
+              items={recentFeedItems}
+              loading={recentLoading}
+              initialIndex={carouselInitialIndex}
+              onActiveDayChange={setHeaderDate}
+              onSettleDay={setHeaderDate}
+              onChoose={handlePinPhotoFromBrowse}
+              onCaptureWithCamera={() => void handleCarouselCameraCapture()}
+              onEndReached={loadMoreRecentMedia}
             />
           </ScrollView>
           {/*

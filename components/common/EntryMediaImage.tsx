@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Image as RNImage,
@@ -10,7 +10,9 @@ import {
   type ImageLoadEventData as RNImageLoadEventData,
   StyleSheet,
 } from "react-native";
-import * as FileSystem from "expo-file-system";
+// `/legacy`: `cacheDirectory` isn't on the current API, so importing the new
+// one leaves it undefined and silently skips every download below.
+import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import type { EntryMedia } from "@/store/entryStore";
@@ -23,6 +25,8 @@ import {
   isSupabaseStorageObjectUrl,
 } from "@/lib/entryMediaUrl";
 import { getCachedUriSync } from "@/lib/mediaPrefetch";
+import { peekVideoPosterUri, resolveVideoPosterUri } from "@/lib/videoPoster";
+import { resolvePairedVideoFromCameraRoll } from "@/lib/livePhotoBackfill";
 import { useSettingsStore } from "@/store/settingsStore";
 import { Shimmer } from "@/components/common/Shimmer";
 
@@ -51,6 +55,18 @@ interface EntryMediaImageProps {
   transition?: number;
   /** Show a shimmer placeholder until the still (or Live Photo video) is ready. */
   showLoadingShimmer?: boolean;
+  /**
+   * Mashup montage: when paired video was never uploaded, try recovering the
+   * Live Photo loop from the camera roll via `taken_at`.
+   */
+  tryCameraRollLive?: boolean;
+  /** Fired once when Live Photo motion is visible (first video frame). */
+  onLiveMotionStart?: () => void;
+  /**
+   * Mashup montage: render only the Live Photo video — no still frame underneath.
+   * Waits on a dark surface until motion is ready so clips feel like a movie.
+   */
+  livePhotoMotionOnly?: boolean;
 }
 
 type SourceShape = { uri: string; headers?: Record<string, string> };
@@ -77,6 +93,55 @@ function hasPairedVideo(media: EntryMedia): boolean {
   );
 }
 
+function hasPairedVideoSource(media: EntryMedia): boolean {
+  return hasPairedVideo(media) || Boolean(getCachedUriSync(media, "paired"));
+}
+
+/**
+ * The remote bytes as a local file, downloaded once and reused on later mounts.
+ * Null when there's no cache to write to or the fetch failed, in which case
+ * callers stay on the remote URL.
+ */
+async function cacheRemoteToFile(
+  mediaId: string,
+  remote: string,
+  ext: "jpg" | "mp4"
+): Promise<string | null> {
+  if (!FileSystem.cacheDirectory || !remote.startsWith("http")) return null;
+  const path = `${FileSystem.cacheDirectory}lm-em-${mediaId}.${ext}`;
+  try {
+    const info = await FileSystem.getInfoAsync(path);
+    if (info.exists && (info.size ?? 0) > 0) return info.uri;
+    const dl = await FileSystem.downloadAsync(remote, path);
+    return dl.status === 200 ? dl.uri : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Still frame for a video row. `Image` can't decode an mp4, so without this a
+ * video moment renders as an empty tile wherever it appears in a list or grid.
+ * Thumbnailing wants a local file — handed a remote URL, AVFoundation streams
+ * the whole clip — so reuse whatever copy is already on disk first.
+ */
+async function resolveVideoStill(media: EntryMedia): Promise<string | null> {
+  const peeked = peekVideoPosterUri(media.id);
+  if (peeked) return peeked;
+
+  const cached = getCachedUriSync(media, "video");
+  let source = cached?.startsWith("file:") ? cached : null;
+
+  if (!source) {
+    const remote =
+      (await resolveEntryMediaUriAsync(media)) || getEntryMediaDisplayUri(media);
+    if (!remote) return null;
+    source = (await cacheRemoteToFile(media.id, remote, "mp4")) ?? remote;
+  }
+
+  return resolveVideoPosterUri(media.id, source, 0);
+}
+
 export function EntryMediaImage({
   media,
   style,
@@ -86,8 +151,24 @@ export function EntryMediaImage({
   enableLivePhoto = false,
   transition,
   showLoadingShimmer = false,
+  tryCameraRollLive = false,
+  onLiveMotionStart,
+  livePhotoMotionOnly = false,
 }: EntryMediaImageProps) {
+  const motionStartFiredRef = useRef(false);
+  const fireLiveMotionStart = () => {
+    if (motionStartFiredRef.current) return;
+    motionStartFiredRef.current = true;
+    onLiveMotionStart?.();
+  };
+
+  useEffect(() => {
+    motionStartFiredRef.current = false;
+  }, [media.id]);
   const [displayUri, setDisplayUri] = useState<string | null>(() => {
+    // A video's own URI is an mp4, which would only fail to decode — wait for
+    // the poster instead.
+    if (media.media_type === "video") return peekVideoPosterUri(media.id);
     const cachedStill = getCachedUriSync(media, "still");
     if (cachedStill) return cachedStill;
     const syncUri = getEntryMediaDisplayUri(media);
@@ -106,16 +187,49 @@ export function EntryMediaImage({
     enableLivePhoto &&
     livePhotoEnabled &&
     Platform.OS === "ios" &&
-    hasPairedVideo(media);
+    media.media_type !== "video" &&
+    (hasPairedVideoSource(media) ||
+      (tryCameraRollLive && Boolean(media.taken_at)));
   const livePhotoActive = Boolean(wantsLivePhoto && pairedVideoUri);
+  const [liveVideoReady, setLiveVideoReady] = useState(() =>
+    Boolean(pairedVideoUri?.startsWith("file:"))
+  );
+  const [liveVideoFailed, setLiveVideoFailed] = useState(false);
+  const livePhotoLoopActive = livePhotoActive && !liveVideoFailed;
   const livePhotoPlayer = useVideoPlayer(
-    livePhotoActive ? pairedVideoUri : null,
+    livePhotoLoopActive ? pairedVideoUri : null,
     (p) => {
       p.loop = true;
       p.muted = true;
       p.play();
     }
   );
+
+  useEffect(() => {
+    if (!livePhotoLoopActive || !onLiveMotionStart) return;
+    if (!pairedVideoUri?.startsWith("file:")) return;
+    const t = setTimeout(() => fireLiveMotionStart(), 80);
+    return () => clearTimeout(t);
+  }, [livePhotoLoopActive, pairedVideoUri, media.id, onLiveMotionStart]);
+
+  useEffect(() => {
+    if (pairedVideoUri?.startsWith("file:")) {
+      setLiveVideoReady(true);
+      setLiveVideoFailed(false);
+      return;
+    }
+    setLiveVideoReady(false);
+    setLiveVideoFailed(false);
+    if (!livePhotoActive || !pairedVideoUri) return;
+    const t = setTimeout(() => setLiveVideoFailed(true), 3500);
+    return () => clearTimeout(t);
+  }, [livePhotoActive, pairedVideoUri, media.id]);
+
+  useEffect(() => {
+    if (!wantsLivePhoto || livePhotoLoopActive) return;
+    if (!liveVideoFailed || !displayUri) return;
+    fireLiveMotionStart();
+  }, [wantsLivePhoto, livePhotoLoopActive, liveVideoFailed, displayUri]);
 
   useEffect(() => {
     if (!wantsLivePhoto) {
@@ -130,9 +244,17 @@ export function EntryMediaImage({
     }
 
     let cancelled = false;
-    void resolvePairedVideoUriAsync(media).then((uri) => {
-      if (!cancelled && uri) setPairedVideoUri(uri);
-    });
+    void (async () => {
+      if (hasPairedVideo(media)) {
+        const uri = await resolvePairedVideoUriAsync(media);
+        if (!cancelled && uri) setPairedVideoUri(uri);
+        return;
+      }
+      if (tryCameraRollLive && media.taken_at) {
+        const rollUri = await resolvePairedVideoFromCameraRoll(media);
+        if (!cancelled && rollUri) setPairedVideoUri(rollUri);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -140,13 +262,43 @@ export function EntryMediaImage({
     media.id,
     media.paired_video_storage_path,
     media.paired_video_storage_url,
+    media.taken_at,
     wantsLivePhoto,
+    tryCameraRollLive,
   ]);
+
+  // Pick up motion files as the prefetch worker finishes (mashup montage).
+  useEffect(() => {
+    if (!wantsLivePhoto) return;
+    if (pairedVideoUri?.startsWith("file:")) return;
+
+    const poll = setInterval(() => {
+      const cached = getCachedUriSync(media, "paired");
+      if (cached) setPairedVideoUri(cached);
+    }, 80);
+    const stop = setTimeout(() => clearInterval(poll), 12000);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(stop);
+    };
+  }, [wantsLivePhoto, media.id, pairedVideoUri]);
 
   useEffect(() => {
     let cancelled = false;
     setUseRnFallback(false);
     setStillLoaded(false);
+
+    if (media.media_type === "video") {
+      void (async () => {
+        const poster = await resolveVideoStill(media);
+        if (cancelled || !poster) return;
+        setDisplayUri(poster);
+        setStillLoaded(true);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const cachedStill = getCachedUriSync(media, "still");
     if (cachedStill?.startsWith("file:")) {
@@ -172,19 +324,15 @@ export function EntryMediaImage({
           return;
         }
 
-        if (FileSystem.cacheDirectory && remote.startsWith("http")) {
-          const ext = media.media_type === "video" ? "mp4" : "jpg";
-          const path = `${FileSystem.cacheDirectory}lm-em-${media.id}.${ext}`;
-          const dl = await FileSystem.downloadAsync(remote, path);
-          if (cancelled) return;
-          if (dl.status === 200) {
-            if (__DEV__) {
-              console.log("[EntryMediaImage] cached to file", media.id);
-            }
-            setDisplayUri(dl.uri);
-            setStillLoaded(true);
-            return;
+        const cachedFile = await cacheRemoteToFile(media.id, remote, "jpg");
+        if (cancelled) return;
+        if (cachedFile) {
+          if (__DEV__) {
+            console.log("[EntryMediaImage] cached to file", media.id);
           }
+          setDisplayUri(cachedFile);
+          setStillLoaded(true);
+          return;
         }
 
         setDisplayUri(remote);
@@ -204,8 +352,8 @@ export function EntryMediaImage({
   const expectingMedia = Boolean(
     media.storage_path?.trim() || media.storage_url?.trim()
   );
-  const mediaReady = livePhotoActive
-    ? Boolean(pairedVideoUri)
+  const mediaReady = livePhotoLoopActive
+    ? liveVideoReady || Boolean(displayUri)
     : displayUri
       ? stillLoaded
       : !expectingMedia;
@@ -215,7 +363,7 @@ export function EntryMediaImage({
     { overflow: "hidden" as const, backgroundColor: "rgba(128,128,128,0.12)" },
   ];
 
-  if (!displayUri && !livePhotoActive) {
+  if (!displayUri && !wantsLivePhoto) {
     if (showLoadingShimmer && expectingMedia) {
       return (
         <View style={shimmerHostStyle}>
@@ -236,10 +384,56 @@ export function EntryMediaImage({
   const showShimmerOverlay =
     showLoadingShimmer && !mediaReady && (displayUri || livePhotoActive);
 
-  // Live Photo override: render the looping paired video on top of the still
-  // surface. The still loads in the background so freshly mounted views (and
-  // any contentFit / sizing logic) still get a `onLoad` event.
-  if (livePhotoActive) {
+  const liveVideoView = livePhotoLoopActive ? (
+    <VideoView
+      player={livePhotoPlayer}
+      style={StyleSheet.absoluteFill}
+      contentFit={contentFit === "contain" ? "contain" : "cover"}
+      nativeControls={false}
+      allowsPictureInPicture={false}
+      onFirstFrameRender={() => {
+        setLiveVideoReady(true);
+        setLiveVideoFailed(false);
+        fireLiveMotionStart();
+      }}
+    />
+  ) : null;
+
+  // Mashup montage: video only — no still flash before motion.
+  if (wantsLivePhoto && livePhotoMotionOnly) {
+    if (livePhotoLoopActive) {
+      return <View style={style}>{liveVideoView}</View>;
+    }
+
+    if (liveVideoFailed && displayUri) {
+      const stillSrc = sourceForUri(displayUri);
+      const stillExpoSource = stillSrc.headers
+        ? { uri: displayUri, headers: stillSrc.headers }
+        : { uri: displayUri };
+      return (
+        <View style={style}>
+          <Image
+            source={stillExpoSource}
+            style={{ width: "100%", height: "100%" }}
+            contentFit={contentFit}
+            cachePolicy="memory-disk"
+            onLoad={(e) => {
+              const w = e.source?.width ?? 0;
+              const h = e.source?.height ?? 0;
+              if (w > 0 && h > 0) onLoad?.({ width: w, height: h });
+              fireLiveMotionStart();
+            }}
+          />
+        </View>
+      );
+    }
+
+    return <View style={[style, styles.motionOnlyWaiting]} />;
+  }
+
+  // Live Photo: still underneath, native loop on top. Use `wantsLivePhoto` so
+  // mashup montages stay in this path while paired video resolves.
+  if (wantsLivePhoto) {
     const stillSrc = displayUri ? sourceForUri(displayUri) : null;
     const stillExpoSource =
       stillSrc && displayUri
@@ -253,7 +447,9 @@ export function EntryMediaImage({
         {stillExpoSource ? (
           <Image
             source={stillExpoSource}
-            style={{ width: 0, height: 0, opacity: 0, position: "absolute" }}
+            style={{ width: "100%", height: "100%" }}
+            contentFit={contentFit}
+            cachePolicy="memory-disk"
             onLoad={(e) => {
               const w = e.source?.width ?? 0;
               const h = e.source?.height ?? 0;
@@ -261,14 +457,15 @@ export function EntryMediaImage({
               if (w > 0 && h > 0) onLoad?.({ width: w, height: h });
             }}
           />
-        ) : null}
-        <VideoView
-          player={livePhotoPlayer}
-          style={{ width: "100%", height: "100%" }}
-          contentFit={contentFit === "contain" ? "contain" : "cover"}
-          nativeControls={false}
-          allowsPictureInPicture={false}
-        />
+        ) : (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: "rgba(128,128,128,0.2)" },
+            ]}
+          />
+        )}
+        {livePhotoLoopActive ? liveVideoView : null}
         {showShimmerOverlay ? (
           <Shimmer active skewDeg={0} style={StyleSheet.absoluteFill} />
         ) : null}
@@ -352,3 +549,9 @@ export function EntryMediaImage({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  motionOnlyWaiting: {
+    backgroundColor: "#111111",
+  },
+});

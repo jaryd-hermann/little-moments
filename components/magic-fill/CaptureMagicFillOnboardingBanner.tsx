@@ -22,9 +22,20 @@ export function resolveCaptureMagicFillBanner(opts: {
   totalMomentCount: number;
   hasCompletedMagicFill: boolean;
   viewingDayHasMoment: boolean;
+  /** Dev: bypass completion + moment-count gates when the viewed day has a moment. */
+  devForceVariant?: CaptureMagicFillBannerVariant | null;
+  devIgnoreCompleted?: boolean;
 }): CaptureMagicFillBannerVariant | null {
   if (!opts.viewingDayHasMoment) return null;
-  if (opts.hasCompletedMagicFill) return null;
+
+  const completed =
+    opts.devIgnoreCompleted || opts.devForceVariant
+      ? false
+      : opts.hasCompletedMagicFill;
+  if (completed && !opts.devForceVariant) return null;
+
+  if (opts.devForceVariant) return opts.devForceVariant;
+
   if (opts.totalMomentCount < 1 || opts.totalMomentCount >= 3) return null;
   return opts.totalMomentCount === 1 ? "first_moment" : "second_moment";
 }

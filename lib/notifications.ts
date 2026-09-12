@@ -44,12 +44,12 @@ function dailyReminderCopy(target: LocalReminderReflectionTarget): {
   if (target === "yesterday") {
     return {
       title: "Your moment for yesterday",
-      body: "Pick a photo from that day or answer a quick question — under two minutes.",
+      body: "Pick a photo from that day and capture a moment in under 60 seconds.",
     };
   }
   return {
     title: "Your moment for today",
-    body: "Pick a photo from today or answer a quick question — under two minutes.",
+    body: "Pick a photo from today and capture a moment in under 60 seconds.",
   };
 }
 

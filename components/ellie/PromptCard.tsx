@@ -9,6 +9,8 @@ import { ThinkingDots } from "@/components/dig-deeper/ThinkingDots";
 import { PhotoAccessNudgeCard } from "@/components/common/PhotoAccessNudgeCard";
 import { PromptWithAccentText } from "@/components/capture/PromptWithAccentText";
 import { REFLECTION_QUESTIONS } from "@/lib/captureReflectionQuestions";
+import { DayAssetPreview } from "@/components/capture/DayAssetPreview";
+import type { MediaAsset } from "@/hooks/useMediaLibrary";
 
 const APP_ICON = require("@/assets/images/white-icon.png");
 
@@ -16,6 +18,9 @@ interface PromptCardProps {
   promptType: PromptType;
   promptValue: string;
   photoUri?: string;
+  /** When set (e.g. trimmed video), used for inline preview instead of PhotoImage. */
+  photoPreviewAsset?: MediaAsset | null;
+  photoVideoClipStartSec?: number;
   photoDate?: number;
   isShuffling?: boolean;
   onShuffle?: () => void;
@@ -83,6 +88,8 @@ export function PromptCard({
   promptType,
   promptValue,
   photoUri,
+  photoPreviewAsset,
+  photoVideoClipStartSec = 0,
   photoDate,
   isShuffling,
   onShuffle,
@@ -96,7 +103,7 @@ export function PromptCard({
   onPhotoAccessWordFallback,
   onPhotoViewportReady,
   photoEllieTypingDelayMs,
-  photoEllieFollowUp = "What was meaningful about this?",
+  photoEllieFollowUp = "Caption it! What was this little moment?",
   promptAccent,
   questionChrome,
   questionOrdinal,
@@ -175,9 +182,19 @@ export function PromptCard({
                 onWordFallbackPress={onPhotoAccessWordFallback}
               />
             </View>
-          ) : photoUri ? (
+          ) : photoPreviewAsset?.mediaType === "video" || photoUri ? (
             <View>
-              <PhotoImage uri={photoUri} />
+              {photoPreviewAsset?.mediaType === "video" ? (
+                <View style={{ width: "100%", aspectRatio: 1 }}>
+                  <DayAssetPreview
+                    asset={photoPreviewAsset}
+                    animate
+                    videoClipStartSec={photoVideoClipStartSec}
+                  />
+                </View>
+              ) : photoUri ? (
+                <PhotoImage uri={photoUri} />
+              ) : null}
               {photoDate != null && (
                 <View
                   style={{

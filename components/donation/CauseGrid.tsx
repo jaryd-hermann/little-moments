@@ -14,7 +14,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { CAUSE_IMAGES, type DonationCause } from "@/constants/donationCauses";
+import {
+  CAUSE_IMAGES,
+  causeFallbackColor,
+  type DonationCause,
+} from "@/constants/donationCauses";
 
 const GRID_GAP = 10;
 const GRID_PADDING_H = 24;
@@ -96,6 +100,28 @@ function CauseCard({
 
   const imageSource = CAUSE_IMAGES[cause.image_key];
 
+  const titleOverlay = (
+    <LinearGradient
+      colors={["transparent", "rgba(0,0,0,0.7)"]}
+      style={{
+        paddingHorizontal: 12,
+        paddingBottom: 12,
+        paddingTop: 32,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Medium",
+          fontSize: 15,
+          color: "#FFFFFF",
+          lineHeight: 20,
+        }}
+      >
+        {cause.title}
+      </Text>
+    </LinearGradient>
+  );
+
   return (
     <Pressable onPress={handlePress}>
       <Animated.View
@@ -110,31 +136,25 @@ function CauseCard({
           animatedBorder,
         ]}
       >
-        <ImageBackground
-          source={imageSource}
-          style={{ flex: 1, justifyContent: "flex-end" }}
-          resizeMode="cover"
-        >
-          <LinearGradient
-            colors={["transparent", "rgba(0,0,0,0.7)"]}
+        {imageSource ? (
+          <ImageBackground
+            source={imageSource}
+            style={{ flex: 1, justifyContent: "flex-end" }}
+            resizeMode="cover"
+          >
+            {titleOverlay}
+          </ImageBackground>
+        ) : (
+          <View
             style={{
-              paddingHorizontal: 12,
-              paddingBottom: 12,
-              paddingTop: 32,
+              flex: 1,
+              justifyContent: "flex-end",
+              backgroundColor: causeFallbackColor(cause.image_key),
             }}
           >
-            <Text
-              style={{
-                fontFamily: "Roboto-Medium",
-                fontSize: 15,
-                color: "#FFFFFF",
-                lineHeight: 20,
-              }}
-            >
-              {cause.title}
-            </Text>
-          </LinearGradient>
-        </ImageBackground>
+            {titleOverlay}
+          </View>
+        )}
       </Animated.View>
     </Pressable>
   );

@@ -9,12 +9,11 @@ import {
 /**
  * Mark a thread as viewed by its owner, idempotently.
  *
- * - Sets `threads.viewed_at` only if it's still null (so we capture the
- *   first-view timestamp, not the latest open).
- * - Decrements the in-app `unseenThreadCount` so the tab bar shimmer stops
- *   the moment the user lands on the detail screen.
+ * - Sets `threads.viewed_at` only if it's still null (analytics / first-open).
  * - Fires `thread_viewed` to PostHog with `was_unseen` so we can compute
  *   "share of threads ever opened" and time-to-view distributions.
+ *
+ * Tab-bar unread is driven by `markConnectionsTabSeen`, not this function.
  *
  * Safe to call repeatedly — subsequent calls hit the idempotent UPDATE and
  * skip the analytics event.
@@ -50,12 +49,8 @@ export async function markThreadViewed(args: {
   }
 
   const wasUnseen = !!data;
-  // Always record the in-session view so any other mounted list (with its
-  // own cached thread row) can drop its shimmer too. Cheap to do
-  // unconditionally.
   useUnseenStore.getState().recordThreadViewed(threadId);
   if (wasUnseen) {
-    useUnseenStore.getState().decrementUnseenThread();
     posthog?.capture("thread_viewed", {
       thread_id: threadId,
       connection_type: connectionType ?? null,

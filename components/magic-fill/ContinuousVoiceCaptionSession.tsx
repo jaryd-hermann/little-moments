@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useAudioRecorder, AudioModule, RecordingPresets } from "expo-audio";
 import { transcribeAudio } from "@/lib/whisper";
+import { deleteVoiceClipSnapshot, snapshotVoiceClip } from "@/lib/voiceClip";
 
 export type ContinuousVoiceCaptionHandle = {
   finalizeSegment: () => Promise<string>;
@@ -21,7 +22,10 @@ export type ContinuousVoiceCaptionHandle = {
 };
 
 type Props = {
+  /** When true, mic permission is requested and segments can be recorded. */
   enabled: boolean;
+  /** When true, automatically start the first segment (after countdown). */
+  autoStartRecording?: boolean;
   onDurationTick?: (seconds: number) => void;
   onRecordingChange?: (recording: boolean) => void;
   onTranscribingChange?: (transcribing: boolean) => void;
@@ -31,13 +35,15 @@ export const ContinuousVoiceCaptionSession = forwardRef<
   ContinuousVoiceCaptionHandle,
   Props
 >(function ContinuousVoiceCaptionSession(
-  { enabled, onDurationTick, onRecordingChange, onTranscribingChange },
+  { enabled, autoStartRecording = false, onDurationTick, onRecordingChange, onTranscribingChange },
   ref
 ) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const isRecordingRef = useRef(false);
+  /** True from a successful segment start until handoff/stop clears it. */
+  const segmentOpenRef = useRef(false);
   const isTranscribingRef = useRef(false);
   const durationRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -80,6 +86,7 @@ export const ContinuousVoiceCaptionSession = forwardRef<
       });
       await recorder.prepareToRecordAsync();
       recorder.record();
+      segmentOpenRef.current = true;
       clearTimer();
       durationRef.current = 0;
       onDurationTick?.(0);
@@ -94,15 +101,19 @@ export const ContinuousVoiceCaptionSession = forwardRef<
   }, [enabled, onDurationTick, recorder, setRecording]);
 
   const stopRecordingInternal = useCallback(async (): Promise<string | null> => {
-    if (!isRecordingRef.current) return null;
+    if (!isRecordingRef.current && !segmentOpenRef.current) return null;
     isRecordingRef.current = false;
+    segmentOpenRef.current = false;
     setIsRecording(false);
     onRecordingChange?.(false);
     clearTimer();
     try {
       await recorder.stop();
       await AudioModule.setAudioModeAsync({ allowsRecording: false });
-      return recorder.uri ?? null;
+      if (!recorder.uri) return null;
+      // Never let the recorder's own file out of here — the next segment
+      // truncates it, which is fatal for anything still uploading it.
+      return await snapshotVoiceClip(recorder.uri);
     } catch {
       return null;
     }
@@ -118,6 +129,8 @@ export const ContinuousVoiceCaptionSession = forwardRef<
         return "";
       } finally {
         setTranscribing(false);
+        // Safe to drop only now: the upload holds the file open until it ends.
+        await deleteVoiceClipSnapshot(uri);
       }
     },
     [setTranscribing]
@@ -133,11 +146,13 @@ export const ContinuousVoiceCaptionSession = forwardRef<
   }, [stopRecordingInternal]);
 
   const restartSegment = useCallback(async () => {
-    if (isRecordingRef.current) {
+    if (isRecordingRef.current || segmentOpenRef.current) {
       try {
         isRecordingRef.current = false;
+        segmentOpenRef.current = false;
         setIsRecording(false);
         onRecordingChange?.(false);
+        clearTimer();
         await recorder.stop();
         await AudioModule.setAudioModeAsync({ allowsRecording: false });
       } catch {
@@ -176,12 +191,14 @@ export const ContinuousVoiceCaptionSession = forwardRef<
   );
 
   useEffect(() => {
-    if (!enabled) return;
-    if (!startedRef.current) {
-      startedRef.current = true;
-      void startSegment();
+    if (!autoStartRecording) {
+      startedRef.current = false;
+      return;
     }
-  }, [enabled, startSegment]);
+    if (startedRef.current) return;
+    startedRef.current = true;
+    void startSegment();
+  }, [autoStartRecording, startSegment]);
 
   useEffect(() => () => clearTimer(), []);
 

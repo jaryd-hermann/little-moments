@@ -29,10 +29,16 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { dispatch } from "../_shared/dispatch.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
-import { observationPlainPreview } from "../_shared/thread-text.ts";
+import { observationPlainPreview, normalizeThreadCopy } from "../_shared/thread-text.ts";
 import { anthropicAssistantText } from "../_shared/anthropicAssistantText.ts";
 import { createPostHogLogger } from "../_shared/posthog-logs.ts";
 import { BATCH_SYSTEM_PROMPT } from "../_shared/thread-prompts.ts";
+import {
+  appendThreadAnswerToEntryBlock,
+  formatPreferencesForPrompt,
+  loadThreadAnswersByEntryId,
+  loadUserThreadPreferences,
+} from "../_shared/thread-context.ts";
 import {
   CRON_PER_RUN_THREAD_LIMIT,
   CRON_WEEKLY_THREAD_LIMIT,
@@ -198,6 +204,12 @@ Deno.serve(async (req) => {
 
         if (!recentEntries?.length) continue;
 
+        const prefs = await loadUserThreadPreferences(serviceSupabase, user.id);
+        const preferencesBlock = formatPreferencesForPrompt(prefs);
+        const batchSystem = preferencesBlock
+          ? `${BATCH_SYSTEM_PROMPT}\n\nUSER FEEDBACK (honor this when scoring connections — avoid patterns they dislike, lean into what they want more of):\n${preferencesBlock}`
+          : BATCH_SYSTEM_PROMPT;
+
         for (const entry of recentEntries) {
           // Per-user, per-run cap. We deliberately stop after the first
           // successful thread for this user — no matter how many anchors
@@ -247,6 +259,16 @@ Deno.serve(async (req) => {
           );
           if (!filtered.length) continue;
 
+          const allEntryIds = [
+            entry.id,
+            ...filtered.map((c: { id: string }) => c.id),
+          ];
+          const answersByEntryId = await loadThreadAnswersByEntryId(
+            serviceSupabase,
+            user.id,
+            allEntryIds
+          );
+
           const candidateBlock = filtered
             .map(
               (
@@ -258,17 +280,25 @@ Deno.serve(async (req) => {
                   body: string;
                 },
                 i: number,
-              ) =>
-                `--- Past Entry ${i + 1} (id: ${c.id}, date: ${c.entry_date}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`
+              ) => {
+                const base = `--- Past Entry ${i + 1} (id: ${c.id}, date: ${c.entry_date}) ---\nTitle: ${c.title ?? "(untitled)"}\n${c.ai_enhanced_body ?? c.body}`;
+                return appendThreadAnswerToEntryBlock(base, c.id, answersByEntryId);
+              }
             )
             .join("\n\n");
 
-          const userMessage = `ANCHOR ENTRY (id: ${entry.id}, date: ${entry.entry_date}):\nTitle: ${entry.title ?? "(untitled)"}\n${entryText}\n\nPAST ENTRIES:\n${candidateBlock}`;
+          const anchorBase = `ANCHOR ENTRY (id: ${entry.id}, date: ${entry.entry_date}):\nTitle: ${entry.title ?? "(untitled)"}\n${entryText}`;
+          const anchorBlock = appendThreadAnswerToEntryBlock(
+            anchorBase,
+            entry.id,
+            answersByEntryId
+          );
+          const userMessage = `${anchorBlock}\n\nPAST ENTRIES:\n${candidateBlock}`;
 
           const response = await anthropic.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 1400,
-            system: BATCH_SYSTEM_PROMPT,
+            system: batchSystem,
             messages: [{ role: "user", content: userMessage }],
           });
 
@@ -289,6 +319,8 @@ Deno.serve(async (req) => {
             ? (result.connection_type as string)
             : "pattern";
 
+          const threadCopy = normalizeThreadCopy(result as Record<string, unknown>);
+
           const { data: thread, error: threadErr } = await serviceSupabase
             .from("threads")
             .insert({
@@ -296,10 +328,10 @@ Deno.serve(async (req) => {
               entry_id_a: entry.id,
               entry_id_b: result.entry_id_b as string,
               connection_type: connectionType,
-              ellie_observation: result.ellie_observation as string,
-              questions: Array.isArray(result.questions)
-                ? result.questions
-                : [],
+              statement: threadCopy.statement,
+              question: threadCopy.question,
+              ellie_observation: threadCopy.ellie_observation,
+              questions: threadCopy.questions,
               confidence,
               source: "cron",
             })
@@ -331,7 +363,7 @@ Deno.serve(async (req) => {
           // and the same OneSignal frequency caps as the rest of the
           // lifecycle system apply.
           if (user.notification_enabled) {
-            const observation = (result.ellie_observation as string) ?? "";
+            const observation = threadCopy.statement || threadCopy.ellie_observation;
             const preview = observationPlainPreview(observation);
             const truncated =
               preview.length > 120 ? preview.slice(0, 117) + "..." : preview;

@@ -1,29 +1,13 @@
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
-import { Shimmer } from "@/components/common/Shimmer";
 import { useTheme } from "@/hooks/useTheme";
 import {
   chapterImageSlideToMedia,
   chapterWeekLabel,
   type ChapterRecord,
 } from "@/lib/chapters";
-import { useUnseenStore } from "@/store/unseenStore";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Text, View } from "react-native";
-
-export function ChapterCoverShimmer({
-  chapterId,
-  viewedAt,
-}: {
-  chapterId: string;
-  viewedAt: string | null;
-}) {
-  const viewedInSession = useUnseenStore((s) =>
-    s.viewedChapterIds.has(chapterId)
-  );
-  if (viewedAt != null || viewedInSession) return null;
-  return <Shimmer active bandWidth={120} intervalMs={1300} />;
-}
 
 export function ChapterLockedOverlay() {
   const { colors, theme } = useTheme();
@@ -83,7 +67,8 @@ function CollageGrid({
 }: {
   media: ReturnType<typeof chapterImageSlideToMedia>;
 }) {
-  if (media.length === 0) {
+  const tiles = media.slice(0, 4);
+  if (tiles.length === 0) {
     return (
       <View
         style={{
@@ -98,14 +83,14 @@ function CollageGrid({
     );
   }
 
-  type Row = (typeof media)[number][];
+  type Row = (typeof tiles)[number][];
   const rows: Row[] = [];
   let idx = 0;
-  if (media.length % 2 === 1) {
-    rows.push([media[idx++]]);
+  if (tiles.length % 2 === 1) {
+    rows.push([tiles[idx++]]);
   }
-  while (idx < media.length) {
-    rows.push([media[idx], media[idx + 1]]);
+  while (idx < tiles.length) {
+    rows.push([tiles[idx], tiles[idx + 1]]);
     idx += 2;
   }
 
@@ -127,6 +112,7 @@ function CollageGrid({
               <EntryMediaImage
                 media={m}
                 style={{ width: "100%", height: "100%" }}
+                recyclingKey={`chapter-collage-${m.id}`}
               />
             </View>
           ))}

@@ -3,7 +3,11 @@ import { CustomTabBar } from "@/components/common/CustomTabBar";
 import { MomentCelebrationHost } from "@/components/today/MomentCelebrationHost";
 import { FirstPinCelebrationHost } from "@/components/common/FirstPinCelebrationHost";
 import { CoreMemoryAddedToasterHost } from "@/components/common/CoreMemoryAddedToasterHost";
-import { FirstMomentOnboardingSheetHost } from "@/components/common/FirstMomentOnboardingSheetHost";
+import {
+  FirstMomentChatHandoffCover,
+  FirstMomentChatHost,
+} from "@/components/onboarding/FirstMomentChatHost";
+import { CatchUpModalHost } from "@/components/common/CatchUpModalHost";
 import { usePushRegistration } from "@/hooks/usePushRegistration";
 import { useUnseenBootstrap } from "@/hooks/useUnseenBootstrap";
 import { useOneSignalMomentSync } from "@/hooks/useOneSignalMomentSync";
@@ -39,7 +43,8 @@ export default function TabLayout() {
       <MomentCelebrationHost />
       <FirstPinCelebrationHost />
       <CoreMemoryAddedToasterHost />
-      <FirstMomentOnboardingSheetHost />
+      <FirstMomentChatHost />
+      <CatchUpModalHost />
       <Tabs
         tabBar={(props) => <CustomTabBar {...props} />}
         screenOptions={{ headerShown: false }}
@@ -74,6 +79,8 @@ export default function TabLayout() {
           options={{ href: null }}
         />
       </Tabs>
+      {/* After `<Tabs>` so it paints over the tab content, not behind it. */}
+      <FirstMomentChatHandoffCover />
     </>
   );
 }

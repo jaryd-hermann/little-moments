@@ -26,7 +26,8 @@ import {
   MediaAttachmentBar,
   type MediaItem,
 } from "@/components/composer/MediaAttachmentBar";
-import { MicRecorder } from "@/components/composer/MicRecorder";
+import { MicRecorder, type VoiceClip } from "@/components/composer/MicRecorder";
+import { attachVoiceNoteToEntry } from "@/lib/entryVoiceNote";
 import { PromptSheet } from "@/components/composer/PromptSheet";
 import { DatePrecisionPicker } from "@/components/composer/DatePrecisionPicker";
 import { useEntries } from "@/hooks/useEntries";
@@ -35,7 +36,8 @@ import { PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { useAuthStore } from "@/store/authStore";
 import { useEntryStore, type EntryMedia } from "@/store/entryStore";
 import { useMomentCelebrationStore } from "@/store/momentCelebrationStore";
-import { uploadEntryMedia, deleteEntryMedia } from "@/lib/storage";
+import { deleteEntryMedia } from "@/lib/storage";
+import { attachEntryMedia } from "@/lib/attachEntryMedia";
 import { supabase } from "@/lib/supabase";
 import { getEntryMediaDisplayUri } from "@/lib/entryMediaUrl";
 import { plainTextToComposerHtml } from "@/lib/digDeeperReturn";
@@ -183,6 +185,8 @@ export default function ComposerScreen() {
   const [showFormatting, setShowFormatting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [micFullscreen, setMicFullscreen] = useState(false);
+  /** Last dictation of this session, saved alongside the entry it produced. */
+  const voiceClipRef = useRef<VoiceClip | null>(null);
   const [originalText, setOriginalText] = useState<{ title: string; body: string } | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -436,29 +440,15 @@ export default function ComposerScreen() {
               }
               rebuilt.push({ ...row, display_order: i });
             } else {
-              console.log("[Composer] Uploading new media...", item.uri.substring(0, 60));
-              const { publicUrl, storagePath } = await uploadEntryMedia(
-                user.id,
-                entryIdParam,
-                item.uri,
-                item.type
-              );
-              console.log("[Composer] Upload complete, inserting entry_media row");
-              const { data: row, error: mediaErr } = await supabase
-                .from("entry_media")
-                .insert({
-                  entry_id: entryIdParam,
-                  user_id: user.id,
-                  storage_path: storagePath,
-                  storage_url: publicUrl,
-                  media_type: item.type,
-                  display_order: i,
-                })
-                .select()
-                .single();
-              if (mediaErr) throw mediaErr;
-              if (row) rebuilt.push(row as EntryMedia);
-              console.log("[Composer] Media attached successfully");
+              const row = await attachEntryMedia({
+                userId: user.id,
+                entryId: entryIdParam,
+                uri: item.uri,
+                mediaType: item.type,
+                displayOrder: i,
+              });
+              if (!row) throw new Error("Media attach failed");
+              rebuilt.push(row);
             }
           }
           useEntryStore.getState().updateEntry(entryIdParam, {
@@ -469,7 +459,7 @@ export default function ComposerScreen() {
           await fetchEntries();
           Alert.alert(
             "Updated without photo",
-            "Your changes were saved, but a photo could not be updated. You can try again from this moment."
+            "Your changes were saved, but a photo could not be updated. We'll keep trying in the background."
           );
         }
 
@@ -514,31 +504,24 @@ export default function ComposerScreen() {
         chapter_id: null,
       });
 
+      if (voiceClipRef.current && user?.id && entry?.id) {
+        void attachVoiceNoteToEntry(user.id, entry.id, voiceClipRef.current);
+      }
+
       const insertedMedia: EntryMedia[] = [];
       if (media.length > 0 && entry) {
         try {
           for (let i = 0; i < media.length; i++) {
             const item = media[i];
-            const { publicUrl, storagePath } = await uploadEntryMedia(
-              user.id,
-              entry.id,
-              item.uri,
-              item.type
-            );
-            const { data: row, error: mediaErr } = await supabase
-              .from("entry_media")
-              .insert({
-                entry_id: entry.id,
-                user_id: user.id,
-                storage_path: storagePath,
-                storage_url: publicUrl,
-                media_type: item.type,
-                display_order: i,
-              })
-              .select()
-              .single();
-            if (mediaErr) throw mediaErr;
-            if (row) insertedMedia.push(row as EntryMedia);
+            const row = await attachEntryMedia({
+              userId: user.id,
+              entryId: entry.id,
+              uri: item.uri,
+              mediaType: item.type,
+              displayOrder: i,
+            });
+            if (!row) throw new Error("Media attach failed");
+            insertedMedia.push(row);
           }
           if (insertedMedia.length > 0) {
             useEntryStore.getState().updateEntry(entry.id, {
@@ -548,7 +531,7 @@ export default function ComposerScreen() {
         } catch {
           Alert.alert(
             "Saved without photo",
-            "Your story was saved, but a photo could not be attached. You can add it later from your entry."
+            "Your story was saved, but a photo could not be attached. We'll keep trying in the background."
           );
         }
       }
@@ -631,6 +614,9 @@ export default function ComposerScreen() {
               onTranscription={(text) => {
                 setBody((prev) => (prev ? prev + " " + text : text));
                 setMicFullscreen(false);
+              }}
+              onRecordingComplete={(clip) => {
+                voiceClipRef.current = clip;
               }}
               onCancel={() => setMicFullscreen(false)}
             />

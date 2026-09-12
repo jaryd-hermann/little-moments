@@ -36,6 +36,20 @@ export const EMOTION_ENUM = [
 export type Theme = (typeof THEME_ENUM)[number];
 export type Emotion = (typeof EMOTION_ENUM)[number];
 
+/** Display names for themes. Mirrors THEME_LABEL in constants/GraphPalette.ts. */
+export const THEME_LABEL: Record<Theme, string> = {
+  belonging: "Belonging",
+  loss: "Loss",
+  pride: "Pride",
+  family: "Family",
+  work: "Work",
+  change: "Change",
+  place: "Place",
+  growth: "Growth",
+  joy: "Joy",
+  uncertain: "Uncertain",
+};
+
 /**
  * Coerce an LLM response to a valid theme, or null if unrecognised / empty.
  * Returns null (not "") so the DB CHECK constraint accepts the value —

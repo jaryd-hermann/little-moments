@@ -10,7 +10,7 @@ import {
 } from "posthog-react-native";
 import { Stack, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { InteractionManager, Text, View } from "react-native";
+import { AppState, InteractionManager, Text, View } from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import * as SystemUI from "expo-system-ui";
@@ -27,7 +27,10 @@ import {
 } from "@/lib/onesignal";
 import { useChapterNotifStore } from "@/store/chapterNotifStore";
 import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
+import { useCapsuleFlipbookStore } from "@/store/capsuleFlipbookStore";
 import { registerPostHogClient } from "@/lib/errors";
+import { drainPendingEntryMedia } from "@/lib/attachEntryMedia";
+import type { MashupBucketType } from "@/lib/mashupBuckets";
 import { useEntries } from "@/hooks/useEntries";
 import { useChapters } from "@/hooks/useChapters";
 
@@ -50,6 +53,26 @@ function AppInner() {
     void fetchEntries();
     void fetchChapters();
   }, [user?.id, fetchEntries, fetchChapters]);
+
+  // Photo uploads that died mid-flight (backgrounded app, dead network) are
+  // parked in a queue rather than dropped. Retry them on open and whenever the
+  // app comes back to the foreground, and refresh the feed if any land.
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId) return;
+
+    const drain = () => {
+      void drainPendingEntryMedia(userId).then((recovered) => {
+        if (recovered > 0) void fetchEntries();
+      });
+    };
+
+    drain();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") drain();
+    });
+    return () => sub.remove();
+  }, [user?.id, fetchEntries]);
 
   // Keep the OS root background (visible briefly during navigation
   // transitions and modal presentations) in sync with the resolved theme.
@@ -177,6 +200,9 @@ function AppInner() {
             chapter_id?: string;
             thread_id?: string;
             entry_id?: string;
+            streak?: number;
+            kind?: MashupBucketType;
+            bucket_key?: string;
           }
         | undefined;
       if (!data?.type) return;
@@ -195,11 +221,32 @@ function AppInner() {
         });
       };
 
+      /** Open Capsule's flipbook parked on one moment. */
+      const goFlipbookMoment = (entryId: string) => {
+        useTabViewIntentStore.getState().setMemoriesView("feed");
+        // A core-memory filter left on from a previous visit would hide the
+        // moment we were asked to show.
+        useCapsuleFlipbookStore.getState().setPinnedOnly(false);
+        useCapsuleFlipbookStore.getState().setFocusEntryId(entryId);
+        go("/(tabs)/memories");
+      };
+
       switch (data.type) {
         // Habit / activation pushes — all land on the capture screen.
         case "daily_nudge":
         case "weekly_chapter_intro":
         case "streak_milestone":
+        case "streak_at_risk":
+          if (data.type === "streak_at_risk") {
+            posthog?.capture("streak_push_opened", {
+              push_type: "streak_at_risk",
+              streak: data.streak,
+            });
+          } else if (data.type === "streak_milestone") {
+            posthog?.capture("streak_push_opened", {
+              push_type: "streak_milestone",
+            });
+          }
           go("/(tabs)/today?capture=1");
           return;
 
@@ -234,13 +281,42 @@ function AppInner() {
           go("/(tabs)/brain?tab=ellie");
           return;
 
+        // A week / month / year / person / theme just earned its movie.
+        // Open the grid straight into playback — the whole point of the
+        // push is that there's something new to watch.
+        case "movie_unlocked":
+          if (data.bucket_key) {
+            useTabViewIntentStore.getState().setChaptersView("grid");
+            useTabViewIntentStore
+              .getState()
+              .setOpenMashupKey(data.bucket_key, data.kind);
+          }
+          go("/(tabs)/chapters");
+          return;
+
         case "first_pin":
           // Pinned filter on Capsule — they should see the album
           // forming in real time.
           go("/(tabs)/memories?filter=core");
           return;
 
+        case "this_day_past":
+          // "Log this day from your past" — land on Capture already scrolled
+          // to the past-years carousel.
+          go("/(tabs)/today?scrollTo=past");
+          return;
+
         case "on_this_day":
+          // Recap pushes land on the moment inside the Capsule flipbook, so
+          // the user can keep flipping through their memories from there
+          // rather than dead-ending on a detail screen.
+          if (data.entry_id) {
+            goFlipbookMoment(data.entry_id);
+          } else {
+            go("/(tabs)/memories");
+          }
+          return;
+
         case "share_created":
           if (data.entry_id) {
             goEntry(data.entry_id);
@@ -274,7 +350,7 @@ function AppInner() {
       }
     });
     return unsubscribe;
-  }, []);
+  }, [posthog]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

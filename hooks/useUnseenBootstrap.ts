@@ -33,21 +33,37 @@ export function useUnseenBootstrap() {
 
     const refresh = async () => {
       try {
-        const [{ count: tCount }, { count: cCount }] = await Promise.all([
-          supabase
-            .from("threads")
-            .select("id", { count: "exact", head: true })
-            .eq("user_id", userId)
-            .eq("dismissed", false)
-            .is("viewed_at", null),
-          supabase
-            .from("chapters")
-            .select("id", { count: "exact", head: true })
-            .eq("user_id", userId)
-            .is("viewed_at", null),
-        ]);
+        const [{ data: statsRow }, { data: threadRows }, { count: cCount }] =
+          await Promise.all([
+            supabase
+              .from("user_thread_stats")
+              .select("connections_tab_seen_at")
+              .eq("user_id", userId)
+              .maybeSingle(),
+            supabase
+              .from("threads")
+              .select("id, created_at")
+              .eq("user_id", userId)
+              .eq("dismissed", false),
+            supabase
+              .from("chapters")
+              .select("id", { count: "exact", head: true })
+              .eq("user_id", userId)
+              .is("viewed_at", null),
+          ]);
         if (cancelled) return;
-        useUnseenStore.getState().setUnseenThreadCount(tCount ?? 0);
+
+        const seenAt = (
+          statsRow as { connections_tab_seen_at?: string | null } | null
+        )?.connections_tab_seen_at;
+        const unseenThreads = (threadRows ?? []).filter((row) => {
+          if (!seenAt) return true;
+          return (
+            new Date(row.created_at).getTime() > new Date(seenAt).getTime()
+          );
+        }).length;
+
+        useUnseenStore.getState().setUnseenThreadCount(unseenThreads);
         useUnseenStore.getState().setUnseenChapterCount(cCount ?? 0);
       } catch (err) {
         console.warn(

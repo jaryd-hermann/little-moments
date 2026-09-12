@@ -41,6 +41,16 @@ export async function syncMagicFillCompletedToProfile(): Promise<void> {
   }
 }
 
+/** Hydrate local Magic Fill flags from the profile row (both directions). */
+export function applyMagicFillFlagsFromProfile(
+  profile: { has_completed_magic_fill?: boolean } | null | undefined
+): void {
+  if (profile == null) return;
+  useSettingsStore
+    .getState()
+    .setHasCompletedMagicFill(Boolean(profile.has_completed_magic_fill));
+}
+
 /** Push local completion flag to profile after offline saves or reinstall. */
 export async function syncLocalMagicFillFlagsToProfile(): Promise<void> {
   const hasCompleted = useSettingsStore.getState().hasCompletedMagicFill;

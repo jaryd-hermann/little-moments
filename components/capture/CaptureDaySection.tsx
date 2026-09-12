@@ -1,5 +1,9 @@
+import { CaptureSectionHeading } from "@/components/capture/CaptureSectionHeading";
 import { AddMoreToThisDaySection } from "@/components/capture/AddMoreToThisDaySection";
-import { CaptureMonthWipSection } from "@/components/capture/CaptureMonthWipSection";
+import {
+  CaptureMonthWipSection,
+  CaptureMonthWipPlaceholder,
+} from "@/components/capture/CaptureMonthWipSection";
 import { CuratorBrowsePanel } from "@/components/capture/CuratorBrowsePanel";
 import { TodayInYourPastCarousel } from "@/components/capture/TodayInYourPastCarousel";
 import { EntryMediaImage } from "@/components/common/EntryMediaImage";
@@ -15,13 +19,14 @@ import type { ReflectionQuestionItem } from "@/lib/captureReflectionQuestions";
 import { bevelShadow, PINK_CTA_BORDER, PINK_CTA_INK } from "@/lib/themedShadow";
 import { momentTitleStyle, photoCardBorder } from "@/lib/momentTypography";
 import type { Entry } from "@/store/entryStore";
-import type { MashupBucket } from "@/lib/mashupBuckets";
+import type { MashupBucket, MovieProgress } from "@/lib/mashupBuckets";
 import { Ionicons } from "@expo/vector-icons";
+import { format } from "date-fns";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { Image } from "expo-image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   FlatList,
   type NativeScrollEvent,
@@ -31,7 +36,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useCaptureFirstMomentCoachmarkStore } from "@/store/captureFirstMomentCoachmarkStore";
 import {
   NOTHING_TODAY_MAGIC_FILL,
   PAST_DAY_EMPTY_MAGIC_FILL,
@@ -69,11 +73,32 @@ export interface CaptureDaySectionProps {
   surface?: string;
   monthWipBucket?: MashupBucket | null;
   onOpenMonthWip?: (bucket: MashupBucket) => void;
-  reportCoachmarkTarget?: (
-    key: "pin" | "digDeeper",
-    layout: { x: number; y: number; width: number; height: number }
-  ) => void;
+  /**
+   * Progress toward the current month's movie. Null for past months and once
+   * the month qualifies.
+   */
+  monthWipProgress?: MovieProgress | null;
   magicFillOnboardingVariant?: CaptureMagicFillBannerVariant | null;
+  /**
+   * When true, this section renders only the *per-day* content (saved-moment
+   * carousel, "this day in your past", WIP movie) and omits the photo picker
+   * / empty-day prompts — because a persistent continuous recent-moments
+   * carousel above the feed now owns picking.
+   */
+  hidePicker?: boolean;
+  /** When false, defer past-year carousel + WIP movie until parent unlocks below-fold. */
+  loadHeavySections?: boolean;
+  /**
+   * Optional Magic Fill banner rendered directly above "this day in your
+   * past". The parent decides whether to promote it here (thin or lapsed
+   * libraries) or leave it further down the feed.
+   */
+  magicFillBannerSlot?: ReactNode;
+  /**
+   * Reports the "this day in your past" carousel's offset within this section
+   * so the parent can scroll to it (recap push deep link).
+   */
+  onPastSectionLayout?: (y: number) => void;
 }
 
 /**
@@ -105,8 +130,12 @@ export function CaptureDaySection({
   surface = "today_feed",
   monthWipBucket,
   onOpenMonthWip,
-  reportCoachmarkTarget,
+  monthWipProgress = null,
   magicFillOnboardingVariant = null,
+  hidePicker = false,
+  loadHeavySections = true,
+  magicFillBannerSlot = null,
+  onPastSectionLayout,
 }: CaptureDaySectionProps) {
   const { colors, theme } = useTheme();
   const { width: screenWidth } = useWindowDimensions();
@@ -121,42 +150,6 @@ export function CaptureDaySection({
     permissionStatus,
     accessPrivileges
   );
-  const pinRef = useRef<View>(null);
-  const digDeeperRef = useRef<View>(null);
-  const remeasureTick = useCaptureFirstMomentCoachmarkStore(
-    (s) => s.remeasureTick
-  );
-  const coachmarksVisible = useCaptureFirstMomentCoachmarkStore(
-    (s) => s.visible
-  );
-
-  const reportCoachmarkTargets = useCallback(() => {
-    if (!reportCoachmarkTarget) return;
-    pinRef.current?.measureInWindow((x, y, width, height) => {
-      if (width > 0 && height > 0) {
-        reportCoachmarkTarget("pin", { x, y, width, height });
-      }
-    });
-    digDeeperRef.current?.measureInWindow((x, y, width, height) => {
-      if (width > 0 && height > 0) {
-        reportCoachmarkTarget("digDeeper", { x, y, width, height });
-      }
-    });
-  }, [reportCoachmarkTarget]);
-
-  useEffect(() => {
-    if (!reportCoachmarkTarget || !coachmarksVisible || !hasMoments) return;
-    const timer = setTimeout(reportCoachmarkTargets, 60);
-    return () => clearTimeout(timer);
-  }, [
-    reportCoachmarkTarget,
-    coachmarksVisible,
-    hasMoments,
-    activeCardIndex,
-    remeasureTick,
-    reportCoachmarkTargets,
-  ]);
-
   // "Today" check — we only offer the live camera CTA for the current
   // local day. Past days can't be re-shot, so we leave the existing
   // question fallback there.
@@ -214,6 +207,7 @@ export function CaptureDaySection({
 
   useEffect(() => {
     let cancelled = false;
+    if (!loadHeavySections && hasMoments) return;
     void (async () => {
       const can = hasFullPhotoLibraryAccess(permissionStatus, accessPrivileges);
       if (!can) {
@@ -234,12 +228,12 @@ export function CaptureDaySection({
     return () => {
       cancelled = true;
     };
-  }, [ymd, permissionStatus, accessPrivileges, date]);
+  }, [ymd, permissionStatus, accessPrivileges, date, loadHeavySections, hasMoments]);
 
   return (
     <View>
       {hasMoments ? (
-        <View style={{ paddingHorizontal: 20 }}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 28 }}>
           {magicFillOnboardingVariant ? (
             <View style={{ marginBottom: 12 }}>
               <CaptureMagicFillOnboardingBanner
@@ -247,6 +241,20 @@ export function CaptureDaySection({
               />
             </View>
           ) : null}
+          <Text
+            style={{
+              fontFamily: "Roboto-Medium",
+              fontSize: 13,
+              letterSpacing: 1,
+              textTransform: "uppercase",
+              color: colors.textSecondary,
+              marginBottom: 10,
+            }}
+          >
+            {entriesForDay.length}{" "}
+            {entriesForDay.length === 1 ? "moment" : "moments"} from{" "}
+            {format(date, "EEE, MMM d")}
+          </Text>
           {/* Moments carousel — same shape as the legacy "you captured" view. */}
           <View style={{ marginHorizontal: -20, marginBottom: 12 }}>
             <FlatList
@@ -295,7 +303,6 @@ export function CaptureDaySection({
                           <EntryMediaImage
                             media={media}
                             enableLivePhoto={index === activeCardIndex}
-                            showLoadingShimmer
                             style={{
                               width: "100%",
                               aspectRatio: 1,
@@ -341,10 +348,7 @@ export function CaptureDaySection({
                         >
                           {item.body}
                         </Text>
-                        <View
-                          ref={index === activeCardIndex ? digDeeperRef : undefined}
-                          collapsable={false}
-                        >
+                        <View>
                           <Pressable
                             onPress={() => {
                               void Haptics.impactAsync(
@@ -398,12 +402,7 @@ export function CaptureDaySection({
                         gap: 8,
                       }}
                     >
-                      <View
-                        ref={index === activeCardIndex ? pinRef : undefined}
-                        collapsable={false}
-                      >
-                        <EntryPinToggle entryId={item.id} size={24} />
-                      </View>
+                      <EntryPinToggle entryId={item.id} size={24} />
                       <Pressable
                         onPress={() => {
                           void Haptics.impactAsync(
@@ -458,7 +457,7 @@ export function CaptureDaySection({
             ) : null}
           </View>
 
-          {!loadingDayPhotos ? (
+          {!loadingDayPhotos && (loadHeavySections || !hidePicker) ? (
             <AddMoreToThisDaySection
               entriesForDay={entriesForDay}
               dayPhotos={dayPhotos}
@@ -468,7 +467,7 @@ export function CaptureDaySection({
         </View>
       ) : null}
 
-      {showBrowse && isToday && !loadingDayPhotos && dayPhotos.length === 0 ? (
+      {!hidePicker && showBrowse && isToday && !loadingDayPhotos && dayPhotos.length === 0 ? (
         <View style={{ paddingTop: 28, paddingHorizontal: 20, marginBottom: 16 }}>
           {hasPhotoAccess && entriesForDay.length === 0 ? (
             <MagicFillBanner
@@ -546,7 +545,7 @@ export function CaptureDaySection({
           the carousel renders with a "Take a photo/video" secondary CTA
           underneath the primary "Choose this moment" button so the user
           can always reach the camera from photo-mode. */}
-      {showBrowse && !isToday && !loadingDayPhotos && dayPhotos.length === 0 ? (
+      {!hidePicker && showBrowse && !isToday && !loadingDayPhotos && dayPhotos.length === 0 ? (
         <View style={{ paddingTop: 28, paddingHorizontal: 20, marginBottom: 16 }}>
           <View
             style={{
@@ -606,27 +605,41 @@ export function CaptureDaySection({
           render the camera card above). When the day's library is non-empty
           the carousel renders with a "Take a photo/video" secondary CTA
           underneath the primary "Choose this moment" button — today only. */}
-      {showBrowse && !(isToday && dayPhotos.length === 0 && !loadingDayPhotos) ? (
-        <CuratorBrowsePanel
-          key={ymd}
-          headingTitle=""
-          hideHeading
-          onPressChangeDay={() => undefined}
-          dayPhotos={dayPhotos}
-          loadingPhotos={loadingDayPhotos}
-          onChoosePhoto={(asset) => onPinPhoto(asset, date)}
-          onStartQuestionCapture={(q, method) =>
-            onStartQuestion(q, method, date)
-          }
-          onCaptureWithCamera={
-            isToday ? () => void handleCameraCapture() : undefined
-          }
-          suppressNoPhotosBanner={!isToday && dayPhotos.length === 0}
-          analyticsContext={{ target_ymd: ymd, surface }}
-        />
+      {!hidePicker && showBrowse && !(isToday && dayPhotos.length === 0 && !loadingDayPhotos) ? (
+        <View style={{ marginTop: 28 }}>
+          <CaptureSectionHeading
+            title="Pick today's little moment"
+            description="One photo or 2s of a video. Say or type a few words in under 60s to Capture the moment"
+          />
+          <CuratorBrowsePanel
+            key={ymd}
+            headingTitle=""
+            hideHeading
+            onPressChangeDay={() => undefined}
+            dayPhotos={dayPhotos}
+            loadingPhotos={loadingDayPhotos}
+            onChoosePhoto={(asset) => onPinPhoto(asset, date)}
+            onStartQuestionCapture={(q, method) =>
+              onStartQuestion(q, method, date)
+            }
+            onCaptureWithCamera={
+              isToday ? () => void handleCameraCapture() : undefined
+            }
+            suppressNoPhotosBanner={!isToday && dayPhotos.length === 0}
+            analyticsContext={{ target_ymd: ymd, surface }}
+          />
+        </View>
       ) : null}
 
-      <View style={{ marginTop: hasMoments || showBrowse ? 28 : 0 }}>
+      {loadHeavySections && magicFillBannerSlot ? (
+        <View style={{ marginTop: 28 }}>{magicFillBannerSlot}</View>
+      ) : null}
+
+      {loadHeavySections ? (
+      <View
+        style={{ marginTop: hasMoments || showBrowse ? 28 : 0 }}
+        onLayout={(e) => onPastSectionLayout?.(e.nativeEvent.layout.y)}
+      >
         <TodayInYourPastCarousel
           date={date}
           isToday={isToday}
@@ -635,12 +648,17 @@ export function CaptureDaySection({
           onLogMoment={onLogPastMoment}
         />
       </View>
+      ) : null}
 
-      {monthWipBucket && onOpenMonthWip ? (
+      {loadHeavySections && monthWipBucket && onOpenMonthWip ? (
         <CaptureMonthWipSection
           bucket={monthWipBucket}
           onOpen={onOpenMonthWip}
         />
+      ) : loadHeavySections &&
+        monthWipProgress != null &&
+        monthWipProgress.remaining > 0 ? (
+        <CaptureMonthWipPlaceholder progress={monthWipProgress} />
       ) : null}
     </View>
   );

@@ -16,6 +16,7 @@ export default function MagicFillLayout() {
     <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="searching" options={{ animation: "fade" }} />
+      <Stack.Screen name="trim-queue" options={{ animation: "fade" }} />
       <Stack.Screen name="review" />
       <Stack.Screen name="caption-mode" />
       <Stack.Screen name="caption-text" />
