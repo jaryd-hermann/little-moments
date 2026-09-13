@@ -241,7 +241,9 @@ export function AddMoreToThisDaySection({
             }}
             accessibilityRole="button"
             style={({ pressed }) => ({
-              marginTop: 12,
+              // Room on both sides of this: it sits between the photo grid and
+              // the capture CTA, and tucked in close it read as part of either.
+              marginTop: 24,
               alignSelf: "center",
               opacity: pressed ? 0.7 : 1,
             })}
@@ -284,7 +286,7 @@ export function AddMoreToThisDaySection({
           accessibilityRole="button"
           accessibilityState={{ disabled: !selectedAsset }}
           style={({ pressed }) => ({
-            marginTop: remainingCount > 0 ? 20 : 48,
+            marginTop: remainingCount > 0 ? 30 : 48,
             marginBottom: 12,
             opacity: !selectedAsset ? 0.55 : pressed ? 0.92 : 1,
           })}

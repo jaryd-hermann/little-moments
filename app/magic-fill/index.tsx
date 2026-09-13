@@ -11,6 +11,11 @@ import {
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import {
+  MagicFillFavoriteIcon,
+  MagicFillMonthIcon,
+  MagicFillPickIcon,
+} from "@/components/magic-fill/MagicFillModeIcons";
 import * as Haptics from "expo-haptics";
 import { usePostHog } from "posthog-react-native";
 import { useTheme } from "@/hooks/useTheme";
@@ -364,7 +369,7 @@ export default function MagicFillIndexScreen() {
               {favoritesLoading ? (
                 <ActivityIndicator color={colors.primary} />
               ) : (
-                <Ionicons name="heart" size={26} color={colors.primary} />
+                <MagicFillFavoriteIcon size={34} color={colors.text} />
               )}
               <View style={{ flex: 1 }}>
                 <Text
@@ -413,12 +418,9 @@ export default function MagicFillIndexScreen() {
                   alignItems: "center",
                 }}
               >
-                <Ionicons
-                  name="calendar-outline"
-                  size={26}
-                  color={colors.text}
-                  style={{ marginBottom: 8 }}
-                />
+                <View style={{ marginBottom: 8 }}>
+                  <MagicFillMonthIcon size={34} color={colors.text} />
+                </View>
                 <Text
                   style={{
                     fontFamily: "Roboto-Medium",
@@ -467,12 +469,9 @@ export default function MagicFillIndexScreen() {
                     style={{ marginBottom: 8 }}
                   />
                 ) : (
-                  <Ionicons
-                    name="images-outline"
-                    size={26}
-                    color={colors.text}
-                    style={{ marginBottom: 8 }}
-                  />
+                  <View style={{ marginBottom: 8 }}>
+                    <MagicFillPickIcon size={34} color={colors.text} />
+                  </View>
                 )}
                 <Text
                   style={{

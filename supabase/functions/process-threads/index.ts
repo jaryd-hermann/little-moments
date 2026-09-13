@@ -2,7 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { dispatch } from "../_shared/dispatch.ts";
 import {
-  ensurePeopleCanonicalized,
+  ensureEntitiesCanonicalized,
   syncMovieUnlocks,
 } from "../_shared/movie-unlocks.ts";
 import { threadEmail } from "../_shared/email-templates/thread.ts";
@@ -186,21 +186,22 @@ function effectiveDateString(
  *
  * Runs here rather than at save time because this function is invoked after
  * every save from every screen, and because by this point we know the moment's
- * people — the moment that tips "Julia" over ten is only recognisable once her
- * name is on the row.
+ * people and places — the moment that tips "Julia" over ten is only
+ * recognisable once her name is on the row.
  *
- * `rawPeople` is null for moments with no text, which never reach extraction.
+ * Both lists are null for moments with no text, which never reach extraction.
  * Failures are swallowed: a missed unlock is picked up on the next save, and
  * it must not take thread processing down with it.
  */
 async function runMovieUnlockSync(
   supabase: ReturnType<typeof createClient>,
   userId: string,
-  rawPeople: string[] | null
+  rawPeople: string[] | null,
+  rawPlaces: string[] | null
 ): Promise<void> {
   try {
-    if (rawPeople) {
-      await ensurePeopleCanonicalized(supabase, userId, rawPeople);
+    if (rawPeople || rawPlaces) {
+      await ensureEntitiesCanonicalized(supabase, userId, rawPeople, rawPlaces);
     }
     await syncMovieUnlocks(supabase, userId, { notify: true });
   } catch (err) {
@@ -316,7 +317,7 @@ Deno.serve(async (req) => {
       // A photo with no words still counts toward every period movie, and
       // this function is the one thing invoked after every save from every
       // screen — so the unlock check has to happen before we bail out.
-      await runMovieUnlockSync(serviceSupabase, user.id, null);
+      await runMovieUnlockSync(serviceSupabase, user.id, null, null);
       return jsonResponse({ ok: true, skipped: "empty_entry" });
     }
 
@@ -370,10 +371,15 @@ Deno.serve(async (req) => {
       { onConflict: "entry_id" }
     );
 
-    // 3b. Movie unlocks. This is the first point where the new moment's people
-    // and theme are known, so it's also the first point a "10 moments about
-    // Julia" movie can be detected.
-    await runMovieUnlockSync(serviceSupabase, user.id, metadata.people);
+    // 3b. Movie unlocks. This is the first point where the new moment's people,
+    // places and theme are known, so it's also the first point a "10 moments
+    // about Julia" movie can be detected.
+    await runMovieUnlockSync(
+      serviceSupabase,
+      user.id,
+      metadata.people,
+      metadata.places
+    );
 
     // 4. Cosine similarity search
     const { data: candidates, error: simErr } = await serviceSupabase.rpc(

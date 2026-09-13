@@ -744,14 +744,9 @@ function MomentListPreview({ entries }: { entries: Entry[] }) {
 
 /** Marks a moment as one they took through Dig Deeper — the button's own mark. */
 function DigDeeperBadge() {
-  const { theme } = useTheme();
   return (
     <Image
-      source={
-        theme === "dark"
-          ? require("@/assets/images/white-icon.png")
-          : require("@/assets/images/icon.png")
-      }
+      source={require("@/assets/images/icon2.png")}
       style={{ width: 26, height: 26, borderRadius: 6 }}
     />
   );

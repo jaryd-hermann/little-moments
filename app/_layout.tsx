@@ -33,6 +33,7 @@ import { drainPendingEntryMedia } from "@/lib/attachEntryMedia";
 import type { MashupBucketType } from "@/lib/mashupBuckets";
 import { useEntries } from "@/hooks/useEntries";
 import { useChapters } from "@/hooks/useChapters";
+import { useWidgetSync } from "@/hooks/useWidgetSync";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -45,6 +46,11 @@ function AppInner() {
   const posthog = usePostHog();
   const { fetchEntries } = useEntries();
   const { fetchChapters } = useChapters();
+
+  // Mirrors totals + this week's capture row into the App Group the iOS home
+  // screen widget reads. No-op on Android and on binaries built before the
+  // widget target existed.
+  useWidgetSync();
 
   // Warm entries + media cache at app open so Capsule grid/list and Chapters
   // covers are ready before the user navigates to those tabs.
@@ -258,6 +264,13 @@ function AppInner() {
           go("/magic-fill?source=push");
           return;
 
+        // Widget promo. iOS gives no way to open the widget gallery from an
+        // app, so the best we can do is land them home rather than drop them
+        // into a capture flow they didn't ask for.
+        case "widget_nudge":
+          go("/(tabs)/today");
+          return;
+
         case "welcome_first_capture":
           go("/(tabs)/today?capture=1");
           return;
@@ -281,7 +294,7 @@ function AppInner() {
           go("/(tabs)/brain?tab=ellie");
           return;
 
-        // A week / month / year / person / theme just earned its movie.
+        // A week / month / year / person / place / theme just earned its movie.
         // Open the grid straight into playback — the whole point of the
         // push is that there's something new to watch.
         case "movie_unlocked":

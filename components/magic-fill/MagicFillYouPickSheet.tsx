@@ -1,8 +1,8 @@
+import { MagicFillPickIcon } from "@/components/magic-fill/MagicFillModeIcons";
 import { MagicFillPrimaryButton } from "@/components/magic-fill/MagicFillPrimaryButton";
 import { MAGIC_FILL_YOU_PICK_MAX } from "@/lib/magicFillYouPick";
 import { magicFillHeadlineStyle } from "@/lib/magicFillTypography";
 import { useTheme } from "@/hooks/useTheme";
-import { Ionicons } from "@expo/vector-icons";
 import {
   Modal,
   Pressable,
@@ -56,7 +56,7 @@ export function MagicFillYouPickSheet({
           }}
         >
           <View style={{ alignItems: "center", marginBottom: 16 }}>
-            <Ionicons name="images-outline" size={32} color={colors.text} />
+            <MagicFillPickIcon size={40} color={colors.text} />
           </View>
 
           <Text

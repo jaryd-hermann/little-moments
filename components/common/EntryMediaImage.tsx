@@ -399,13 +399,20 @@ export function EntryMediaImage({
     />
   ) : null;
 
-  // Mashup montage: video only — no still flash before motion.
+  // Mashup montage: motion when it's ready, the still otherwise.
   if (wantsLivePhoto && livePhotoMotionOnly) {
     if (livePhotoLoopActive) {
       return <View style={style}>{liveVideoView}</View>;
     }
 
-    if (liveVideoFailed && displayUri) {
+    /*
+      This used to hold a dark surface until motion arrived, waiting on
+      `liveVideoFailed` to give up. But that flag is only armed once a paired
+      video has resolved, so a photo that simply has no Live Photo behind it sat
+      black forever — which is what movie slides were showing. A slide is only up
+      for two seconds, so a still that doesn't move beats an empty frame.
+    */
+    if (displayUri) {
       const stillSrc = sourceForUri(displayUri);
       const stillExpoSource = stillSrc.headers
         ? { uri: displayUri, headers: stillSrc.headers }

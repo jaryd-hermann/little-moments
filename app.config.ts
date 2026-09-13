@@ -3,6 +3,9 @@ import { ConfigContext, ExpoConfig } from "expo/config";
 const IOS_BUNDLE_ID = "com.jarydhermann.littlemoments";
 const ANDROID_PACKAGE = "com.jarydhermann.littlemoments";
 
+/** Apple Developer Team ID — must match the `appIDs` prefix in the AASA file. */
+const APPLE_TEAM_ID = "38NFF5BY78";
+
 /**
  * Universal Links / Android App Links host.
  *
@@ -67,6 +70,17 @@ const oneSignalApnsMode =
 
 const oneSignalAppGroup = `group.${IOS_BUNDLE_ID}.onesignal`;
 
+/**
+ * Shared container the home screen widget reads its numbers out of. Kept
+ * separate from the OneSignal group so widget data and the notification
+ * extension can never clobber each other's keys.
+ *
+ * `lib/widgetSnapshot.ts` writes here; `targets/widget/index.swift` reads it.
+ * The same identifier is mirrored into the widget target's entitlements via
+ * `targets/widget/expo-target.config.js`, which reads it back off this config.
+ */
+const widgetAppGroup = `group.${IOS_BUNDLE_ID}.widget`;
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
@@ -80,6 +94,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: IOS_BUNDLE_ID,
+    // Read by `@bacons/apple-targets` to stamp DEVELOPMENT_TEAM onto the
+    // generated widget target. Without it the target builds unsigned and
+    // fails at the archive step. Same team as the `appIDs` prefix in
+    // `marketing-site/universal-links/.well-known/apple-app-site-association`.
+    appleTeamId: APPLE_TEAM_ID,
     appStoreUrl: APP_STORE_URL,
     // `buildNumber` (CFBundleVersion) is managed by EAS — see
     // `appVersionSource: "remote"` + `autoIncrement: true` in eas.json.
@@ -99,7 +118,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     },
     entitlements: {
       "aps-environment": oneSignalApnsMode,
-      "com.apple.security.application-groups": [oneSignalAppGroup],
+      "com.apple.security.application-groups": [
+        oneSignalAppGroup,
+        widgetAppGroup,
+      ],
     },
   },
   android: {
@@ -187,6 +209,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     googleSignInPlugin,
+    // Generates the WidgetKit target from `targets/widget/` at prebuild, so
+    // the widget survives `expo prebuild --clean` without `/ios` being
+    // committed. Matches on the Info.plist extension point, so it leaves the
+    // OneSignal notification service extension alone.
+    "@bacons/apple-targets",
     "./plugins/withGoogleModularHeaders.js",
     "expo-localization",
     "expo-video",
@@ -207,6 +234,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     /** iOS native Google Sign-In (required if GoogleService-Info.plist is not in the project). */
     googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    /** App Group `lib/widgetSnapshot.ts` writes the widget payload into. */
+    widgetAppGroup,
     eas: {
       projectId: "0ff2f724-d7e1-4730-ac3b-251129aed785",
     },

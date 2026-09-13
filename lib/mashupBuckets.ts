@@ -13,17 +13,23 @@ export type MashupClip = {
 };
 
 /**
- * Period buckets slice the timeline; identity buckets ("person" / "theme")
- * slice by who or what a moment is about, so the same moment can appear in
- * several of them.
+ * Period buckets slice the timeline; identity buckets ("person" / "place" /
+ * "theme") slice by who, where or what a moment is about, so the same moment
+ * can appear in several of them.
  */
-export type MashupBucketType = "week" | "month" | "year" | "person" | "theme";
+export type MashupBucketType =
+  | "week"
+  | "month"
+  | "year"
+  | "person"
+  | "place"
+  | "theme";
 
 export interface MashupBucket {
   type: MashupBucketType;
   /**
    * Stable string key — "2026-06-08" / "2026-06" / "2026" for periods, the
-   * canonical name for a person, the palette slug for a theme.
+   * canonical name for a person or place, the palette slug for a theme.
    */
   key: string;
   /** Big display label rendered on the card. */
@@ -54,6 +60,7 @@ export const MIN_MOMENTS_FOR_WEEK_MOVIE = 3;
 export const MIN_MOMENTS_FOR_MONTH_MOVIE = 10;
 export const MIN_MOMENTS_FOR_YEAR_MOVIE = 15;
 export const MIN_MOMENTS_FOR_PERSON_MOVIE = 10;
+export const MIN_MOMENTS_FOR_PLACE_MOVIE = 10;
 export const MIN_MOMENTS_FOR_THEME_MOVIE = 10;
 
 /** Minimum moments before a bucket of this type is worth showing as a movie. */
@@ -67,6 +74,8 @@ export function minMomentsForMashupBucket(type: MashupBucketType): number {
       return MIN_MOMENTS_FOR_YEAR_MOVIE;
     case "person":
       return MIN_MOMENTS_FOR_PERSON_MOVIE;
+    case "place":
+      return MIN_MOMENTS_FOR_PLACE_MOVIE;
     case "theme":
       return MIN_MOMENTS_FOR_THEME_MOVIE;
   }
@@ -365,6 +374,34 @@ function unfilteredPeople(
   );
 }
 
+/**
+ * Movie buckets per canonical place, thin places removed.
+ *
+ * `placesLookup` is the `recurring_places` sibling of the people map — the
+ * same edge function builds both, so a user who has one has the other.
+ */
+export function bucketMomentsByPlace(
+  entries: Entry[],
+  placesLookup: AliasLookup
+): MashupBucket[] {
+  return unfilteredPlaces(entries, placesLookup).filter(
+    mashupBucketHasEnoughMoments
+  );
+}
+
+function unfilteredPlaces(
+  entries: Entry[],
+  placesLookup: AliasLookup
+): MashupBucket[] {
+  if (placesLookup.size === 0) return [];
+  return buildIdentityBuckets(
+    flattenMomentsToClips(entries),
+    (clip) => resolveCanonical(clip.entry.metadata?.places, placesLookup),
+    (key) => key,
+    "place"
+  );
+}
+
 /** Movie buckets per theme, thin themes removed. */
 export function bucketMomentsByTheme(entries: Entry[]): MashupBucket[] {
   return unfilteredThemes(entries).filter(mashupBucketHasEnoughMoments);
@@ -386,11 +423,15 @@ function unfilteredThemes(entries: Entry[]): MashupBucket[] {
  * Every bucket of a type, *including* those still short of the threshold.
  * Used for progress countdowns — the filtered bucketers above deliberately
  * hide thin buckets, so they can't answer "how close am I?".
+ *
+ * `identityLookup` is whichever canonical map the requested type needs —
+ * `recurring_people` for "person", `recurring_places` for "place". Only one
+ * can be in play per call, so they share the parameter.
  */
 export function unfilteredMashupBuckets(
   entries: Entry[],
   type: MashupBucketType,
-  peopleLookup?: AliasLookup
+  identityLookup?: AliasLookup
 ): MashupBucket[] {
   switch (type) {
     case "week":
@@ -400,7 +441,9 @@ export function unfilteredMashupBuckets(
     case "year":
       return unfilteredYears(entries);
     case "person":
-      return unfilteredPeople(entries, peopleLookup ?? new Map());
+      return unfilteredPeople(entries, identityLookup ?? new Map());
+    case "place":
+      return unfilteredPlaces(entries, identityLookup ?? new Map());
     case "theme":
       return unfilteredThemes(entries);
   }
@@ -424,9 +467,9 @@ export function movieProgress(
   entries: Entry[],
   type: MashupBucketType,
   key: string,
-  peopleLookup?: AliasLookup
+  identityLookup?: AliasLookup
 ): MovieProgress {
-  const bucket = unfilteredMashupBuckets(entries, type, peopleLookup).find(
+  const bucket = unfilteredMashupBuckets(entries, type, identityLookup).find(
     (b) => b.key === key
   );
   return movieProgressForCount(type, bucket?.momentCount ?? 0);
@@ -446,15 +489,15 @@ export function movieProgressForCount(
 }
 
 /**
- * The person / theme closest to earning a movie, for the "3 more moments with
- * Julia" placeholder. Returns null when nothing is in flight yet.
+ * The person / place / theme closest to earning a movie, for the "3 more
+ * moments with Julia" placeholder. Returns null when nothing is in flight yet.
  */
 export function closestPendingIdentityBucket(
   entries: Entry[],
-  type: "person" | "theme",
-  peopleLookup?: AliasLookup
+  type: "person" | "place" | "theme",
+  identityLookup?: AliasLookup
 ): MashupBucket | null {
-  const pending = unfilteredMashupBuckets(entries, type, peopleLookup)
+  const pending = unfilteredMashupBuckets(entries, type, identityLookup)
     .filter((b) => !mashupBucketHasEnoughMoments(b))
     .sort((a, b) => b.momentCount - a.momentCount);
   return pending[0] ?? null;

@@ -18,23 +18,31 @@ import { weekOfMonthLabel } from "./chapters.ts";
 import { THEME_LABEL, type Theme } from "./graph-palette.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-export type MovieUnlockKind = "week" | "month" | "year" | "person" | "theme";
+export type MovieUnlockKind =
+  | "week"
+  | "month"
+  | "year"
+  | "person"
+  | "place"
+  | "theme";
 
 export const MIN_MOMENTS_FOR_MOVIE: Record<MovieUnlockKind, number> = {
   week: 3,
   month: 10,
   year: 15,
   person: 10,
+  place: 10,
   theme: 10,
 };
 
 /**
  * Which unlock to announce when a single save crosses several thresholds at
- * once. A movie about a person beats a movie about a stretch of calendar —
- * it's the more surprising, more personal artifact.
+ * once. A movie about a person beats one about a place, which beats one about
+ * a stretch of calendar — roughly most to least surprising as an artifact.
  */
 const NOTIFY_PRIORITY: MovieUnlockKind[] = [
   "person",
+  "place",
   "theme",
   "week",
   "month",
@@ -70,14 +78,17 @@ interface CandidateBucket {
   momentCount: number;
 }
 
+interface MomentMetadata {
+  people: string[] | null;
+  places: string[] | null;
+  primary_theme: string | null;
+}
+
 interface MomentRow {
   id: string;
   entry_date: string | null;
   entry_media: { id: string }[] | null;
-  entry_metadata:
-    | { people: string[] | null; primary_theme: string | null }
-    | { people: string[] | null; primary_theme: string | null }[]
-    | null;
+  entry_metadata: MomentMetadata | MomentMetadata[] | null;
 }
 
 /** Same normalization as canonicalize-people and lib/canonicalPeople.ts. */
@@ -133,7 +144,7 @@ async function fetchAllMoments(
     const { data, error } = await supabase
       .from("entries")
       .select(
-        "id, entry_date, entry_media(id), entry_metadata(people, primary_theme)",
+        "id, entry_date, entry_media(id), entry_metadata(people, places, primary_theme)",
       )
       .eq("user_id", userId)
       .eq("entry_type", "moment")
@@ -152,7 +163,23 @@ async function fetchAllMoments(
 }
 
 /**
- * Every bucket that currently qualifies for a movie, across all five kinds.
+ * Normalized alias → canonical name, from a `recurring_people` /
+ * `recurring_places` JSONB map. Takes `unknown` because those columns come
+ * back untyped from PostgREST.
+ */
+function buildAliasLookup(map: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  const groups = (map ?? {}) as Record<string, { aliases?: string[] }>;
+  for (const [canonical, entity] of Object.entries(groups)) {
+    for (const alias of entity?.aliases ?? []) {
+      out.set(normalizeAlias(alias), canonical);
+    }
+  }
+  return out;
+}
+
+/**
+ * Every bucket that currently qualifies for a movie, across all six kinds.
  */
 async function computeQualifyingBuckets(
   supabase: SupabaseClient,
@@ -162,21 +189,13 @@ async function computeQualifyingBuckets(
     fetchAllMoments(supabase, userId),
     supabase
       .from("user_thread_stats")
-      .select("recurring_people")
+      .select("recurring_people, recurring_places")
       .eq("user_id", userId)
       .maybeSingle(),
   ]);
 
-  const aliasToCanonical = new Map<string, string>();
-  const recurringPeople = (statsRes.data?.recurring_people ?? {}) as Record<
-    string,
-    { aliases?: string[] }
-  >;
-  for (const [canonical, entity] of Object.entries(recurringPeople)) {
-    for (const alias of entity?.aliases ?? []) {
-      aliasToCanonical.set(normalizeAlias(alias), canonical);
-    }
-  }
+  const peopleLookup = buildAliasLookup(statsRes.data?.recurring_people);
+  const placesLookup = buildAliasLookup(statsRes.data?.recurring_places);
 
   // Distinct moments per bucket key, per kind.
   const counts: Record<MovieUnlockKind, Map<string, number>> = {
@@ -184,6 +203,7 @@ async function computeQualifyingBuckets(
     month: new Map(),
     year: new Map(),
     person: new Map(),
+    place: new Map(),
     theme: new Map(),
   };
   const bump = (kind: MovieUnlockKind, key: string) => {
@@ -202,12 +222,18 @@ async function computeQualifyingBuckets(
     bump("year", String(ymd.y));
 
     const meta = firstEntryMetadata(row);
-    const canonicalSeen = new Set<string>();
-    for (const raw of meta?.people ?? []) {
-      const canonical = aliasToCanonical.get(normalizeAlias(raw));
-      if (canonical) canonicalSeen.add(canonical);
+
+    // Deduped per moment — one that says "Mum" and "Ruth" still counts once.
+    for (const kind of ["person", "place"] as const) {
+      const lookup = kind === "person" ? peopleLookup : placesLookup;
+      const raws = (kind === "person" ? meta?.people : meta?.places) ?? [];
+      const seen = new Set<string>();
+      for (const raw of raws) {
+        const canonical = lookup.get(normalizeAlias(raw));
+        if (canonical) seen.add(canonical);
+      }
+      for (const canonical of seen) bump(kind, canonical);
     }
-    for (const canonical of canonicalSeen) bump("person", canonical);
 
     const theme = meta?.primary_theme;
     if (theme && theme in THEME_LABEL) bump("theme", theme);
@@ -234,6 +260,7 @@ function labelFor(kind: MovieUnlockKind, bucketKey: string): string {
     case "year":
       return bucketKey;
     case "person":
+    case "place":
       return bucketKey;
     case "theme":
       return THEME_LABEL[bucketKey as Theme] ?? bucketKey;
@@ -310,10 +337,13 @@ export async function syncMovieUnlocks(
   // Insurance against an account that slipped past `backfill-movie-unlocks`:
   // a user with no unlocks on record who suddenly qualifies for a pile of them
   // is meeting this feature for the first time, not someone who just earned
-  // five movies in one save. Record, don't celebrate. The bar is deliberately
-  // high so a genuine first unlock — or two crossing together — still counts.
+  // six movies in one save. Record, don't celebrate.
+  //
+  // The bar sits above the largest genuine simultaneous crossing: month,
+  // person, place and theme all share a threshold of 10, so a single moment
+  // can legitimately unlock four at once.
   const isSeed =
-    opts.seedOnly || ((existingRows ?? []).length === 0 && missing.length > 3);
+    opts.seedOnly || ((existingRows ?? []).length === 0 && missing.length > 4);
   const stampedAt = isSeed ? new Date().toISOString() : null;
 
   if (missing.length > 0) {
@@ -420,37 +450,38 @@ async function notifyBestPendingUnlock(
 }
 
 /**
- * Refresh the user's canonical people map when a moment introduces a name we
- * haven't grouped yet.
+ * Refresh the user's canonical people and places maps when a moment introduces
+ * a name we haven't grouped yet.
  *
- * Without this a person movie can't unlock until the nightly sweep runs, so
- * the tenth moment about Julia would go unremarked for up to a day. Only fires
- * on genuinely new names, which keeps the LLM cost off the common path.
+ * Without this a person or place movie can't unlock until the nightly sweep
+ * runs, so the tenth moment about Julia would go unremarked for up to a day.
+ * Only fires on genuinely new names, which keeps the LLM cost off the common
+ * path. `canonicalize-people` rebuilds both maps in one call, so a new name of
+ * either kind is enough to justify the trip.
  */
-export async function ensurePeopleCanonicalized(
+export async function ensureEntitiesCanonicalized(
   supabase: SupabaseClient,
   userId: string,
   rawPeople: string[] | null | undefined,
+  rawPlaces: string[] | null | undefined,
 ): Promise<void> {
-  const names = (rawPeople ?? []).map(normalizeAlias).filter(Boolean);
-  if (names.length === 0) return;
+  const people = (rawPeople ?? []).map(normalizeAlias).filter(Boolean);
+  const places = (rawPlaces ?? []).map(normalizeAlias).filter(Boolean);
+  if (people.length === 0 && places.length === 0) return;
 
   const { data: stats } = await supabase
     .from("user_thread_stats")
-    .select("recurring_people")
+    .select("recurring_people, recurring_places")
     .eq("user_id", userId)
     .maybeSingle();
 
-  const known = new Set<string>();
-  const recurringPeople = (stats?.recurring_people ?? {}) as Record<
-    string,
-    { aliases?: string[] }
-  >;
-  for (const entity of Object.values(recurringPeople)) {
-    for (const alias of entity?.aliases ?? []) known.add(normalizeAlias(alias));
-  }
+  const knownPeople = new Set(buildAliasLookup(stats?.recurring_people).keys());
+  const knownPlaces = new Set(buildAliasLookup(stats?.recurring_places).keys());
 
-  if (names.every((n) => known.has(n))) return;
+  const allKnown =
+    people.every((n) => knownPeople.has(n)) &&
+    places.every((n) => knownPlaces.has(n));
+  if (allKnown) return;
 
   const cronSecret = Deno.env.get("CRON_SECRET");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -467,7 +498,7 @@ export async function ensurePeopleCanonicalized(
     });
   } catch (err) {
     console.error(
-      "ensurePeopleCanonicalized error:",
+      "ensureEntitiesCanonicalized error:",
       err instanceof Error ? err.message : String(err),
     );
   }

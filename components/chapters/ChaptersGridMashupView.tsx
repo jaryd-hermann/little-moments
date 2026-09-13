@@ -6,6 +6,7 @@ import type { AliasLookup } from "@/lib/canonicalPeople";
 import {
   bucketMomentsByMonth,
   bucketMomentsByPerson,
+  bucketMomentsByPlace,
   bucketMomentsByTheme,
   bucketMomentsByWeek,
   bucketMomentsByYear,
@@ -34,11 +35,12 @@ import {
 export interface ChaptersGridMashupViewProps {
   entries: Entry[];
   /**
-   * Alias → canonical-name lookup for the People section. Empty until the
-   * user's `canonicalize-people` run lands, which just means the section
-   * shows its progress placeholder a little longer.
+   * Alias → canonical-name lookups for the People and Places sections. Empty
+   * until the user's `canonicalize-people` run lands, which just means those
+   * sections show their progress placeholder a little longer.
    */
   peopleLookup: AliasLookup;
+  placesLookup: AliasLookup;
   onOpenMashup: (bucket: MashupBucket) => void;
   /** Tap the share icon on a card. Optional — when omitted, the icon hides. */
   onShareMashup?: (bucket: MashupBucket) => void;
@@ -53,17 +55,18 @@ const CARD_GAP = 12;
 
 /**
  * Grid view for the Chapters tab — one horizontally scrolling carousel per
- * movie kind (Weeks / Months / People / Themes / Years) of looping preview
- * cards.
+ * movie kind (Weeks / Months / People / Places / Themes / Years) of looping
+ * preview cards.
  *
  * Every section renders as soon as the user has a single moment: a kind with
  * no movies yet shows a progress placeholder instead, so the shelf the movies
  * will land on is visible before they exist. Only the snapped card per section
- * auto-loops, so we never have more than five video players spinning at once.
+ * auto-loops, so we never have more than one video player per section running.
  */
 export function ChaptersGridMashupView({
   entries,
   peopleLookup,
+  placesLookup,
   onOpenMashup,
   onShareMashup,
   emptySubtitle,
@@ -74,6 +77,10 @@ export function ChaptersGridMashupView({
   const people = useMemo(
     () => bucketMomentsByPerson(entries, peopleLookup),
     [entries, peopleLookup]
+  );
+  const places = useMemo(
+    () => bucketMomentsByPlace(entries, placesLookup),
+    [entries, placesLookup]
   );
   const themes = useMemo(() => bucketMomentsByTheme(entries), [entries]);
   const years = useMemo(() => bucketMomentsByYear(entries), [entries]);
@@ -86,13 +93,14 @@ export function ChaptersGridMashupView({
       ...(weeks[0]?.clips.slice(0, 6) ?? []),
       ...(months[0]?.clips.slice(0, 6) ?? []),
       ...(people[0]?.clips.slice(0, 6) ?? []),
+      ...(places[0]?.clips.slice(0, 6) ?? []),
       ...(themes[0]?.clips.slice(0, 6) ?? []),
       ...(years[0]?.clips.slice(0, 6) ?? []),
     ];
     if (visibleClips.length > 0) {
       enqueueClipsForPrefetch(visibleClips, 5000);
     }
-  }, [weeks, months, people, themes, years]);
+  }, [weeks, months, people, places, themes, years]);
 
   // Period placeholders always point at the period the user can still top up,
   // so the countdown never strands them on a month that already closed.
@@ -108,6 +116,10 @@ export function ChaptersGridMashupView({
   const closestPerson = useMemo(
     () => closestPendingIdentityBucket(entries, "person", peopleLookup),
     [entries, peopleLookup]
+  );
+  const closestPlace = useMemo(
+    () => closestPendingIdentityBucket(entries, "place", placesLookup),
+    [entries, placesLookup]
   );
   const closestTheme = useMemo(
     () => closestPendingIdentityBucket(entries, "theme"),
@@ -173,6 +185,19 @@ export function ChaptersGridMashupView({
           closestPerson
             ? `with ${closestPerson.label}`
             : "featuring the same person"
+        }
+        onOpenMashup={onOpenMashup}
+        onShareMashup={onShareMashup}
+      />
+      <MashupSection
+        title="Places"
+        buckets={places}
+        placeholderProgress={movieProgressForCount(
+          "place",
+          closestPlace?.momentCount ?? 0
+        )}
+        placeholderSubject={
+          closestPlace ? `in ${closestPlace.label}` : "in the same place"
         }
         onOpenMashup={onOpenMashup}
         onShareMashup={onShareMashup}

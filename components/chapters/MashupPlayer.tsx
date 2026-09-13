@@ -11,7 +11,6 @@ import {
 } from "@/lib/mashupBuckets";
 import {
   enqueueClipsForPrefetch,
-  getCachedUriSync,
   waitForClipsReady,
 } from "@/lib/mediaPrefetch";
 import { Ionicons } from "@expo/vector-icons";
@@ -56,17 +55,9 @@ export function MashupPlayer({
   const { colors } = useTheme();
   const [clipIdx, setClipIdx] = useState(0);
   const [ready, setReady] = useState(false);
-  const [playheadStarted, setPlayheadStarted] = useState(false);
   const closedRef = useRef(false);
   const clipIdxRef = useRef(0);
-  const armAdvanceRef = useRef<(() => void) | null>(null);
   clipIdxRef.current = clipIdx;
-
-  const handleClipPlayheadStart = useCallback((index: number) => {
-    if (index !== clipIdxRef.current) return;
-    setPlayheadStarted(true);
-    armAdvanceRef.current?.();
-  }, []);
 
   const fireClose = useCallback(
     (reason: MashupCloseReason) => {
@@ -84,7 +75,6 @@ export function MashupPlayer({
     }
     let cancelled = false;
     setClipIdx(0);
-    setPlayheadStarted(false);
     closedRef.current = false;
     setReady(false);
 
@@ -107,10 +97,6 @@ export function MashupPlayer({
   }, [visible, bucket]);
 
   useEffect(() => {
-    setPlayheadStarted(false);
-  }, [clipIdx]);
-
-  useEffect(() => {
     if (!visible || !bucket || !ready) return;
     enqueueClipsForPrefetch(
       bucket.clips.slice(clipIdx, clipIdx + 6),
@@ -118,60 +104,30 @@ export function MashupPlayer({
     );
   }, [visible, bucket, clipIdx, ready]);
 
+  /*
+    One slide, one fixed interval — the clock starts when the slide appears.
+
+    It used to start only once the clip player reported its playhead running,
+    with fallbacks at 280ms or 3200ms depending on whether motion happened to be
+    cached, and then blocked for up to six more seconds waiting on the next clips
+    before moving on. A slide could be up for anywhere between two and eleven
+    seconds, and restarting the countdown restarted the progress bar with it. The
+    opening wait plus the rolling prefetch keep media ahead of the playhead
+    instead of the clock doing it.
+  */
   useEffect(() => {
     if (!visible || !bucket || !ready) return;
 
-    let cancelled = false;
-    let advanceTimer: ReturnType<typeof setTimeout> | undefined;
-    let timelineArmed = false;
+    if (clipIdx >= bucket.clips.length - 1) {
+      const end = setTimeout(() => fireClose("auto_end"), CLIP_DURATION_MS);
+      return () => clearTimeout(end);
+    }
 
-    const armAdvanceCountdown = () => {
-      if (cancelled || timelineArmed) return;
-      timelineArmed = true;
-      setPlayheadStarted(true);
-
-      advanceTimer = setTimeout(() => {
-        void (async () => {
-          if (cancelled) return;
-          if (clipIdx >= bucket.clips.length - 1) {
-            fireClose("auto_end");
-            return;
-          }
-          const nextIdx = clipIdx + 1;
-          enqueueClipsForPrefetch(
-            bucket.clips.slice(nextIdx, nextIdx + 6),
-            11000
-          );
-          await waitForClipsReady(
-            bucket.clips.slice(
-              nextIdx,
-              Math.min(nextIdx + 2, bucket.clips.length)
-            ),
-            6000
-          );
-          if (cancelled) return;
-          setClipIdx((i) => i + 1);
-        })();
-      }, CLIP_DURATION_MS);
-    };
-
-    armAdvanceRef.current = armAdvanceCountdown;
-
-    const clip = bucket.clips[clipIdx];
-    const hasCachedMotion = Boolean(
-      clip &&
-        (getCachedUriSync(clip.media, "paired")?.startsWith("file:") ||
-          getCachedUriSync(clip.media, "video")?.startsWith("file:"))
+    const advance = setTimeout(
+      () => setClipIdx((i) => i + 1),
+      CLIP_DURATION_MS
     );
-    const fallbackMs = hasCachedMotion ? 280 : 3200;
-    const fallback = setTimeout(armAdvanceCountdown, fallbackMs);
-
-    return () => {
-      cancelled = true;
-      armAdvanceRef.current = null;
-      clearTimeout(fallback);
-      if (advanceTimer) clearTimeout(advanceTimer);
-    };
+    return () => clearTimeout(advance);
   }, [visible, bucket, clipIdx, ready, fireClose]);
 
   if (!bucket) return null;
@@ -202,7 +158,6 @@ export function MashupPlayer({
               crossfade={false}
               activeClipIndex={clipIdx}
               preloadNextClip
-              onClipPlayheadStart={handleClipPlayheadStart}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
             />
@@ -284,7 +239,7 @@ export function MashupPlayer({
                 i < clipIdx ? "filled" : i === clipIdx ? "active" : "empty"
               }
               durationMs={CLIP_DURATION_MS}
-              isPaused={!ready || (i === clipIdx && !playheadStarted)}
+              isPaused={!ready}
             />
           ))}
         </View>

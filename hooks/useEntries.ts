@@ -45,12 +45,12 @@ export function useEntries() {
     if (!opts?.background) {
       setIsLoading(true);
     }
-    // `entry_metadata` rides along for the People / Themes movie buckets on
-    // Chapters. It's two small columns per moment — cheaper than a second
-    // round trip on a screen that already has every entry in hand.
+    // `entry_metadata` rides along for the People / Places / Themes movie
+    // buckets on Chapters. It's three small columns per moment — cheaper than
+    // a second round trip on a screen that already has every entry in hand.
     const { data } = await supabase
       .from("entries")
-      .select("*, entry_media(*), entry_metadata(people, primary_theme)")
+      .select("*, entry_media(*), entry_metadata(people, places, primary_theme)")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (data) {
@@ -66,7 +66,11 @@ export function useEntries() {
           media: e.entry_media ?? [],
           is_pinned: Boolean((e as { is_pinned?: boolean }).is_pinned),
           metadata: meta
-            ? { people: meta.people ?? [], primary_theme: meta.primary_theme }
+            ? {
+                people: meta.people ?? [],
+                places: meta.places ?? [],
+                primary_theme: meta.primary_theme,
+              }
             : null,
         };
       }) as Entry[];

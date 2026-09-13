@@ -1,6 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@/hooks/useTheme";
 import type { MovieProgress } from "@/lib/mashupBuckets";
+import { Image } from "expo-image";
 import { Text, View } from "react-native";
 
 export interface MovieProgressPlaceholderProps {
@@ -8,8 +8,9 @@ export interface MovieProgressPlaceholderProps {
   width: number;
   height?: number;
   /**
-   * Who or what the movie would be about — "with Julia", "about Family". Left
-   * off for period movies, where the section heading already says it.
+   * Who, where or what the movie would be about — "with Julia", "in Lisbon",
+   * "about Family". Left off for period movies, where the section heading
+   * already says it.
    */
   subject?: string | null;
 }
@@ -28,7 +29,7 @@ export function MovieProgressPlaceholder({
   height,
   subject = null,
 }: MovieProgressPlaceholderProps) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
   const { current, required, remaining, ratio } = progress;
 
   return (
@@ -47,7 +48,20 @@ export function MovieProgressPlaceholder({
         gap: 14,
       }}
     >
-      <Ionicons name="film-outline" size={28} color={colors.textMuted} />
+      {/*
+        Kept modest: the card is only `width * 0.52` tall and the subject line
+        below can run to three lines, so this has to share the height rather
+        than claim it. The art sits inside a square canvas with its own margin,
+        so it reads smaller than the box.
+      */}
+      <Image
+        source={require("@/assets/images/no-movie.png")}
+        style={{ width: 72, height: 72 }}
+        contentFit="contain"
+        // Black line work on transparency, so it needs inverting to stay
+        // visible once the card goes dark.
+        tintColor={theme === "dark" ? "#FFFFFF" : undefined}
+      />
       <Text
         style={{
           fontFamily: "Roboto-Medium",

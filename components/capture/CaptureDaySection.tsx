@@ -368,12 +368,12 @@ export function CaptureDaySection({
                               gap: 10,
                             }}
                           >
+                            {/*
+                              One asset for both themes: unlike the app icon it
+                              replaces, this mark carries its own background.
+                            */}
                             <Image
-                              source={
-                                theme === "dark"
-                                  ? require("@/assets/images/white-icon.png")
-                                  : require("@/assets/images/icon.png")
-                              }
+                              source={require("@/assets/images/icon2.png")}
                               style={{ width: 20, height: 20, borderRadius: 5 }}
                             />
                             <Text

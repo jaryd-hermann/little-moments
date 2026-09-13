@@ -350,21 +350,14 @@ const RecentMomentsCarouselInner = forwardRef<
                   ...bevelShadow(theme),
                 }}
               >
-              <View
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 32,
-                  backgroundColor: colors.primary,
-                  borderWidth: 2,
-                  borderColor: PINK_CTA_BORDER,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 18,
-                }}
-              >
-                <Ionicons name="camera" size={28} color={PINK_CTA_INK} />
-              </View>
+              <Image
+                source={require("@/assets/images/no-pic.png")}
+                style={{ width: 148, height: 148, marginBottom: 6 }}
+                contentFit="contain"
+                // Black line work on transparency, so it needs inverting to stay
+                // visible once the card goes dark.
+                tintColor={theme === "dark" ? "#FFFFFF" : undefined}
+              />
               <Text
                 style={{
                   fontFamily: "PMGothicLudington-Text110",

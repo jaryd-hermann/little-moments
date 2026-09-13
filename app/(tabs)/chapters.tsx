@@ -43,12 +43,13 @@ import type { MashupBucket } from "@/lib/mashupBuckets";
 import {
   bucketMomentsByMonth,
   bucketMomentsByPerson,
+  bucketMomentsByPlace,
   bucketMomentsByTheme,
   bucketMomentsByWeek,
   bucketMomentsByYear,
   MIN_MOMENTS_FOR_WEEK_MOVIE,
 } from "@/lib/mashupBuckets";
-import { useCanonicalPeople } from "@/hooks/useCanonicalPeople";
+import { useCanonicalEntities } from "@/hooks/useCanonicalEntities";
 import { useTabViewIntentStore } from "@/store/tabViewIntentStore";
 
 const REQUIRED_PER_WEEK = 4;
@@ -90,7 +91,7 @@ export default function ChaptersScreen() {
   const realOrDummy = dummyEnabled ? dummyChapters : chapters;
 
   const { entries } = useEntries();
-  const { lookup: peopleLookup } = useCanonicalPeople();
+  const { peopleLookup, placesLookup } = useCanonicalEntities();
   const thisWeekMomentsCount = useMemo(() => {
     const start = startOfMondayWeek(new Date());
     const startTs = start.getTime();
@@ -188,6 +189,7 @@ export default function ChaptersScreen() {
           ...bucketMomentsByMonth(entries),
           ...bucketMomentsByYear(entries),
           ...bucketMomentsByPerson(entries, peopleLookup),
+          ...bucketMomentsByPlace(entries, placesLookup),
           ...bucketMomentsByTheme(entries),
         ];
         const bucket = allBuckets.find(
@@ -203,7 +205,7 @@ export default function ChaptersScreen() {
         const target = realOrDummy.find((c) => c.id === chapterId);
         if (target) triggerFadeAndOpen(target);
       }
-    }, [entries, peopleLookup, realOrDummy, triggerFadeAndOpen])
+    }, [entries, peopleLookup, placesLookup, realOrDummy, triggerFadeAndOpen])
   );
 
   const handleSwipe = useCallback(
@@ -334,6 +336,7 @@ export default function ChaptersScreen() {
         <ChaptersGridMashupView
           entries={entries}
           peopleLookup={peopleLookup}
+          placesLookup={placesLookup}
           emptySubtitle={
             remainingForMovie > 0
               ? `Capture ${remainingForMovie} more moment${remainingForMovie === 1 ? "" : "s"} this week to get a movie made for you.`

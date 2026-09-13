@@ -6,7 +6,11 @@ import {
 import { resolvePairedVideoFromCameraRoll, clipMayHaveLiveMotion } from "@/lib/livePhotoBackfill";
 import { chapterImageSlideToMedia, type ChapterRecord } from "@/lib/chapters";
 import type { Entry, EntryMedia } from "@/store/entryStore";
-import * as FileSystem from "expo-file-system";
+// `/legacy`: `cacheDirectory` isn't on the current API. Imported from the new
+// one it was `undefined`, so every cache path came out relative, every download
+// threw, and nothing was ever actually on disk — the prefetcher reported success
+// while doing nothing.
+import * as FileSystem from "expo-file-system/legacy";
 import { Image } from "expo-image";
 import { Platform } from "react-native";
 
@@ -43,6 +47,14 @@ interface CacheRecord {
 const cacheByMediaId = new Map<string, CacheRecord>();
 const completed = new Set<string>();
 const inflight = new Set<string>();
+/**
+ * Media we've looked behind for motion and found none. `clipMayHaveLiveMotion`
+ * is only ever a guess — on iOS it says yes to any photo with a `taken_at` —
+ * and without recording the answer the bookkeeping below re-queues every such
+ * photo on each enqueue. During a movie that meant three camera-roll lookups
+ * running at all times while the next slides' stills waited behind them.
+ */
+const motionMissing = new Set<string>();
 
 interface QueueItem {
   media: EntryMedia;
@@ -205,7 +217,10 @@ async function prefetchOne(
 ): Promise<void> {
   if (inflight.has(media.id)) return;
   if (completed.has(media.id) && hasMotionFileCached(media)) return;
+  if (completed.has(media.id) && motionMissing.has(media.id)) return;
   if (completed.has(media.id) && !clipMayHaveLiveMotion(media)) return;
+  // Left to retry: a `stillOnly` pass finished this one without ever looking for
+  // motion, and now something wants the motion too.
   if (completed.has(media.id)) {
     completed.delete(media.id);
   }
@@ -230,10 +245,13 @@ async function prefetchOne(
     }
 
     if (motionFirst && clipMayHaveLiveMotion(media)) {
-      gotMotion = await prefetchMotionForMedia(media, stillUri);
+      // Started before the motion lookup rather than after it. The still is what
+      // a slide falls back to and what readiness is measured on, so it shouldn't
+      // queue behind a camera-roll search that will often find nothing.
       if (stillUri && media.media_type === "image") {
         prefetchStillInBackground(media, stillUri);
       }
+      gotMotion = await prefetchMotionForMedia(media, stillUri);
     } else if (media.media_type === "image") {
       if (!stillUri) return;
       void Image.prefetch(stillUri).catch(() => {});
@@ -248,9 +266,13 @@ async function prefetchOne(
       gotMotion = await prefetchMotionForMedia(media, stillUri);
     }
 
-    if (gotMotion || !clipMayHaveLiveMotion(media)) {
-      completed.add(media.id);
+    if (!gotMotion && stillUri && clipMayHaveLiveMotion(media)) {
+      // Looked and there was nothing there, so the guards above can stop
+      // re-queueing this one.
+      motionMissing.add(media.id);
     }
+    // Not when the URL wouldn't resolve at all: that's worth another try later.
+    if (gotMotion || stillUri) completed.add(media.id);
   } finally {
     inflight.delete(media.id);
   }
@@ -279,6 +301,7 @@ export function enqueuePrefetch(
   opts?: { motionFirst?: boolean; stillOnly?: boolean }
 ): void {
   if (completed.has(media.id) && hasMotionFileCached(media)) return;
+  if (completed.has(media.id) && motionMissing.has(media.id)) return;
   if (completed.has(media.id) && !clipMayHaveLiveMotion(media)) return;
   if (completed.has(media.id)) {
     completed.delete(media.id);
@@ -339,23 +362,29 @@ export function enqueueClipsForPrefetch(
 
 /** Whether prefetch has finished for this clip's motion playback needs. */
 export function isClipMediaPrefetched(media: EntryMedia): boolean {
-  return isClipMotionReady(media);
+  return isClipDisplayReady(media);
 }
 
-/** True when motion file is on disk and ready for instant playback. */
-export function isClipMotionReady(media: EntryMedia): boolean {
+/**
+ * True when there are bytes on disk to put on screen for this clip — its motion
+ * if we managed to get any, its still otherwise.
+ *
+ * Both halves of that used to be wrong. Motion was required whenever
+ * `clipMayHaveLiveMotion` said it was possible, which on iOS is any photo with a
+ * `taken_at`, so an ordinary photo with no Live Photo behind it was never ready
+ * and every gate below ran out its full timeout. And the still branch accepted
+ * `getEntryMediaDisplayUri`, a signed URL nothing had fetched yet, so it passed
+ * before a single byte had arrived. Together they meant a movie waited the full
+ * six seconds and then opened on empty frames anyway.
+ */
+export function isClipDisplayReady(media: EntryMedia): boolean {
   if (hasMotionFileCached(media)) return true;
-  if (!clipMayHaveLiveMotion(media)) {
-    return Boolean(
-      getCachedUriSync(media, "still") || getEntryMediaDisplayUri(media)
-    );
-  }
-  return false;
+  return Boolean(getCachedUriSync(media, "still")?.startsWith("file:"));
 }
 
-/** @deprecated — use {@link isClipMotionReady} for mashup playback gates. */
+/** @deprecated — use {@link isClipDisplayReady} for mashup playback gates. */
 export function isClipMediaReady(media: EntryMedia): boolean {
-  return isClipMotionReady(media);
+  return isClipDisplayReady(media);
 }
 
 /**
@@ -370,7 +399,7 @@ export async function waitForClipsReady(
   enqueueClipsForPrefetch(clips, 12000);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (clips.every((c) => isClipMotionReady(c.media))) return;
+    if (clips.every((c) => isClipDisplayReady(c.media))) return;
     await new Promise((r) => setTimeout(r, 80));
   }
 }
@@ -397,6 +426,7 @@ export function __resetMediaPrefetchForTests(): void {
   cacheByMediaId.clear();
   completed.clear();
   inflight.clear();
+  motionMissing.clear();
   queue.length = 0;
   running = 0;
 }

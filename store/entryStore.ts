@@ -34,9 +34,9 @@ export interface Entry {
   updated_at: string;
   media?: EntryMedia[];
   /**
-   * People + theme extracted by `process-threads`. Undefined until a surface
-   * that needs it asks for it, and null for moments that never ran through
-   * extraction (photo-only saves with no text).
+   * People, places + theme extracted by `process-threads`. Undefined until a
+   * surface that needs it asks for it, and null for moments that never ran
+   * through extraction (photo-only saves with no text).
    */
   metadata?: EntryMetadata | null;
 }
@@ -45,6 +45,8 @@ export interface Entry {
 export interface EntryMetadata {
   /** Raw mentions — resolve through `lib/canonicalPeople` before counting. */
   people: string[];
+  /** Raw mentions — resolved against `recurring_places`, same as people. */
+  places: string[];
   primary_theme: string | null;
 }
 

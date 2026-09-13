@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,18 +8,16 @@ import {
   Linking,
   KeyboardAvoidingView,
   Platform,
-  FlatList,
-  type NativeSyntheticEvent,
-  type NativeScrollEvent,
-  type ViewToken,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import { useLocalSearchParams } from "expo-router";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { usePostHog } from "posthog-react-native";
 import { AppleSignInButton } from "@/components/auth/AppleSignInButton";
+import { ReviewCarousel } from "@/components/auth/ReviewCarousel";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { EmailAuthForm } from "@/components/auth/EmailAuthForm";
 import { supabase } from "@/lib/supabase";
@@ -40,28 +38,14 @@ import {
 const WORDMARK_LIGHT_ON_DARK = require("@/assets/images/wordmark-little-moments.png");
 const WORDMARK_DARK_ON_LIGHT = require("@/assets/images/wordmark-little-moments-black.png");
 
-const BENEFIT_SLIDES = [
-  {
-    parts: [
-      { text: "Tens of thousands of people say it replaced therapy." },
-    ],
-    bold: "It takes 5 minutes.",
-  },
-  {
-    parts: [
-      { text: "A few sentences a day", color: "primary" },
-      { text: " are all it takes to preserve your life story and create a collection of memories you\u2019ll cherish." },
-    ],
-  },
-  {
-    parts: [
-      { text: "No more forgotten moments. No more \u201CI wish I had written that down.\u201D " },
-      { text: "No more unnoticing.", color: "primary" },
-    ],
-  },
-];
-
 export default function SignInScreen() {
+  /**
+   * Set only by the Login tap on the splash screen. Someone who came that way is
+   * a returning user, so the reviews — which are here to convince — would just be
+   * in the way of the buttons they came for.
+   */
+  const { intent } = useLocalSearchParams<{ intent?: string }>();
+  const showReviews = intent !== "login";
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [error, setError] = useState("");
   const setProfile = useAuthStore((s) => s.setProfile);
@@ -76,21 +60,6 @@ export default function SignInScreen() {
     posthog.capture("viewed_sign_in", onboardingEventProps(2));
   }, []);
   const scrollRef = useRef<ScrollView>(null);
-  const [activeSlide, setActiveSlide] = useState(0);
-  const carouselRef = useRef<FlatList>(null);
-  const [carouselWidth, setCarouselWidth] = useState(0);
-
-  const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index != null) {
-        setActiveSlide(viewableItems[0].index);
-      }
-    },
-    []
-  );
-
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
-
   useEffect(() => {
     if (!showEmailForm) return;
     const t = setTimeout(() => {
@@ -229,6 +198,15 @@ export default function SignInScreen() {
             alignItems: "center",
             marginTop: 16,
             width: "100%",
+            /*
+              With no reviews under it the wordmark sat alone at the top with the
+              whole void between it and the buttons. Growing and bottom-aligning
+              it splits that space in two, so it reads as centred and the gap
+              below is half what it was.
+            */
+            ...(showReviews
+              ? null
+              : { flex: 1, justifyContent: "flex-end" as const }),
           }}
         >
           <Image
@@ -254,103 +232,12 @@ export default function SignInScreen() {
             60s
           </Text>
         </View>
-        {/* Benefit carousel commented out
-        <Pressable
-          onPress={() => {
-            const next = (activeSlide + 1) % BENEFIT_SLIDES.length;
-            carouselRef.current?.scrollToIndex({ index: next, animated: true });
-          }}
-          style={{ marginTop: 44 }}
-          onLayout={(e) => setCarouselWidth(e.nativeEvent.layout.width)}
-        >
-          {carouselWidth > 0 && (
-            <FlatList
-              ref={carouselRef}
-              data={BENEFIT_SLIDES}
-              keyExtractor={(_, i) => String(i)}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              scrollEventThrottle={16}
-              onViewableItemsChanged={onViewableItemsChanged}
-              viewabilityConfig={viewabilityConfig}
-              getItemLayout={(_, index) => ({
-                length: carouselWidth,
-                offset: carouselWidth * index,
-                index,
-              })}
-              renderItem={({ item }) => (
-                <View
-                  style={{
-                    width: carouselWidth,
-                    paddingHorizontal: 8,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontFamily: "LibreBaskerville-Regular",
-                      fontSize: 21,
-                      color: colors.textSecondary,
-                      lineHeight: 30,
-                      textAlign: "center",
-                    }}
-                  >
-                    {item.parts.map((p: { text: string; color?: string }, i: number) => (
-                      <Text
-                        key={i}
-                        style={
-                          p.color === "primary"
-                            ? { color: colors.primary, fontFamily: "LibreBaskerville-Bold" }
-                            : undefined
-                        }
-                      >
-                        {p.text}
-                      </Text>
-                    ))}
-                  </Text>
-                  {item.bold && (
-                    <Text
-                      style={{
-                        fontFamily: "LibreBaskerville-Bold",
-                        fontSize: 21,
-                        color: colors.primary,
-                        lineHeight: 30,
-                        textAlign: "center",
-                        marginTop: 10,
-                      }}
-                    >
-                      {item.bold}
-                    </Text>
-                  )}
-                </View>
-              )}
-            />
-          )}
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "center",
-              gap: 8,
-              marginTop: 18,
-            }}
-          >
-            {BENEFIT_SLIDES.map((_, i) => (
-              <View
-                key={i}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor:
-                    i === activeSlide ? colors.primary : colors.border,
-                }}
-              />
-            ))}
+
+        {showReviews ? (
+          <View style={{ marginTop: 24 }}>
+            <ReviewCarousel />
           </View>
-        </Pressable>
-        */}
+        ) : null}
 
         {error ? (
           <Text className="mt-4 text-sm text-red-500">
@@ -361,8 +248,12 @@ export default function SignInScreen() {
         <View
           style={{
             flex: 1,
-            justifyContent: "center",
-            paddingVertical: 32,
+            // Bottom of the space rather than the middle of it: the reviews above
+            // are what this screen is asking them to read, and the auth buttons
+            // sit within thumb reach.
+            justifyContent: "flex-end",
+            paddingTop: 32,
+            paddingBottom: 12,
           }}
         >
           <View
