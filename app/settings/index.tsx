@@ -75,6 +75,9 @@ try {
 type ThemePalette = (typeof Colors)["light"];
 
 /** Set true to show theme / accent UI again. */
+/** Only this account sees the widget diagnostics row in release builds. */
+const WIDGET_DEBUG_EMAIL = "jarydhermann@gmail.com";
+
 const SHOW_APPEARANCE_SETTINGS = true;
 /** Hide accent picker — theme toggle is the only appearance control for now. */
 const SHOW_ACCENT_PICKER = false;
@@ -934,7 +937,6 @@ export default function SettingsScreen() {
               <SettingDivider colors={colors} />
               <ForceUnseenConnectionToggle colors={colors} />
               <SettingDivider colors={colors} />
-              <DevWidgetSnapshotTester colors={colors} />
               <SettingDivider colors={colors} />
               <DummyPhotoAccessFlowTester
                 colors={colors}
@@ -1052,6 +1054,26 @@ export default function SettingsScreen() {
             onPress={handleDeleteAccount}
           />
         </View>
+
+        {/*
+          Widget plumbing check. Outside the `__DEV__` block on purpose: the
+          widget only exists in release builds, so a dev-only row can't be used
+          to diagnose it. Limited to the owner's account rather than shipped to
+          everyone.
+        */}
+        {__DEV__ || profile?.email === WIDGET_DEBUG_EMAIL ? (
+          <View
+            style={{
+              marginTop: 24,
+              backgroundColor: colors.surface,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <DevWidgetSnapshotTester colors={colors} />
+          </View>
+        ) : null}
 
         {/*
           An outlined pill in grey, not red text: logging out is reversible and

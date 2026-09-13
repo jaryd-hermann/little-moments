@@ -10,13 +10,18 @@ private let appGroupIdentifier = "group.com.jarydhermann.littlemoments.widget"
 /// a write can never be observed half-applied.
 private let snapshotKey = "snapshot"
 
-/// Maps to `/(tabs)/today?capture=1&openCamera=1` in `app/+native-intent.tsx`.
+/// Just opens the app.
 ///
-/// Three slashes, not two: with `littlemoments://app/…` the `app` lands in the
-/// host position and the path arrives as `/today/capture/camera`, which matches
-/// no route and drops the user on "Unmatched Route". The empty host puts `app`
-/// back in the path where `redirectSystemPath` expects it.
-private let captureURL = URL(string: "littlemoments:///app/today/capture/camera")!
+/// `app/+native-intent.tsx` maps `/app` to `/`, which is the root index — the
+/// only entry point that restores the session and then decides where the user
+/// belongs. Linking straight to a tab route instead skipped that and left the
+/// app sitting on its launch screen forever, because nothing downstream of the
+/// deep link ever resolved the session.
+///
+/// Three slashes, not two: with `littlemoments://app` the `app` lands in the
+/// host position and the path arrives empty, so `redirectSystemPath` never sees
+/// the `/app` prefix it matches on.
+private let openAppURL = URL(string: "littlemoments:///app")!
 
 private let daysPerWeek = 7
 
@@ -204,14 +209,14 @@ private struct CaptureWidgetView: View {
 
                 Spacer(minLength: 6)
 
-                Text("Tap to open the camera")
+                Text("Tap to open Little Moments")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.4))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .containerBackground(for: .widget) { Color.black }
-        .widgetURL(captureURL)
+        .widgetURL(openAppURL)
     }
 }
 
@@ -226,7 +231,7 @@ struct LittleMomentsCaptureWidget: Widget {
             CaptureWidgetView(entry: entry)
         }
         .configurationDisplayName("Add a moment")
-        .description("Jump straight to the camera, and see how your week is going.")
+        .description("Your moments so far, and how this week is going.")
         .supportedFamilies([.systemSmall])
     }
 }
