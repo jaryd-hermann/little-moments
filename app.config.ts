@@ -85,7 +85,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "Little Moments",
   slug: "little-moments",
-  version: "2.4.0",
+  version: "2.4.1",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: "littlemoments",
