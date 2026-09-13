@@ -10,18 +10,6 @@ private let appGroupIdentifier = "group.com.jarydhermann.littlemoments.widget"
 /// a write can never be observed half-applied.
 private let snapshotKey = "snapshot"
 
-/// Just opens the app.
-///
-/// `app/+native-intent.tsx` maps `/app` to `/`, the root index — the only entry
-/// point that restores the session and then decides where the user belongs.
-/// Linking straight to a tab route instead skipped that and left the app sitting
-/// on its launch screen, because nothing downstream of the deep link ever
-/// resolved the session.
-///
-/// `redirectSystemPath` now normalizes whatever shape this arrives in, so it no
-/// longer matters whether the `app` segment lands in the host slot or the path.
-private let openAppURL = URL(string: "littlemoments://app")!
-
 private let daysPerWeek = 7
 
 /// Monday-first calendar, matching `weekCaptureProgress` in `lib/yearCapture.ts`.
@@ -208,14 +196,13 @@ private struct CaptureWidgetView: View {
 
                 Spacer(minLength: 6)
 
-                Text("Tap to open Little Moments")
+                Text("Tap to open")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.4))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .containerBackground(for: .widget) { Color.black }
-        .widgetURL(openAppURL)
     }
 }
 

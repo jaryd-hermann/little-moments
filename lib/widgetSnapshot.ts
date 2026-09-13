@@ -50,30 +50,61 @@ function widgetAppGroup(): string | null {
 }
 
 /**
- * Resolved lazily rather than at module scope. This file is reachable from JS
- * that can ship over EAS Update to a binary built before the widget target
- * existed, where the native module is absent — the package itself falls back
- * to no-ops in that case, and the try/catch covers anything it doesn't.
+ * The App Group container, as exposed by `@bacons/apple-targets`' native module.
+ * A `group` of `null` means the default suite, which is not what we ever want.
  */
+interface ExtensionStorageNative {
+  setString: (key: string, value: string, group: string | null) => void;
+  remove: (key: string, group: string | null) => void;
+  get: (key: string, group: string | null) => string | null;
+  reloadWidget: (kind?: string | null) => void;
+}
+
+let extensionStorageNative: ExtensionStorageNative | null | undefined;
+
+/**
+ * The native module, resolved directly rather than through the package's JS
+ * wrapper.
+ *
+ * That wrapper reads `expo.modules.ExtensionStorage` into a `const` at import
+ * time and substitutes no-op stubs when it isn't there yet — so a write reports
+ * success while going nowhere, which is impossible to tell apart from an empty
+ * widget. It also never calls `ensureNativeModulesAreInstalled()`, so whether it
+ * finds anything depends on when it happens to be first imported.
+ * `requireOptionalNativeModule` installs the host object before looking, and
+ * returns null honestly when the module really is absent — which it will be on a
+ * binary built before the widget target existed.
+ */
+function getExtensionStorageNative(): ExtensionStorageNative | null {
+  if (extensionStorageNative !== undefined) return extensionStorageNative;
+  if (Platform.OS !== "ios") {
+    extensionStorageNative = null;
+    return null;
+  }
+  try {
+    const { requireOptionalNativeModule } =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, matching lib/videoPoster.ts
+      require("expo-modules-core") as typeof import("expo-modules-core");
+    extensionStorageNative =
+      requireOptionalNativeModule<ExtensionStorageNative>("ExtensionStorage");
+  } catch {
+    extensionStorageNative = null;
+  }
+  return extensionStorageNative;
+}
+
+/** The module plus the group to write into, or null when either is missing. */
 function extensionStorage(): {
-  storage: { set: (key: string, value: string) => void; remove: (key: string) => void };
-  reload: (kind?: string) => void;
+  native: ExtensionStorageNative;
+  group: string;
 } | null {
-  if (Platform.OS !== "ios") return null;
+  const native = getExtensionStorageNative();
+  if (!native) return null;
 
   const group = widgetAppGroup();
   if (!group) return null;
 
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- must stay lazy; a static import would evaluate the native module at bundle load
-    const { ExtensionStorage } = require("@bacons/apple-targets");
-    return {
-      storage: new ExtensionStorage(group),
-      reload: ExtensionStorage.reloadWidget,
-    };
-  } catch {
-    return null;
-  }
+  return { native, group };
 }
 
 /** Reads the live stores synchronously. Safe to call from any save path. */
@@ -106,9 +137,13 @@ export function syncWidgetSnapshot(): void {
   if (!target) return;
 
   try {
-    target.storage.set(SNAPSHOT_KEY, JSON.stringify(buildWidgetSnapshot()));
+    target.native.setString(
+      SNAPSHOT_KEY,
+      JSON.stringify(buildWidgetSnapshot()),
+      target.group
+    );
     // Without this the widget keeps rendering its last timeline.
-    target.reload(WIDGET_KIND);
+    target.native.reloadWidget(WIDGET_KIND);
   } catch (error) {
     captureException(error, { context: "syncWidgetSnapshot" });
   }
@@ -117,11 +152,7 @@ export function syncWidgetSnapshot(): void {
 export interface WidgetDiagnostics {
   /** App Group the app is writing to, or null when `extra` is missing it. */
   appGroup: string | null;
-  /**
-   * Whether the native module is actually there. `@bacons/apple-targets` falls
-   * back to no-op stubs when it isn't, so every write silently succeeds while
-   * writing nothing — which is indistinguishable from an empty widget.
-   */
+  /** Whether the `ExtensionStorage` native module resolved at all. */
   nativeModuleAvailable: boolean;
   /** What's in the container right now, read back through the same API. */
   stored: string | null;
@@ -140,35 +171,29 @@ export interface WidgetDiagnostics {
  */
 export function inspectWidgetSnapshot(): WidgetDiagnostics {
   const group = widgetAppGroup();
-  const nativeModuleAvailable = Boolean(
-    (globalThis as { expo?: { modules?: Record<string, unknown> } }).expo
-      ?.modules?.ExtensionStorage
-  );
+  const native = getExtensionStorageNative();
 
-  const target = extensionStorage();
-  if (!target) {
+  if (!native || !group) {
     return {
       appGroup: group,
-      nativeModuleAvailable,
+      nativeModuleAvailable: Boolean(native),
       stored: null,
-      error: group ? "ExtensionStorage unavailable" : "extra.widgetAppGroup missing",
+      error: native ? "extra.widgetAppGroup missing" : "ExtensionStorage module not found",
     };
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- must stay lazy, as above
-    const { ExtensionStorage } = require("@bacons/apple-targets");
-    const stored = new ExtensionStorage(group).get(SNAPSHOT_KEY);
+    const stored = native.get(SNAPSHOT_KEY, group);
     return {
       appGroup: group,
-      nativeModuleAvailable,
+      nativeModuleAvailable: true,
       stored: typeof stored === "string" ? stored : null,
       error: null,
     };
   } catch (error) {
     return {
       appGroup: group,
-      nativeModuleAvailable,
+      nativeModuleAvailable: true,
       stored: null,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -185,8 +210,8 @@ export function clearWidgetSnapshot(): void {
   if (!target) return;
 
   try {
-    target.storage.remove(SNAPSHOT_KEY);
-    target.reload(WIDGET_KIND);
+    target.native.remove(SNAPSHOT_KEY, target.group);
+    target.native.reloadWidget(WIDGET_KIND);
   } catch (error) {
     captureException(error, { context: "clearWidgetSnapshot" });
   }
