@@ -76,7 +76,7 @@ type ThemePalette = (typeof Colors)["light"];
 
 /** Set true to show theme / accent UI again. */
 /** Only this account sees the widget diagnostics row in release builds. */
-const WIDGET_DEBUG_EMAIL = "jarydhermann@gmail.com";
+const WIDGET_DEBUG_EMAIL = "hermannjaryd@gmail.com";
 
 const SHOW_APPEARANCE_SETTINGS = true;
 /** Hide accent picker — theme toggle is the only appearance control for now. */

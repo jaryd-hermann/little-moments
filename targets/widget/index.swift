@@ -12,16 +12,15 @@ private let snapshotKey = "snapshot"
 
 /// Just opens the app.
 ///
-/// `app/+native-intent.tsx` maps `/app` to `/`, which is the root index — the
-/// only entry point that restores the session and then decides where the user
-/// belongs. Linking straight to a tab route instead skipped that and left the
-/// app sitting on its launch screen forever, because nothing downstream of the
-/// deep link ever resolved the session.
+/// `app/+native-intent.tsx` maps `/app` to `/`, the root index — the only entry
+/// point that restores the session and then decides where the user belongs.
+/// Linking straight to a tab route instead skipped that and left the app sitting
+/// on its launch screen, because nothing downstream of the deep link ever
+/// resolved the session.
 ///
-/// Three slashes, not two: with `littlemoments://app` the `app` lands in the
-/// host position and the path arrives empty, so `redirectSystemPath` never sees
-/// the `/app` prefix it matches on.
-private let openAppURL = URL(string: "littlemoments:///app")!
+/// `redirectSystemPath` now normalizes whatever shape this arrives in, so it no
+/// longer matters whether the `app` segment lands in the host slot or the path.
+private let openAppURL = URL(string: "littlemoments://app")!
 
 private let daysPerWeek = 7
 

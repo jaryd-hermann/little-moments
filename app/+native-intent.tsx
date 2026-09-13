@@ -26,6 +26,35 @@ import { useChapterNotifStore } from "@/store/chapterNotifStore";
 
 const APP_PATH_PREFIX = "/app";
 
+/**
+ * Reduce whatever arrives to a leading-slash path, so matching doesn't depend on
+ * the exact shape expo-router hands us.
+ *
+ * The comment above says paths arrive normalized, and for universal links they
+ * do — but a custom-scheme URL can reach here whole, and `littlemoments://app`
+ * puts `app` in the *host* slot rather than the path. That's what sent widget
+ * taps to "Unmatched Route": the prefix check below never saw `/app`. Handling
+ * every form is cheaper than depending on one.
+ *
+ * Web URLs are the one case where the first segment has to go — it's the host,
+ * not part of the path. The custom scheme has no host, so its first segment is
+ * kept.
+ */
+function normalizeIncomingPath(raw: string): string {
+  let rest = raw.trim();
+
+  const scheme = rest.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//);
+  if (scheme) {
+    rest = rest.slice(scheme[0].length);
+    if (scheme[1] === "http" || scheme[1] === "https") {
+      const slash = rest.indexOf("/");
+      rest = slash === -1 ? "" : rest.slice(slash);
+    }
+  }
+
+  return `/${rest.replace(/^\/+/, "")}`;
+}
+
 function stripQuery(path: string): { path: string; query: string } {
   const i = path.indexOf("?");
   if (i === -1) return { path, query: "" };
@@ -86,8 +115,14 @@ export function redirectSystemPath({
 }): string | Promise<string> {
   try {
     if (typeof path !== "string") return "/";
-    if (path.startsWith(APP_PATH_PREFIX)) {
-      return routeForAppPath(path);
+    /*
+      Matched on the normalized form, but anything we don't recognize is returned
+      exactly as it came in — the dev client's own URLs pass through here too,
+      and rewriting one of those would cut the Metro connection.
+    */
+    const normalized = normalizeIncomingPath(path);
+    if (normalized.startsWith(APP_PATH_PREFIX)) {
+      return routeForAppPath(normalized);
     }
     return path;
   } catch {
