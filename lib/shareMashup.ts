@@ -93,7 +93,7 @@ export async function createMashupShareLink(
       bucket_key: bucket.key,
       error_code: error.code,
     });
-    throw error;
+    throw new Error("We couldn't create a share link. Please try again.");
   }
 
   void scheduleReviewAfterFirstShare();
