@@ -1604,7 +1604,9 @@ function DevWidgetSnapshotTester({ colors }: { colors: ThemePalette }) {
           "Widget snapshot",
           [
             `App Group: ${info.appGroup ?? "MISSING"}`,
-            `Native module: ${info.nativeModuleAvailable ? "yes" : "NO"}`,
+            `Container: ${info.containerAvailable ? "yes" : "NO"}`,
+            `Granted groups: ${info.grantedGroups.join(", ") || "none"}`,
+            `Instant reload: ${info.reloadAvailable ? "yes" : "no"}`,
             `Error: ${info.error ?? "none"}`,
             `Stored: ${info.stored ?? "NOTHING"}`,
           ].join("\n")

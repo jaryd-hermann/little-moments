@@ -6,9 +6,14 @@ import WidgetKit
 /// to the JS config.
 private let appGroupIdentifier = "group.com.jarydhermann.littlemoments.widget"
 
-/// Single key holding the whole payload as JSON. One key rather than several so
-/// a write can never be observed half-applied.
-private let snapshotKey = "snapshot"
+/// One file holding the whole payload as JSON, written by `lib/widgetSnapshot.ts`
+/// into the App Group container. A single file rather than several keys so a
+/// write can never be observed half-applied.
+private let snapshotFilename = "snapshot.json"
+
+/// Key the payload used to be written to, before it moved to a file. Still read
+/// so a widget already on screen doesn't blank out mid-upgrade.
+private let legacySnapshotKey = "snapshot"
 
 private let daysPerWeek = 7
 
@@ -38,13 +43,28 @@ private struct Snapshot: Codable {
 }
 
 private func loadSnapshot() -> Snapshot? {
-    guard
+    let decoder = JSONDecoder()
+
+    if
+        let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ),
+        let data = try? Data(contentsOf: container.appendingPathComponent(snapshotFilename)),
+        let snapshot = try? decoder.decode(Snapshot.self, from: data)
+    {
+        return snapshot
+    }
+
+    if
         let defaults = UserDefaults(suiteName: appGroupIdentifier),
-        let raw = defaults.string(forKey: snapshotKey),
+        let raw = defaults.string(forKey: legacySnapshotKey),
         let data = raw.data(using: .utf8),
-        let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
-    else { return nil }
-    return snapshot
+        let snapshot = try? decoder.decode(Snapshot.self, from: data)
+    {
+        return snapshot
+    }
+
+    return nil
 }
 
 private func currentWeekStart(for date: Date) -> String? {
@@ -114,8 +134,15 @@ private struct CaptureProvider: TimelineProvider {
             calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
             ?? now.addingTimeInterval(60 * 60)
 
+        // Also poll, because the app usually can't invalidate the timeline
+        // itself: `WidgetCenter.reloadTimelines` is only reachable through a
+        // native module that doesn't resolve at runtime, so a moment saved now
+        // would otherwise sit unseen until midnight. WidgetKit budgets these and
+        // will space them out further; the interval is a floor, not a promise.
+        let nextPoll = min(now.addingTimeInterval(15 * 60), nextMidnight)
+
         completion(
-            Timeline(entries: [makeEntry(for: now)], policy: .after(nextMidnight))
+            Timeline(entries: [makeEntry(for: now)], policy: .after(nextPoll))
         )
     }
 }

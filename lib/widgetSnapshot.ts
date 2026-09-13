@@ -5,7 +5,7 @@
  * the session, so the app pushes a small precomputed payload into a shared
  * App Group container and the widget only ever renders that. Flow:
  *
- *   stores → buildWidgetSnapshot() → App Group UserDefaults → index.swift
+ *   stores → buildWidgetSnapshot() → snapshot.json in the App Group → index.swift
  *
  * Two rules worth keeping:
  *
@@ -20,6 +20,7 @@
  * is allowed to propagate.
  */
 import Constants from "expo-constants";
+import { Directory, File, Paths } from "expo-file-system";
 import { Platform } from "react-native";
 
 import { captureException } from "@/lib/errors";
@@ -28,8 +29,17 @@ import { weekCaptureProgress } from "@/lib/yearCapture";
 import { useAuthStore } from "@/store/authStore";
 import { useEntryStore } from "@/store/entryStore";
 
-/** Single key, so the widget can never observe a half-written payload. */
-const SNAPSHOT_KEY = "snapshot";
+/**
+ * One file holding the whole payload, so the widget can never read a half-applied
+ * write. Read by `loadSnapshot()` in `targets/widget/index.swift`.
+ *
+ * A file rather than App Group `UserDefaults`, which is what this used to use:
+ * the only way to reach those from JS is `@bacons/apple-targets`' native module,
+ * and that module doesn't resolve at runtime — every write went nowhere while
+ * reporting success. `expo-file-system` can address the same container and is
+ * linked and working, so the payload takes a route we can actually verify.
+ */
+const SNAPSHOT_FILENAME = "snapshot.json";
 
 /** Must match `LittleMomentsCaptureWidget.kind` in `targets/widget/index.swift`. */
 const WIDGET_KIND = "LittleMomentsCaptureWidget";
@@ -50,61 +60,57 @@ function widgetAppGroup(): string | null {
 }
 
 /**
- * The App Group container, as exposed by `@bacons/apple-targets`' native module.
- * A `group` of `null` means the default suite, which is not what we ever want.
- */
-interface ExtensionStorageNative {
-  setString: (key: string, value: string, group: string | null) => void;
-  remove: (key: string, group: string | null) => void;
-  get: (key: string, group: string | null) => string | null;
-  reloadWidget: (kind?: string | null) => void;
-}
-
-let extensionStorageNative: ExtensionStorageNative | null | undefined;
-
-/**
- * The native module, resolved directly rather than through the package's JS
- * wrapper.
+ * The shared App Group directory, or null when the app can't see it.
  *
- * That wrapper reads `expo.modules.ExtensionStorage` into a `const` at import
- * time and substitutes no-op stubs when it isn't there yet — so a write reports
- * success while going nowhere, which is impossible to tell apart from an empty
- * widget. It also never calls `ensureNativeModulesAreInstalled()`, so whether it
- * finds anything depends on when it happens to be first imported.
- * `requireOptionalNativeModule` installs the host object before looking, and
- * returns null honestly when the module really is absent — which it will be on a
- * binary built before the widget target existed.
+ * Doubles as the entitlement check: `appleSharedContainers` is keyed by the
+ * groups iOS has actually granted this binary, so a missing key means the App
+ * Group isn't really attached to the app — no amount of writing will help.
  */
-function getExtensionStorageNative(): ExtensionStorageNative | null {
-  if (extensionStorageNative !== undefined) return extensionStorageNative;
-  if (Platform.OS !== "ios") {
-    extensionStorageNative = null;
-    return null;
-  }
-  try {
-    const { requireOptionalNativeModule } =
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, matching lib/videoPoster.ts
-      require("expo-modules-core") as typeof import("expo-modules-core");
-    extensionStorageNative =
-      requireOptionalNativeModule<ExtensionStorageNative>("ExtensionStorage");
-  } catch {
-    extensionStorageNative = null;
-  }
-  return extensionStorageNative;
-}
-
-/** The module plus the group to write into, or null when either is missing. */
-function extensionStorage(): {
-  native: ExtensionStorageNative;
-  group: string;
-} | null {
-  const native = getExtensionStorageNative();
-  if (!native) return null;
+function sharedContainer(): Directory | null {
+  if (Platform.OS !== "ios") return null;
 
   const group = widgetAppGroup();
   if (!group) return null;
 
-  return { native, group };
+  try {
+    return Paths.appleSharedContainers[group] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function snapshotFile(): File | null {
+  const container = sharedContainer();
+  if (!container) return null;
+
+  try {
+    return new File(container, SNAPSHOT_FILENAME);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `WidgetCenter.reloadTimelines` is only reachable through
+ * `@bacons/apple-targets`' native module, which doesn't currently resolve — so
+ * this is attempted and allowed to fail. Without it the widget still picks the
+ * new payload up on its own refresh, which `getTimeline` in `index.swift` keeps
+ * short for exactly this reason.
+ */
+function requestWidgetReload(): void {
+  if (Platform.OS !== "ios") return;
+
+  try {
+    const { requireOptionalNativeModule } =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, matching lib/videoPoster.ts
+      require("expo-modules-core") as typeof import("expo-modules-core");
+    const native = requireOptionalNativeModule<{
+      reloadWidget: (kind?: string | null) => void;
+    }>("ExtensionStorage");
+    native?.reloadWidget(WIDGET_KIND);
+  } catch {
+    /* the timeline policy is the fallback */
+  }
 }
 
 /** Reads the live stores synchronously. Safe to call from any save path. */
@@ -129,21 +135,18 @@ export function buildWidgetSnapshot(now: Date = new Date()): WidgetSnapshot {
  * Push current numbers to the widget and ask WidgetKit to redraw.
  *
  * Call after a moment saves, once entries finish loading, and when the app
- * backgrounds. Cheap enough to over-call — it's a `UserDefaults` write plus a
+ * backgrounds. Cheap enough to over-call — it's one small file write plus a
  * timeline invalidation, and iOS coalesces the reloads.
  */
 export function syncWidgetSnapshot(): void {
-  const target = extensionStorage();
-  if (!target) return;
+  const file = snapshotFile();
+  if (!file) return;
 
   try {
-    target.native.setString(
-      SNAPSHOT_KEY,
-      JSON.stringify(buildWidgetSnapshot()),
-      target.group
-    );
-    // Without this the widget keeps rendering its last timeline.
-    target.native.reloadWidget(WIDGET_KIND);
+    // Creates the file when it isn't there yet, and replaces it wholesale
+    // otherwise, so the widget never sees a partial payload.
+    file.write(JSON.stringify(buildWidgetSnapshot()));
+    requestWidgetReload();
   } catch (error) {
     captureException(error, { context: "syncWidgetSnapshot" });
   }
@@ -152,48 +155,82 @@ export function syncWidgetSnapshot(): void {
 export interface WidgetDiagnostics {
   /** App Group the app is writing to, or null when `extra` is missing it. */
   appGroup: string | null;
-  /** Whether the `ExtensionStorage` native module resolved at all. */
-  nativeModuleAvailable: boolean;
-  /** What's in the container right now, read back through the same API. */
+  /**
+   * Whether iOS actually granted this binary that App Group. False means the
+   * entitlement isn't really in place, whatever the config says.
+   */
+  containerAvailable: boolean;
+  /**
+   * Every App Group iOS did grant. Tells apart "no groups at all" (a stale
+   * provisioning profile) from "the other groups but not ours" (the identifier
+   * not matching the portal character for character).
+   */
+  grantedGroups: string[];
+  /** Whether an immediate WidgetKit reload is possible, as opposed to waiting. */
+  reloadAvailable: boolean;
+  /** The payload sitting in the container right now. */
   stored: string | null;
   error: string | null;
 }
 
 /**
- * Read the widget's plumbing back out, for the Dev Tools row in Settings.
+ * Read the widget's plumbing back out, for the row in Settings.
  *
- * The three states worth telling apart, since none of them raise anything on
- * their own: the native module is missing (autolinking), the module is there
- * but nothing reads back after a write (the App Group isn't actually granted to
- * the app — usually the identifier in the Apple portal not matching character
- * for character), or the payload is present and the problem is on the Swift
- * side instead.
+ * Nothing in this file throws by design, so this is the only way to see which
+ * end is broken from a device: no container means the App Group isn't granted,
+ * an empty file means the write failed, and a payload here with an empty widget
+ * puts the problem on the Swift side.
  */
 export function inspectWidgetSnapshot(): WidgetDiagnostics {
   const group = widgetAppGroup();
-  const native = getExtensionStorageNative();
+  const container = sharedContainer();
+  const grantedGroups = (() => {
+    try {
+      return Object.keys(Paths.appleSharedContainers);
+    } catch {
+      return [];
+    }
+  })();
+  const reloadAvailable = (() => {
+    try {
+      const { requireOptionalNativeModule } =
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, matching lib/videoPoster.ts
+        require("expo-modules-core") as typeof import("expo-modules-core");
+      return Boolean(requireOptionalNativeModule("ExtensionStorage"));
+    } catch {
+      return false;
+    }
+  })();
 
-  if (!native || !group) {
+  if (!container) {
     return {
       appGroup: group,
-      nativeModuleAvailable: Boolean(native),
+      containerAvailable: false,
+      grantedGroups,
+      reloadAvailable,
       stored: null,
-      error: native ? "extra.widgetAppGroup missing" : "ExtensionStorage module not found",
+      error: group
+        ? "App Group not granted to this build"
+        : "extra.widgetAppGroup missing",
     };
   }
 
   try {
-    const stored = native.get(SNAPSHOT_KEY, group);
+    const file = new File(container, SNAPSHOT_FILENAME);
     return {
       appGroup: group,
-      nativeModuleAvailable: true,
-      stored: typeof stored === "string" ? stored : null,
+      containerAvailable: true,
+      grantedGroups,
+      reloadAvailable,
+      stored: file.exists ? file.textSync() : null,
       error: null,
     };
   } catch (error) {
     return {
       appGroup: group,
-      nativeModuleAvailable: true,
+      containerAvailable: true,
+      grantedGroups,
+      reloadAvailable,
       stored: null,
       error: error instanceof Error ? error.message : String(error),
     };
@@ -206,12 +243,12 @@ export function inspectWidgetSnapshot(): WidgetDiagnostics {
  * numbers to whoever signs in next.
  */
 export function clearWidgetSnapshot(): void {
-  const target = extensionStorage();
-  if (!target) return;
+  const file = snapshotFile();
+  if (!file) return;
 
   try {
-    target.native.remove(SNAPSHOT_KEY, target.group);
-    target.native.reloadWidget(WIDGET_KIND);
+    if (file.exists) file.delete();
+    requestWidgetReload();
   } catch (error) {
     captureException(error, { context: "clearWidgetSnapshot" });
   }
