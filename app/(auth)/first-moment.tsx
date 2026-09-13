@@ -2,7 +2,7 @@ import { GalleryMontageBackground } from "@/components/onboarding/GalleryMontage
 import { resolveOnboardingFirstCaptureTarget } from "@/lib/onboardingFirstCaptureTarget";
 import { setFirstCaptureAsset } from "@/lib/onboardingHandoff";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
-import { queryRecentCameraPhotos } from "@/hooks/useMediaLibrary";
+import { queryOnboardingMontagePhotos } from "@/hooks/useMediaLibrary";
 import { useOnboardingMontageStore } from "@/store/onboardingMontageStore";
 import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
 import { useTheme } from "@/hooks/useTheme";
@@ -38,7 +38,9 @@ export default function FirstMomentScreen() {
 
   useEffect(() => {
     if (montageAssets.length > 0) return;
-    void queryRecentCameraPhotos({ daysBack: 30, limit: 20 }).then(setMontageAssets);
+    void queryOnboardingMontagePhotos({ daysBack: 30, limit: 20 }).then(
+      setMontageAssets
+    );
   }, [montageAssets.length, setMontageAssets]);
 
   const ctaLabel = step === "intro" ? cta : "Start my story";
@@ -52,10 +54,16 @@ export default function FirstMomentScreen() {
       if (target.earliestAsset) {
         setFirstCaptureAsset(target.earliestAsset);
       }
-      if (target.todayPhotoCount > 0) {
-        setHeadline("We've found 3 photos from today, you'll pick one");
-      } else if (target.fallbackDayLabel) {
-        setHeadline(`No photos from today, so we'll do ${target.fallbackDayLabel}`);
+      /*
+        The same line whether or not today has photos: the chat this hands off
+        to filters on favorites, so which day we resolved isn't what the user is
+        about to be shown. Only the case where there's nothing to offer at all
+        gets different copy.
+      */
+      if (target.todayPhotoCount > 0 || target.fallbackDayLabel) {
+        setHeadline(
+          "We found some great photos from your favorites, you'll pick one"
+        );
       } else {
         setHeadline("Let's capture your first moment quickly");
       }

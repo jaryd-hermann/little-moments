@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import { Dimensions, PixelRatio, Platform } from "react-native";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
+import { findFavoritesAlbum } from "@/lib/favoritesAlbum";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import {
   PHOTO_BUCKET_CYCLE,
@@ -1034,6 +1035,81 @@ export async function queryRecentCameraPhotos(opts?: {
   }
   out.sort((a, b) => b.creationTime - a.creationTime);
   return hasLimit ? out.slice(0, limit!) : out;
+}
+
+/**
+ * Photos/videos for the onboarding montage: the user's Favorites first, topped
+ * up from the recent camera roll when there aren't many of them.
+ *
+ * Favorites are the ones worth looking at, and they're what the first-capture
+ * chat goes on to offer — so the montage that precedes it should be drawn from
+ * the same well. No date window here, unlike the recent query: a favorite from
+ * two years ago is still a favorite, and restricting to the last month would
+ * empty the album for most people.
+ *
+ * The top-up matters because the montage cycles one asset at a time; a couple
+ * of favorites on their own would visibly loop.
+ */
+export async function queryOnboardingMontagePhotos(opts?: {
+  daysBack?: number;
+  limit?: number;
+}): Promise<MediaAsset[]> {
+  const limit = opts?.limit ?? 20;
+  const favorites = await queryFavoritePhotos({ limit });
+  if (favorites.length >= MONTAGE_MIN_ASSETS) return favorites;
+
+  const recent = await queryRecentCameraPhotos({
+    daysBack: opts?.daysBack ?? 30,
+    limit,
+  });
+  if (favorites.length === 0) return recent;
+
+  const seen = new Set(favorites.map((a) => a.id));
+  const merged = [...favorites];
+  for (const asset of recent) {
+    if (merged.length >= limit) break;
+    if (seen.has(asset.id)) continue;
+    seen.add(asset.id);
+    merged.push(asset);
+  }
+  return merged;
+}
+
+/** Below this many favorites the montage gets padded from the camera roll. */
+const MONTAGE_MIN_ASSETS = 6;
+
+/**
+ * Newest assets from the Favorites album, filtered the same way the rest of the
+ * app filters camera media. Empty when there's no such album or nothing in it.
+ */
+export async function queryFavoritePhotos(opts?: {
+  limit?: number;
+}): Promise<MediaAsset[]> {
+  const limit = opts?.limit ?? 20;
+  const album = await findFavoritesAlbum();
+  if (!album) return [];
+
+  const excludedIds = await loadExcludedAssetIds();
+  const out: MediaAsset[] = [];
+  let after: string | undefined;
+  let guard = 0;
+  while (guard++ < 20 && out.length < limit) {
+    const page = await MediaLibrary.getAssetsAsync({
+      album,
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+      first: 200,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      ...(after ? { after } : {}),
+    });
+    for (const a of page.assets) {
+      if (isDayCapturePhoto(a, excludedIds)) out.push(mapExpoAsset(a));
+      if (out.length >= limit) break;
+    }
+    if (!page.hasNextPage || !page.endCursor) break;
+    after = page.endCursor;
+  }
+  out.sort((a, b) => b.creationTime - a.creationTime);
+  return out.slice(0, limit);
 }
 
 export interface RecentMediaPage {

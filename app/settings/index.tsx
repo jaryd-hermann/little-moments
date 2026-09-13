@@ -35,6 +35,10 @@ import { useThreadDevStore } from "@/store/threadDevStore";
 import { useTodayNotifDevStore } from "@/store/todayNotifDevStore";
 import { useMagicFillDevStore } from "@/store/magicFillDevStore";
 import { useUnseenStore } from "@/store/unseenStore";
+import {
+  inspectWidgetSnapshot,
+  syncWidgetSnapshot,
+} from "@/lib/widgetSnapshot";
 import { useFirstPinCelebrationStore } from "@/store/firstPinCelebrationStore";
 import { useFirstMomentChatStore } from "@/store/firstMomentChatStore";
 import { useEntryStore } from "@/store/entryStore";
@@ -416,7 +420,7 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleThemeChoice = (next: "light" | "dark" | "system") => {
+  const handleThemeChoice = async (next: "light" | "dark" | "system") => {
     if (next === themePreference) return;
     void Haptics.selectionAsync();
     setTheme(next);
@@ -424,12 +428,26 @@ export default function SettingsScreen() {
       preference: next,
       previous: themePreference,
     });
-    if (user) {
-      supabase
-        .from("profiles")
-        .update({ color_theme: next })
-        .eq("id", user.id);
+    if (!user) return;
+    /*
+      Awaited, because a Postgrest query only issues its request once something
+      consumes the promise. Left dangling this never reached the server, so
+      `color_theme` kept its old value — and every launch re-reads that column
+      and applies it over the local preference, which looked like the choice
+      reverting on its own.
+    */
+    const { error } = await supabase
+      .from("profiles")
+      .update({ color_theme: next })
+      .eq("id", user.id);
+    if (error) {
+      Alert.alert(
+        "Couldn't save appearance",
+        "Your choice applies now but may not follow you to your other devices."
+      );
+      return;
     }
+    await fetchProfile();
   };
 
   const handleDeleteAccount = () => {
@@ -916,6 +934,8 @@ export default function SettingsScreen() {
               <SettingDivider colors={colors} />
               <ForceUnseenConnectionToggle colors={colors} />
               <SettingDivider colors={colors} />
+              <DevWidgetSnapshotTester colors={colors} />
+              <SettingDivider colors={colors} />
               <DummyPhotoAccessFlowTester
                 colors={colors}
                 onPress={() => {
@@ -1033,12 +1053,33 @@ export default function SettingsScreen() {
           />
         </View>
 
-        <Pressable onPress={() => { posthog.capture("logged_out"); signOut(); }} style={{ marginTop: 36, marginBottom: 48 }}>
+        {/*
+          An outlined pill in grey, not red text: logging out is reversible and
+          shouldn't carry the same warning as Delete Account sitting just above
+          it. Keeping red for the one that can't be undone is what makes it
+          mean anything.
+        */}
+        <Pressable
+          onPress={() => {
+            posthog.capture("logged_out");
+            signOut();
+          }}
+          style={{
+            alignSelf: "center",
+            marginTop: 48,
+            marginBottom: 56,
+            paddingHorizontal: 32,
+            paddingVertical: 12,
+            borderRadius: 9999,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
           <Text
             style={{
               fontFamily: "Roboto-Medium",
               fontSize: 15,
-              color: "#EF4444",
+              color: colors.textSecondary,
               textAlign: "center",
             }}
           >
@@ -1519,6 +1560,50 @@ function DummyFirstPinTester({ colors }: { colors: ThemePalette }) {
         }}
       >
         Core memory
+      </Text>
+      <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
+/**
+ * Writes the widget payload and reports what actually landed in the shared
+ * container. Every failure in that path is deliberately silent — a widget that
+ * shows stale numbers beats a save path that throws — so this is the only way
+ * to see which end is broken from the device.
+ */
+function DevWidgetSnapshotTester({ colors }: { colors: ThemePalette }) {
+  return (
+    <Pressable
+      onPress={() => {
+        syncWidgetSnapshot();
+        const info = inspectWidgetSnapshot();
+        Alert.alert(
+          "Widget snapshot",
+          [
+            `App Group: ${info.appGroup ?? "MISSING"}`,
+            `Native module: ${info.nativeModuleAvailable ? "yes" : "NO"}`,
+            `Error: ${info.error ?? "none"}`,
+            `Stored: ${info.stored ?? "NOTHING"}`,
+          ].join("\n")
+        );
+      }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: "Roboto-Regular",
+          fontSize: 15,
+          color: colors.text,
+        }}
+      >
+        Widget snapshot
       </Text>
       <Ionicons name="play-circle-outline" size={18} color={colors.textMuted} />
     </Pressable>

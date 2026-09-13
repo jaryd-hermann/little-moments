@@ -32,5 +32,14 @@ module.exports = (config) => {
       $accent: "#f0d7ff",
       $widgetBackground: "#000000",
     },
+    // Generated into the target's own Assets.xcassets and referenced as
+    // `Image("logo")` / `Image("noPic")` from `index.swift`. The widget process
+    // can't reach the app's bundle, so anything it draws has to be here.
+    // `logo` is deliberately not called `appIcon`: that name is taken by the
+    // AppIcon set the `icon` field above generates.
+    images: {
+      logo: "../../assets/images/icon.png",
+      noPic: "../../assets/images/no-pic.png",
+    },
   };
 };

@@ -114,6 +114,67 @@ export function syncWidgetSnapshot(): void {
   }
 }
 
+export interface WidgetDiagnostics {
+  /** App Group the app is writing to, or null when `extra` is missing it. */
+  appGroup: string | null;
+  /**
+   * Whether the native module is actually there. `@bacons/apple-targets` falls
+   * back to no-op stubs when it isn't, so every write silently succeeds while
+   * writing nothing — which is indistinguishable from an empty widget.
+   */
+  nativeModuleAvailable: boolean;
+  /** What's in the container right now, read back through the same API. */
+  stored: string | null;
+  error: string | null;
+}
+
+/**
+ * Read the widget's plumbing back out, for the Dev Tools row in Settings.
+ *
+ * The three states worth telling apart, since none of them raise anything on
+ * their own: the native module is missing (autolinking), the module is there
+ * but nothing reads back after a write (the App Group isn't actually granted to
+ * the app — usually the identifier in the Apple portal not matching character
+ * for character), or the payload is present and the problem is on the Swift
+ * side instead.
+ */
+export function inspectWidgetSnapshot(): WidgetDiagnostics {
+  const group = widgetAppGroup();
+  const nativeModuleAvailable = Boolean(
+    (globalThis as { expo?: { modules?: Record<string, unknown> } }).expo
+      ?.modules?.ExtensionStorage
+  );
+
+  const target = extensionStorage();
+  if (!target) {
+    return {
+      appGroup: group,
+      nativeModuleAvailable,
+      stored: null,
+      error: group ? "ExtensionStorage unavailable" : "extra.widgetAppGroup missing",
+    };
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- must stay lazy, as above
+    const { ExtensionStorage } = require("@bacons/apple-targets");
+    const stored = new ExtensionStorage(group).get(SNAPSHOT_KEY);
+    return {
+      appGroup: group,
+      nativeModuleAvailable,
+      stored: typeof stored === "string" ? stored : null,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      appGroup: group,
+      nativeModuleAvailable,
+      stored: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /**
  * Wipe the shared container on sign-out, so the widget falls back to its
  * "capture your first moment" state instead of showing the previous account's

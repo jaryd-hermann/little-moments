@@ -6,11 +6,13 @@ import { usePostHog } from "posthog-react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/authStore";
 import type { Profile } from "@/store/authStore";
-import { useMediaLibrary } from "@/hooks/useMediaLibrary";
+import {
+  queryOnboardingMontagePhotos,
+  useMediaLibrary,
+} from "@/hooks/useMediaLibrary";
 import { useFullPhotoAccessExplainer } from "@/hooks/useFullPhotoAccessExplainer";
 import { PhotoAccessNudgeCard } from "@/components/common/PhotoAccessNudgeCard";
 import { FullPhotoLibraryAccessModal } from "@/components/common/FullPhotoLibraryAccessModal";
-import { queryRecentCameraPhotos } from "@/hooks/useMediaLibrary";
 import { useOnboardingMontageStore } from "@/store/onboardingMontageStore";
 import { useTheme } from "@/hooks/useTheme";
 import { onboardingEventProps } from "@/lib/onboardingEvents";
@@ -81,7 +83,7 @@ export default function PhotoPermissionScreen() {
       })
     );
     if (granted) {
-      void queryRecentCameraPhotos({ daysBack: 30, limit: 20 }).then(
+      void queryOnboardingMontagePhotos({ daysBack: 30, limit: 20 }).then(
         (assets) => useOnboardingMontageStore.getState().setAssets(assets)
       );
       await advanceTo("photo");

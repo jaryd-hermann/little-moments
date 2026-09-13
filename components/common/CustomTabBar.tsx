@@ -6,10 +6,6 @@ import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@/hooks/useTheme";
 import { useTabBarStore } from "@/store/tabBarStore";
-import { useUnseenStore } from "@/store/unseenStore";
-
-/** Slow, gentle rotation used by Connect / Chapters icons when content is unseen. */
-const UNSEEN_ROTATION_PERIOD_MS = 9000;
 
 type ShapeKind = "circle" | "square" | "diamond" | "triangle";
 
@@ -115,131 +111,6 @@ function ShapeIcon({ shape, filled, fillColor, strokeColor }: ShapeIconProps) {
 }
 
 /**
- * Rotation driver shared by the diamond and triangle "attention" variants.
- */
-function useAttentionAnimation(active: boolean) {
-  const rotate = useRef(new Animated.Value(0)).current;
-  const rotateLoop = useRef<Animated.CompositeAnimation | null>(null);
-
-  useEffect(() => {
-    if (!active) {
-      rotateLoop.current?.stop();
-      rotateLoop.current = null;
-      Animated.timing(rotate, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-      return;
-    }
-
-    rotate.setValue(0);
-
-    const r = Animated.loop(
-      Animated.timing(rotate, {
-        toValue: 1,
-        duration: UNSEEN_ROTATION_PERIOD_MS,
-        easing: Easing.linear,
-        useNativeDriver: true,
-        // Decorative loop: must not hold an InteractionManager handle, or
-        // deferred work queued elsewhere stutters the spin.
-        isInteraction: false,
-      })
-    );
-    rotateLoop.current = r;
-    r.start();
-
-    return () => r.stop();
-  }, [active, rotate]);
-
-  return rotate.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-}
-
-/** Diamond (Connect) attention icon — a square rotated 45°, spun while unseen. */
-function DiamondAttentionIcon({
-  active,
-  filled,
-  fillColor,
-  strokeColor,
-}: {
-  active: boolean;
-  filled: boolean;
-  fillColor: string;
-  strokeColor: string;
-}) {
-  const SIZE = 20;
-  const rotateInterp = useAttentionAnimation(active);
-
-  return (
-    <Animated.View
-      style={{
-        width: 28,
-        height: 28,
-        alignItems: "center",
-        justifyContent: "center",
-        transform: [{ rotate: rotateInterp }],
-      }}
-    >
-      <View
-        style={{
-          width: SIZE,
-          height: SIZE,
-          backgroundColor: filled ? fillColor : "transparent",
-          borderWidth: 2,
-          borderColor: strokeColor,
-          transform: [{ rotate: "45deg" }],
-        }}
-      />
-    </Animated.View>
-  );
-}
-
-/** Triangle (Chapters) attention icon — spun while there is unseen activity. */
-function TriangleAttentionIcon({
-  active,
-  filled,
-  fillColor,
-  strokeColor,
-}: {
-  active: boolean;
-  filled: boolean;
-  fillColor: string;
-  strokeColor: string;
-}) {
-  const SIZE = 28;
-  const rotateInterp = useAttentionAnimation(active);
-
-  return (
-    <Animated.View
-      style={{
-        width: SIZE,
-        height: SIZE,
-        alignItems: "center",
-        justifyContent: "center",
-        transform: [{ rotate: rotateInterp }],
-      }}
-    >
-      {filled ? (
-        <>
-          <Ionicons name="triangle" size={26} color={fillColor} />
-          <Ionicons
-            name="triangle-outline"
-            size={26}
-            color={strokeColor}
-            style={{ position: "absolute" }}
-          />
-        </>
-      ) : (
-        <Ionicons name="triangle-outline" size={26} color={strokeColor} />
-      )}
-    </Animated.View>
-  );
-}
-
-/**
  * Capsule tab icon — wraps the square ShapeIcon and runs a 3s clockwise
  * rotation + glimmer when the store's pulse trigger increments (after a save).
  */
@@ -328,14 +199,6 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
   const tabBarHidden = useTabBarStore((s) => s.hidden);
-  const unseenThreadCount = useUnseenStore((s) => s.unseenThreadCount);
-  const unseenChapterCount = useUnseenStore((s) => s.unseenChapterCount);
-  const forceUnseenThread = useUnseenStore((s) => s.forceUnseenThreadAttention);
-  const forceUnseenChapter = useUnseenStore(
-    (s) => s.forceUnseenChapterAttention
-  );
-  const threadsSeenAtCount = useUnseenStore((s) => s.threadsSeenAtCount);
-  const chaptersSeenAtCount = useUnseenStore((s) => s.chaptersSeenAtCount);
 
   if (tabBarHidden) return null;
 
@@ -383,18 +246,6 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
             }
           };
 
-          // Connect (diamond) rotates while there is an unseen thread the user
-          // hasn't been shown yet; same pattern for Chapters (triangle).
-          // Comparing against the seen mark — not zero — is what lets simply
-          // visiting the tab stop the spin. Dev-mode force flags from Settings
-          // flip the animation on regardless of real counts.
-          const attentionActive =
-            (item.key === "brain" &&
-              (unseenThreadCount > threadsSeenAtCount || forceUnseenThread)) ||
-            (item.key === "chapters" &&
-              (unseenChapterCount > chaptersSeenAtCount ||
-                forceUnseenChapter));
-
           return (
             <View key={item.key} style={{ flex: 1 }}>
               <Pressable
@@ -411,20 +262,6 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                 <CapsuleSquareIcon
                   filled={isFocused}
                   fillColor={capsuleFillColor}
-                  strokeColor={strokeColor}
-                />
-              ) : item.key === "brain" ? (
-                <DiamondAttentionIcon
-                  active={attentionActive}
-                  filled={isFocused}
-                  fillColor={item.fillColor}
-                  strokeColor={strokeColor}
-                />
-              ) : item.key === "chapters" ? (
-                <TriangleAttentionIcon
-                  active={attentionActive}
-                  filled={isFocused}
-                  fillColor={item.fillColor}
                   strokeColor={strokeColor}
                 />
               ) : (

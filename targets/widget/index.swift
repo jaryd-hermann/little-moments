@@ -10,9 +10,13 @@ private let appGroupIdentifier = "group.com.jarydhermann.littlemoments.widget"
 /// a write can never be observed half-applied.
 private let snapshotKey = "snapshot"
 
-/// Reuses the deep link the OneSignal capture pushes already fire, which
-/// `app/+native-intent.tsx` maps to `/(tabs)/today?capture=1&openCamera=1`.
-private let captureURL = URL(string: "littlemoments://app/today/capture/camera")!
+/// Maps to `/(tabs)/today?capture=1&openCamera=1` in `app/+native-intent.tsx`.
+///
+/// Three slashes, not two: with `littlemoments://app/…` the `app` lands in the
+/// host position and the path arrives as `/today/capture/camera`, which matches
+/// no route and drops the user on "Unmatched Route". The empty host puts `app`
+/// back in the path where `redirectSystemPath` expects it.
+private let captureURL = URL(string: "littlemoments:///app/today/capture/camera")!
 
 private let daysPerWeek = 7
 
@@ -151,9 +155,25 @@ private struct CaptureWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color("$accent"))
+            HStack(alignment: .top, spacing: 0) {
+                // Black line art on transparent, same asset the app uses for
+                // its empty photo states — drawn as a template so it takes the
+                // accent colour instead of disappearing into the background.
+                Image("noPic")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 22, height: 22)
+                    .foregroundStyle(Color("$accent"))
+
+                Spacer(minLength: 0)
+
+                Image("logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
 
             Spacer(minLength: 8)
 
