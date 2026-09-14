@@ -37,9 +37,26 @@ module.exports = (config) => {
     // can't reach the app's bundle, so anything it draws has to be here.
     // `logo` is deliberately not called `appIcon`: that name is taken by the
     // AppIcon set the `icon` field above generates.
+    //
+    // Pre-sized per scale, and not pointed straight at the 1024px app icon and
+    // 1200px no-pic sources, because this plugin copies whatever it's given
+    // through without resizing and files it as 1x. A widget extension gets very
+    // little memory, and decoding two megabyte-scale bitmaps to draw them at
+    // 20pt is enough to get it killed mid-render — at which point iOS keeps
+    // showing the redacted placeholder, where images and text are grey blocks
+    // that never decode. Sizes must stay in step with the frames in
+    // `index.swift`: logo 20pt, noPic 22pt.
     images: {
-      logo: "../../assets/images/icon.png",
-      noPic: "../../assets/images/no-pic.png",
+      logo: {
+        "1x": "../../assets/images/widget/logo@1x.png",
+        "2x": "../../assets/images/widget/logo@2x.png",
+        "3x": "../../assets/images/widget/logo@3x.png",
+      },
+      noPic: {
+        "1x": "../../assets/images/widget/noPic@1x.png",
+        "2x": "../../assets/images/widget/noPic@2x.png",
+        "3x": "../../assets/images/widget/noPic@3x.png",
+      },
     },
   };
 };
