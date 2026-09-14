@@ -117,8 +117,18 @@ private func makeEntry(for date: Date) -> CaptureEntry {
 }
 
 private struct CaptureProvider: TimelineProvider {
+    /// Shown in the widget gallery, and on a freshly added widget until its
+    /// first timeline arrives. WidgetKit redacts every `Text` and `Image` in here
+    /// into grey blocks but leaves the week row's `Circle`s alone, so this
+    /// reports an empty week rather than the real flags: filled accent dots
+    /// sitting under redacted text read as a half-broken widget.
     func placeholder(in context: Context) -> CaptureEntry {
-        makeEntry(for: Date())
+        CaptureEntry(
+            date: Date(),
+            totalMoments: 0,
+            days: Array(repeating: false, count: daysPerWeek),
+            hasData: true
+        )
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CaptureEntry) -> Void) {
