@@ -1,6 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import { supabase } from "./supabase";
+import { captureEvent } from "./errors";
+import { supabase, supabaseAnonKey, supabaseUrl } from "./supabase";
 
 const UPLOAD_TIMEOUT_MS = 45_000;
 
@@ -11,6 +12,64 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
     ),
   ]);
+}
+
+/**
+ * POST an ArrayBuffer to Supabase Storage, cancelling the request if it stalls
+ * past {@link UPLOAD_TIMEOUT_MS}.
+ *
+ * storage-js's `upload()` cannot forward an abort signal, so a timed-out upload
+ * there keeps running and can still land — orphaning the object and pushing the
+ * retry into uploading a second copy. Driving the request with our own signal
+ * makes the timeout truly cancel it. A failed response throws a plain Error
+ * rather than surfacing the raw storage error object.
+ */
+async function uploadArrayBuffer(
+  bucket: string,
+  storagePath: string,
+  body: ArrayBuffer,
+  contentType: string,
+  upsert: boolean,
+  label: string
+): Promise<void> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token ?? supabaseAnonKey;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/storage/v1/object/${bucket}/${storagePath}`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          apikey: supabaseAnonKey,
+          "content-type": contentType,
+          "cache-control": "max-age=3600",
+          "x-upsert": String(upsert),
+        },
+        body,
+        signal: controller.signal,
+      }
+    );
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `${label} failed (${response.status})${detail ? `: ${detail}` : ""}`
+      );
+    }
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`${label} timed out after ${UPLOAD_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -108,13 +167,21 @@ export async function uploadEntryMedia(
     throw new Error("Photo upload is empty — try choosing the image again.");
   }
 
-  const { error } = await withTimeout(
-    supabase.storage.from("entry-media").upload(storagePath, body, { contentType, upsert: false }),
-    UPLOAD_TIMEOUT_MS,
+  const startedAt = Date.now();
+  await uploadArrayBuffer(
+    "entry-media",
+    storagePath,
+    body,
+    contentType,
+    false,
     "Storage upload"
   );
 
-  if (error) throw error;
+  captureEvent("entry_media_uploaded", {
+    media_type: mediaType,
+    bytes: body.byteLength,
+    elapsed_ms: Date.now() - startedAt,
+  });
 
   const { data } = supabase.storage
     .from("entry-media")
@@ -149,14 +216,14 @@ export async function uploadEntryVoiceNote(
     throw new Error("Voice note is empty (0 bytes)");
   }
 
-  const { error } = await withTimeout(
-    supabase.storage
-      .from("entry-media")
-      .upload(storagePath, body, { contentType, upsert: false }),
-    UPLOAD_TIMEOUT_MS,
+  await uploadArrayBuffer(
+    "entry-media",
+    storagePath,
+    body,
+    contentType,
+    false,
     "Voice note upload"
   );
-  if (error) throw error;
 
   const { data } = supabase.storage
     .from("entry-media")
@@ -207,14 +274,14 @@ export async function uploadAvatar(
     throw new Error("Avatar upload is empty — try choosing the image again.");
   }
 
-  const { error } = await withTimeout(
-    supabase.storage
-      .from("avatars")
-      .upload(storagePath, body, { contentType, upsert: true }),
-    UPLOAD_TIMEOUT_MS,
+  await uploadArrayBuffer(
+    "avatars",
+    storagePath,
+    body,
+    contentType,
+    true,
     "Avatar upload"
   );
-  if (error) throw error;
 
   const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
   return `${data.publicUrl}?t=${Date.now()}`;
