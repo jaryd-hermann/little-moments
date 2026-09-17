@@ -5,6 +5,7 @@ import {
   getPendingMedia,
   markPendingMediaAttempted,
   removePendingMedia,
+  mediaRetryBackoffMs,
   MAX_MEDIA_AGE_MS,
   MAX_MEDIA_ATTEMPTS,
   type PendingMediaItem,
@@ -204,6 +205,13 @@ async function drainQueue(
     if (expired) {
       await removePendingMedia(item.id);
       continue;
+    }
+
+    // Space out retries so a persistent failure does not spend every attempt in
+    // one burst of foreground drains.
+    if (item.lastAttemptAt) {
+      const sinceLast = Date.now() - new Date(item.lastAttemptAt).getTime();
+      if (sinceLast < mediaRetryBackoffMs(item.attempts)) continue;
     }
 
     const resolution = await resolvePendingItem(item);

@@ -22,6 +22,9 @@ export interface PendingMediaItem {
   storageUrl: string | null;
   attempts: number;
   queuedAt: string;
+  /** When the last drain retried this item. Absent on items queued before
+   *  backoff existed, which reads as "never retried" and stays eligible. */
+  lastAttemptAt?: string | null;
 }
 
 const STORAGE_KEY = "lm.pendingMedia.v1";
@@ -31,6 +34,18 @@ export const MAX_MEDIA_ATTEMPTS = 5;
 
 /** Local URIs go stale (cache eviction, asset deletion), so stop retrying eventually. */
 export const MAX_MEDIA_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long to wait before retrying an item, indexed by attempts already made.
+ * Every foreground drains the queue, so a persistently failing upload otherwise
+ * burns its five attempts within minutes; spacing them lets a transient network
+ * problem clear first.
+ */
+const RETRY_BACKOFF_MS = [0, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+
+export function mediaRetryBackoffMs(attempts: number): number {
+  return RETRY_BACKOFF_MS[Math.min(attempts, RETRY_BACKOFF_MS.length - 1)];
+}
 
 async function readQueue(): Promise<PendingMediaItem[]> {
   try {
@@ -86,6 +101,7 @@ export async function enqueuePendingMedia(
     // Never downgrade a known-good upload back to null on a later failure.
     storagePath: item.storagePath ?? existing?.storagePath ?? null,
     storageUrl: item.storageUrl ?? existing?.storageUrl ?? null,
+    lastAttemptAt: existing?.lastAttemptAt ?? null,
   };
   await writeQueue([...queue.filter((q) => q.id !== next.id), next]);
 }
@@ -97,8 +113,11 @@ export async function removePendingMedia(id: string): Promise<void> {
 
 export async function markPendingMediaAttempted(id: string): Promise<void> {
   const queue = await readQueue();
+  const now = new Date().toISOString();
   await writeQueue(
-    queue.map((q) => (q.id === id ? { ...q, attempts: q.attempts + 1 } : q))
+    queue.map((q) =>
+      q.id === id ? { ...q, attempts: q.attempts + 1, lastAttemptAt: now } : q
+    )
   );
 }
 
