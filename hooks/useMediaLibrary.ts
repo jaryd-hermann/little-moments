@@ -111,29 +111,36 @@ function isAppSandboxFile(uri: string): boolean {
   );
 }
 
+/** The URI if it's a readable, non-empty file inside our sandbox, else null. */
+async function usableSandboxFile(uri: string): Promise<string | null> {
+  if (!(uri.startsWith("file://") && isAppSandboxFile(uri))) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (info.exists && (info.size ?? 0) > 0) return uri;
+  } catch {
+    /* not usable */
+  }
+  return null;
+}
+
 /**
- * Copy Photos library video URIs (`ph://`, `assets-library://`, or raw
- * `/var/mobile/Media/...` paths) into `FileSystem.cacheDirectory` so expo-video
- * can play them on physical devices. Raw Photos paths are sandbox-protected and
- * cannot be opened directly by AVFoundation in production builds.
+ * Copy Photos library media URIs (`ph://`, `assets-library://`, or raw
+ * `/var/mobile/Media/...` paths) into `FileSystem.cacheDirectory`. Raw Photos
+ * paths are sandbox-protected and cannot be opened directly by AVFoundation
+ * (video playback) or read by the upload path in production builds.
  */
-async function ensureCachedLibraryVideoFile(
+async function ensureCachedLibraryMediaFile(
   sourceUri: string,
   cacheKey: string,
+  ext: "mp4" | "jpg",
   fallbackUri?: string
 ): Promise<string | null> {
   const cleanSource = stripUriFragment(sourceUri);
 
-  // Reuse if it's already a playable copy inside our own sandbox. We must NOT
+  // Reuse if it's already a readable copy inside our own sandbox. We must NOT
   // short-circuit for raw Photos paths — those throw "permission" on device.
-  if (cleanSource.startsWith("file://") && isAppSandboxFile(cleanSource)) {
-    try {
-      const info = await FileSystem.getInfoAsync(cleanSource);
-      if (info.exists && (info.size ?? 0) > 0) return cleanSource;
-    } catch {
-      /* fall through to copy */
-    }
-  }
+  const reusable = await usableSandboxFile(cleanSource);
+  if (reusable) return reusable;
 
   const cached = libraryVideoCache.get(cacheKey);
   if (cached) {
@@ -148,7 +155,7 @@ async function ensureCachedLibraryVideoFile(
   const cacheDir = FileSystem.cacheDirectory;
   if (!cacheDir) return null;
   const safeKey = cacheKey.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const dest = `${cacheDir}lm-lib-vid-${safeKey}.mp4`;
+  const dest = `${cacheDir}lm-lib-${ext === "mp4" ? "vid" : "img"}-${safeKey}.${ext}`;
 
   // Try the resolved local path first, then the original `ph://` URI which the
   // Photos framework can always read via expo-file-system.
@@ -175,6 +182,61 @@ async function ensureCachedLibraryVideoFile(
     }
   }
   return null;
+}
+
+/** Copy a Photos library video into the sandbox so expo-video can play it. */
+async function ensureCachedLibraryVideoFile(
+  sourceUri: string,
+  cacheKey: string,
+  fallbackUri?: string
+): Promise<string | null> {
+  return ensureCachedLibraryMediaFile(sourceUri, cacheKey, "mp4", fallbackUri);
+}
+
+/**
+ * Resolve a media URI into a sandbox `file://` path the upload path can read.
+ *
+ * `FileSystem.copyAsync` cannot open Photos library URIs (`ph://`,
+ * `assets-library://`) or raw `/var/mobile/Media` paths, so an upload handed
+ * one of those throws and the photo never attaches. Resolve the asset through
+ * the Photos framework first — `getAssetInfoAsync` yields a real local path
+ * (and downloads from iCloud when needed), then copy the bytes into our cache.
+ * Sandbox `file://` copies and remote URLs are already readable and return
+ * unchanged.
+ *
+ * Re-resolves on every call from the durable `assetId`, so a queued retry
+ * whose cached copy was evicted still finds something copyable. Returns `null`
+ * only when the asset cannot be resolved at all.
+ */
+export async function ensureUploadableMediaUri(
+  uri: string,
+  opts: { assetId?: string | null; mediaType: "image" | "video" }
+): Promise<string | null> {
+  const clean = stripUriFragment(uri);
+  if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
+
+  const reusable = await usableSandboxFile(clean);
+  if (reusable) return reusable;
+
+  return enqueueMediaLibraryWork(async () => {
+    let source = clean;
+    const assetId = opts.assetId ?? null;
+    if (assetId) {
+      try {
+        const info = await _timeout(
+          MediaLibrary.getAssetInfoAsync(assetId, {
+            shouldDownloadFromNetwork: true,
+          }),
+          15000
+        );
+        if (info?.localUri) source = stripUriFragment(info.localUri);
+      } catch {
+        /* fall back to the original library URI below */
+      }
+    }
+    const ext = opts.mediaType === "video" ? "mp4" : "jpg";
+    return ensureCachedLibraryMediaFile(source, assetId ?? clean, ext, uri);
+  });
 }
 
 /* ── Camera-only filtering ─────────────────────────────────────────────── */

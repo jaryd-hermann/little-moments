@@ -1,4 +1,8 @@
-import { getAssetGeoLocation, getLivePhotoVideoUri } from "@/hooks/useMediaLibrary";
+import {
+  ensureUploadableMediaUri,
+  getAssetGeoLocation,
+  getLivePhotoVideoUri,
+} from "@/hooks/useMediaLibrary";
 import { captureEvent, captureException } from "@/lib/errors";
 import {
   enqueuePendingMedia,
@@ -65,9 +69,15 @@ export async function attachEntryMedia(
   let storagePath = uploaded?.storagePath ?? null;
   let storageUrl = uploaded?.storageUrl ?? null;
 
+  // A raw `ph://` library URI cannot be read by the upload path, so resolve it
+  // to a sandbox file first. Keep the resolved URI for the retry queue so a
+  // later attempt copies a real file instead of failing the same way.
+  let sourceUri = uri;
+
   try {
     if (!storagePath || !storageUrl) {
-      const result = await uploadEntryMedia(userId, entryId, uri, mediaType);
+      sourceUri = (await ensureUploadableMediaUri(uri, { assetId, mediaType })) ?? uri;
+      const result = await uploadEntryMedia(userId, entryId, sourceUri, mediaType);
       storagePath = result.storagePath;
       storageUrl = result.publicUrl;
     }
@@ -107,7 +117,7 @@ export async function attachEntryMedia(
       await enqueuePendingMedia({
         userId,
         entryId,
-        uri,
+        uri: sourceUri,
         mediaType,
         assetId,
         takenAtIso,
